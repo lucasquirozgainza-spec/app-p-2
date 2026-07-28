@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -44,6 +44,11 @@ class DB {
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               guardia_nombre TEXT, mensaje TEXT, tipo TEXT,
               edificio TEXT, created_at TEXT NOT NULL)''');
+          } catch (_) {}
+        }
+        if (oldV < 4) {
+          try {
+            await db.execute('ALTER TABLE visitas ADD COLUMN tarjeta_num TEXT');
           } catch (_) {}
         }
       },
@@ -131,6 +136,7 @@ class DB {
         hora_salida TEXT,
         estado TEXT DEFAULT 'dentro',
         tarjeta_devuelta INTEGER DEFAULT 0,
+        tarjeta_num TEXT,
         edificio TEXT,
         created_at TEXT NOT NULL,
         sync_status INTEGER DEFAULT 0

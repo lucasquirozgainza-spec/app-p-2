@@ -33,7 +33,7 @@ class PdfExport {
         pw.Header(
           level: 0,
           child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-            pw.Text('CondoControl Pro - Informe', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+            pw.Text('OSIRIS - Informe', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
             pw.Text('Edificio: ${AppState.instance.edificioNombre}'),
             pw.Text('Periodo: $periodo   ·   Generado: $fecha'),
           ]),

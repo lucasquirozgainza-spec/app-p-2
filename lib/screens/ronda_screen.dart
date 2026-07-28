@@ -2,12 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
-import '../services/photo_service.dart';
 import '../theme.dart';
+import 'camera_screen.dart';
 
 const int kFotosMinimas = 10;
 
@@ -26,9 +27,12 @@ class _RondaScreenState extends State<RondaScreen> {
   void _snack(String m) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
 
-  Future<void> _tomarFoto() async {
-    final path = await PhotoService.tomarFoto();
-    if (path != null) setState(() => _fotos.add(path));
+  Future<void> _tomarFotos() async {
+    final res = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: kFotosMinimas)),
+    );
+    if (res != null && res.isNotEmpty) setState(() => _fotos.addAll(res));
   }
 
   Future<void> _guardar() async {
@@ -49,6 +53,16 @@ class _RondaScreenState extends State<RondaScreen> {
     });
     await Audit.log('CREAR', 'rondas', '$id');
     await Cloud.evento('Ronda', detalle: {'fotos': _fotos.length});
+
+    // Compartir las fotos por WhatsApp con el mensaje de la ronda.
+    final guardia = s.userNombre ?? 'Guardia';
+    final msg = _obs.text.trim().isEmpty
+        ? 'Ronda sin novedad - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}'
+        : 'Ronda: ${_obs.text.trim()} - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}';
+    try {
+      await Share.shareXFiles(_fotos.map((f) => XFile(f)).toList(), text: msg);
+    } catch (_) {}
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Ronda guardada'), backgroundColor: AppColors.verde));
@@ -103,9 +117,14 @@ class _RondaScreenState extends State<RondaScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _tomarFoto,
-            icon: const Icon(Icons.add_a_photo),
-            label: Text('Tomar foto (${_fotos.length}/$kFotosMinimas)'),
+            onPressed: _tomarFotos,
+            icon: const Icon(Icons.camera_alt),
+            label: Text('Abrir camara - tomar fotos (${_fotos.length}/$kFotosMinimas)'),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('Puedes tomar varias fotos seguidas sin confirmar cada una.',
+                style: TextStyle(fontSize: 12, color: Colors.black54)),
           ),
           const SizedBox(height: 12),
           Wrap(

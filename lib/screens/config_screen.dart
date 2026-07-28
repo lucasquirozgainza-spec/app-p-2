@@ -332,7 +332,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
           const Card(
             child: ListTile(
               leading: Icon(Icons.info_outline, color: Colors.blueGrey),
-              title: Text('CondoControl Pro v1.0'),
+              title: Text('OSIRIS v1.0'),
               subtitle: Text('Base de datos local (SQLite). Preparada para sincronizar con Firebase.'),
             ),
           ),

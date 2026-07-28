@@ -6,6 +6,7 @@ import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../services/contact_launch.dart';
+import '../services/ocr_service.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
@@ -20,6 +21,7 @@ class VisitasScreen extends StatefulWidget {
 class _VisitasScreenState extends State<VisitasScreen> {
   List<Map<String, dynamic>> _visitas = [];
   bool _soloDentro = true;
+  final _q = TextEditingController();
 
   @override
   void initState() {
@@ -30,10 +32,18 @@ class _VisitasScreenState extends State<VisitasScreen> {
   Future<void> _load() async {
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
-    final rows = await db.query('visitas',
-        where: _soloDentro ? 'edificio=? AND estado=?' : 'edificio=?',
-        whereArgs: _soloDentro ? [ed, 'dentro'] : [ed],
-        orderBy: 'id DESC');
+    final q = _q.text.trim();
+    final where = StringBuffer('edificio=?');
+    final args = <dynamic>[ed];
+    if (_soloDentro) {
+      where.write(" AND estado='dentro'");
+    }
+    if (q.isNotEmpty) {
+      where.write(' AND (nombre_visita LIKE ? OR ci LIKE ? OR depto LIKE ? OR placa LIKE ? OR tarjeta_num LIKE ? OR autoriza LIKE ?)');
+      final like = '%$q%';
+      args.addAll([like, like, like, like, like, like]);
+    }
+    final rows = await db.query('visitas', where: where.toString(), whereArgs: args, orderBy: 'id DESC');
     if (!mounted) return;
     setState(() => _visitas = rows);
   }
@@ -113,7 +123,21 @@ class _VisitasScreenState extends State<VisitasScreen> {
           _load();
         },
       ),
-      body: _visitas.isEmpty
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: TextField(
+              controller: _q,
+              onChanged: (_) => _load(),
+              decoration: const InputDecoration(
+                hintText: 'Buscar nombre, CI, depto, placa, N° tarjeta...',
+                prefixIcon: Icon(Icons.search),
+              ),
+            ),
+          ),
+          Expanded(
+            child: _visitas.isEmpty
           ? const Center(child: Text('Sin visitas registradas'))
           : ListView.builder(
               padding: const EdgeInsets.all(12),
@@ -143,6 +167,8 @@ class _VisitasScreenState extends State<VisitasScreen> {
                     subtitle: Text(
                         'Depto ${v['depto'] ?? '-'} · ${v['motivo'] ?? ''}\nIngreso: $hora'),
                     isThreeLine: true,
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => VisitaDetalle(visita: v))),
                     trailing: dentro
                         ? TextButton(
                             onPressed: () => _registrarSalida(v),
@@ -153,6 +179,75 @@ class _VisitasScreenState extends State<VisitasScreen> {
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+class VisitaDetalle extends StatelessWidget {
+  final Map<String, dynamic> visita;
+  const VisitaDetalle({super.key, required this.visita});
+
+  Widget _foto(String label, Object? path) {
+    final p = path?.toString() ?? '';
+    if (p.isEmpty || !File(p).existsSync()) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        ClipRRect(borderRadius: BorderRadius.circular(10),
+            child: Image.file(File(p), height: 200, width: double.infinity, fit: BoxFit.cover)),
+      ]),
+    );
+  }
+
+  Widget _dato(String label, Object? value) {
+    final v = value?.toString() ?? '';
+    if (v.isEmpty) return const SizedBox.shrink();
+    return ListTile(
+      dense: true,
+      title: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+      subtitle: Text(v, style: const TextStyle(fontSize: 15, color: Colors.black87)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = visita;
+    final creado = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(v['created_at'] as String));
+    final devuelta = v['tarjeta_devuelta'] == 1;
+    final tieneTarjeta = (v['tarjeta']?.toString() ?? '').isNotEmpty || (v['tarjeta_num']?.toString() ?? '').isNotEmpty;
+    return Scaffold(
+      appBar: AppBar(title: Text(v['nombre_visita']?.toString() ?? 'Visita')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(child: Column(children: [
+            _dato('Nombre', v['nombre_visita']),
+            _dato('CI', v['ci']),
+            _dato('Departamento', v['depto']),
+            _dato('Autoriza', v['autoriza']),
+            _dato('Motivo', v['motivo']),
+            _dato('Placa', v['placa']),
+            _dato('N° de tarjeta', v['tarjeta_num']),
+            _dato('Guardia', v['guardia_nombre']),
+            _dato('Ingreso', creado),
+            _dato('Estado', v['estado'] == 'dentro' ? 'Dentro del edificio' : 'Salio'),
+            if (tieneTarjeta)
+              _dato('Tarjeta', devuelta ? 'Devuelta' : (v['estado'] == 'salio' ? 'NO devuelta' : 'En poder de la visita')),
+            _dato('Observaciones', v['observaciones']),
+          ])),
+          const SizedBox(height: 12),
+          _foto('Tarjeta asignada', v['tarjeta']),
+          _foto('Carnet anverso', v['foto_ci']),
+          _foto('Carnet reverso', v['foto_visitante']),
+        ],
+      ),
     );
   }
 }
@@ -174,7 +269,9 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   final _cantidad = TextEditingController(text: '1');
   final _placa = TextEditingController();
   final _obs = TextEditingController();
+  final _tarjetaNum = TextEditingController();
   String? _fotoTarjeta;
+  bool _ocrLeyendo = false;
   String? _carnetAnverso;
   String? _carnetReverso;
   List<Map<String, dynamic>> _contactos = [];
@@ -183,6 +280,22 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
 
   void _snack(String m) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
+
+  Future<void> _ocrTarjeta(String? path) async {
+    _fotoTarjeta = path;
+    if (path == null) return;
+    setState(() => _ocrLeyendo = true);
+    final num = await OcrService.leerNumero(path);
+    if (!mounted) return;
+    setState(() {
+      _ocrLeyendo = false;
+      if (num != null) _tarjetaNum.text = num;
+    });
+    if (num != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('N° de tarjeta detectado: $num'), backgroundColor: AppColors.verde));
+    }
+  }
 
   Future<void> _buscarContactos() async {
     final depto = _depto.text.trim();
@@ -223,6 +336,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'guardia_id': s.userId,
       'guardia_nombre': s.userNombre,
       'tarjeta': _fotoTarjeta,
+      'tarjeta_num': _tarjetaNum.text.trim(),
       'nombre_visita': _nombre.text.trim(),
       'ci': _ci.text,
       'foto_ci': _carnetAnverso,
@@ -301,7 +415,20 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
             decoration: const InputDecoration(labelText: 'Persona que autoriza (toca un contacto)')),
         const SizedBox(height: 8),
         _paso('3', 'Asignar tarjeta de acceso'),
-        PhotoField(label: 'Foto de la tarjeta asignada', onChanged: (v) => _fotoTarjeta = v),
+        PhotoField(
+          label: 'Foto de la tarjeta (lee el numero solo)',
+          onChanged: _ocrTarjeta,
+        ),
+        Row(children: [
+          Expanded(
+            child: TextField(controller: _tarjetaNum,
+                decoration: const InputDecoration(labelText: 'N° de tarjeta (automatico o manual)')),
+          ),
+          if (_ocrLeyendo)
+            const Padding(padding: EdgeInsets.only(left: 8),
+                child: SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2.5))),
+        ]),
+        const SizedBox(height: 12),
         _paso('4', 'Carnet del visitante y datos'),
         PhotoField(label: 'Carnet ANVERSO', obligatoria: true, onChanged: (v) => _carnetAnverso = v),
         PhotoField(label: 'Carnet REVERSO', obligatoria: true, onChanged: (v) => _carnetReverso = v),

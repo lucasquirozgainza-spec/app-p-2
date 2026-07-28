@@ -32,6 +32,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   Timer? _hb;
 
   @override
@@ -85,11 +86,12 @@ class _HomeScreenState extends State<HomeScreen> {
             : 'Buenas noches';
 
     return Scaffold(
+      key: _scaffoldKey,
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('CondoControl Pro', style: TextStyle(fontSize: 17)),
+            const Text('OSIRIS', style: TextStyle(fontSize: 17)),
             Text(s.edificioNombre, style: const TextStyle(fontSize: 12, color: Colors.white70)),
           ],
         ),
@@ -115,10 +117,14 @@ class _HomeScreenState extends State<HomeScreen> {
               const _SectionTitle('Acciones rapidas'),
               const SizedBox(height: 8),
               _acciones(s),
-              const SizedBox(height: 22),
-              const _SectionTitle('Modulos'),
-              const SizedBox(height: 8),
-              _modules(s),
+              const SizedBox(height: 20),
+              Row(children: [
+                Expanded(child: OutlinedButton.icon(
+                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                  icon: const Icon(Icons.menu),
+                  label: const Text('Ver todos los modulos'),
+                )),
+              ]),
             ],
           ),
         ),
@@ -218,6 +224,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (s.modulo('rondas')) {
       acts.add(ActionButton(icon: Icons.directions_walk, label: 'Nueva\nRonda', color: const Color(0xFF6A1B9A), onTap: () => _open(const RondaScreen())));
     }
+    if (s.modulo('reportes')) {
+      acts.add(ActionButton(icon: Icons.bar_chart, label: 'Reportes', color: const Color(0xFF283593), onTap: () => _open(const ReportesScreen())));
+    }
     return GridView.extent(
       maxCrossAxisExtent: 220, shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -285,7 +294,7 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 const CircleAvatar(radius: 26, backgroundColor: Colors.white, child: Icon(Icons.apartment, color: AppColors.azulMarino, size: 30)),
                 const SizedBox(height: 10),
-                Text(s.turnoActivoId != null ? (s.userNombre ?? '') : 'CondoControl Pro',
+                Text(s.turnoActivoId != null ? (s.userNombre ?? '') : 'OSIRIS',
                     maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 Text(s.edificioNombre,
@@ -314,6 +323,15 @@ class _HomeScreenState extends State<HomeScreen> {
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), show: s.modulo('normativas')),
           item(Icons.bar_chart, 'Reportes', const ReportesScreen(), show: s.modulo('reportes')),
           const Divider(),
+          if (!s.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings, color: Color(0xFF546E7A)),
+              title: const Text('Entrar como admin'),
+              onTap: () {
+                Navigator.pop(context);
+                _entrarAdmin();
+              },
+            ),
           ListTile(
             leading: const Icon(Icons.cloud, color: Color(0xFF0277BD)),
             title: const Text('En linea (admin)'),

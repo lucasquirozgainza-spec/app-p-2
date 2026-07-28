@@ -57,7 +57,7 @@ class NotifyService {
     try {
       final server = gmail(de, clave);
       final message = Message()
-        ..from = Address(de, 'CondoControl Pro')
+        ..from = Address(de, 'OSIRIS Seguridad')
         ..recipients.add(para)
         ..subject = asunto
         ..text = cuerpo;

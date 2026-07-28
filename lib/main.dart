@@ -19,7 +19,7 @@ class CondoControlApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'CondoControl Pro',
+      title: 'OSIRIS',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       home: const _Boot(),
@@ -76,7 +76,7 @@ class _BootState extends State<_Boot> {
           children: const [
             Icon(Icons.apartment_rounded, color: Colors.white, size: 72),
             SizedBox(height: 16),
-            Text('CondoControl Pro',
+            Text('OSIRIS',
                 style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
             SizedBox(height: 24),
             CircularProgressIndicator(color: Colors.white),

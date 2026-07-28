@@ -246,8 +246,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
       appBar: AppBar(
         title: Text('Depto ${p['depto']}'),
         actions: [
-          if (AppState.instance.isAdmin)
-            IconButton(icon: const Icon(Icons.edit), onPressed: _editar),
+          IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar', onPressed: _editar),
         ],
       ),
       body: ListView(
