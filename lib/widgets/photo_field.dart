@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
 
-/// Campo de foto obligatoria/opcional con vista previa y detección de
-/// fotos borrosas (obliga a repetir).
+/// Campo de foto con vista previa. Captura rápida (sin pasos extra).
 class PhotoField extends StatefulWidget {
   final String label;
   final bool obligatoria;
@@ -25,7 +24,6 @@ class PhotoField extends StatefulWidget {
 
 class _PhotoFieldState extends State<PhotoField> {
   String? _path;
-  bool _procesando = false;
 
   @override
   void initState() {
@@ -34,43 +32,11 @@ class _PhotoFieldState extends State<PhotoField> {
   }
 
   Future<void> _capturar() async {
-    setState(() => _procesando = true);
-    final res = await PhotoService.tomarFoto();
-    if (!mounted) return;
-    setState(() => _procesando = false);
-    if (res == null) return;
-
-    if (res.borrosa) {
-      final usarIgual = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          icon: const Icon(Icons.blur_on, color: AppColors.rojo, size: 40),
-          title: const Text('Foto borrosa'),
-          content: const Text(
-              'La foto parece borrosa o movida. Por favor tómala de nuevo, '
-              'sostén firme el teléfono y espera a que enfoque.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Usar de todos modos'),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(context, false),
-              icon: const Icon(Icons.camera_alt),
-              label: const Text('Repetir foto'),
-            ),
-          ],
-        ),
-      );
-      if (usarIgual != true) {
-        // Descartar y volver a intentar.
-        await _capturar();
-        return;
-      }
+    final path = await PhotoService.tomarFoto();
+    if (path != null) {
+      setState(() => _path = path);
+      widget.onChanged(path);
     }
-
-    setState(() => _path = res.path);
-    widget.onChanged(res.path);
   }
 
   @override
@@ -92,7 +58,7 @@ class _PhotoFieldState extends State<PhotoField> {
         ),
         const SizedBox(height: 6),
         GestureDetector(
-          onTap: _procesando ? null : _capturar,
+          onTap: _capturar,
           child: Container(
             height: 150,
             width: double.infinity,
@@ -107,48 +73,33 @@ class _PhotoFieldState extends State<PhotoField> {
                   ? DecorationImage(image: FileImage(File(_path!)), fit: BoxFit.cover)
                   : null,
             ),
-            child: _procesando
-                ? const Center(
+            child: has
+                ? Align(
+                    alignment: Alignment.topRight,
+                    child: Container(
+                      margin: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.refresh, color: Colors.white, size: 14),
+                        SizedBox(width: 4),
+                        Text('Repetir', style: TextStyle(color: Colors.white, fontSize: 12)),
+                      ]),
+                    ),
+                  )
+                : const Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 8),
-                        Text('Revisando nitidez...',
-                            style: TextStyle(color: AppColors.azulMarino)),
+                        Icon(Icons.add_a_photo_outlined, size: 36, color: AppColors.azulMarino),
+                        SizedBox(height: 6),
+                        Text('Tomar foto', style: TextStyle(color: AppColors.azulMarino)),
                       ],
                     ),
-                  )
-                : has
-                    ? Align(
-                        alignment: Alignment.topRight,
-                        child: Container(
-                          margin: const EdgeInsets.all(8),
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.refresh, color: Colors.white, size: 14),
-                              SizedBox(width: 4),
-                              Text('Repetir', style: TextStyle(color: Colors.white, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      )
-                    : const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add_a_photo_outlined, size: 36, color: AppColors.azulMarino),
-                            SizedBox(height: 6),
-                            Text('Tomar foto', style: TextStyle(color: AppColors.azulMarino)),
-                          ],
-                        ),
-                      ),
+                  ),
           ),
         ),
         const SizedBox(height: 12),

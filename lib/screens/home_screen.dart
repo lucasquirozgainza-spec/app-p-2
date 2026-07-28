@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/app_state.dart';
+import '../services/cloud.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import 'login_screen.dart';
+import 'inicio_turno_screen.dart';
 import 'visitas_screen.dart';
 import 'ronda_screen.dart';
 import 'propietarios_screen.dart';
@@ -18,7 +21,9 @@ import 'incidentes_screen.dart';
 import 'mantenimiento_screen.dart';
 import 'hospedajes_screen.dart';
 import 'guardias_screen.dart';
-import 'placeholder_screen.dart';
+import 'normativas_screen.dart';
+import 'reportes_screen.dart';
+import 'online_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -27,15 +32,46 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  Timer? _hb;
+
+  @override
+  void initState() {
+    super.initState();
+    // Mantiene la presencia "en linea" actualizada mientras la app este abierta.
+    _hb = Timer.periodic(const Duration(seconds: 60), (_) => Cloud.heartbeat());
+  }
+
+  @override
+  void dispose() {
+    _hb?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _openOnline() async {
+    final s = AppState.instance;
+    if (s.isAdmin) return _open(const OnlineScreen());
+    final ok = await Navigator.push<bool>(
+        context, MaterialPageRoute(builder: (_) => const AdminLoginScreen()));
+    if (ok == true && mounted) _open(const OnlineScreen());
+  }
+
   Future<void> _open(Widget screen) async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
     if (mounted) setState(() {});
   }
 
-  void _logout() {
-    AppState.instance.logout();
-    Navigator.pushAndRemoveUntil(context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()), (_) => false);
+  Future<void> _openConfig() async {
+    final s = AppState.instance;
+    if (s.isAdmin) return _open(const ConfigScreen());
+    final ok = await Navigator.push<bool>(
+        context, MaterialPageRoute(builder: (_) => const AdminLoginScreen()));
+    if (ok == true && mounted) _open(const ConfigScreen());
+  }
+
+  Future<void> _entrarAdmin() async {
+    final ok = await Navigator.push<bool>(
+        context, MaterialPageRoute(builder: (_) => const AdminLoginScreen()));
+    if (ok == true && mounted) setState(() {});
   }
 
   @override
@@ -66,44 +102,49 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       drawer: _buildDrawer(),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _greeting(saludo, s, ahora),
-          const SizedBox(height: 18),
-          const _SectionTitle('Acciones rapidas'),
-          const SizedBox(height: 8),
-          _acciones(s),
-          const SizedBox(height: 22),
-          const _SectionTitle('Modulos'),
-          const SizedBox(height: 8),
-          _modules(s),
-        ],
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 820),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _greeting(saludo, s, ahora),
+              const SizedBox(height: 16),
+              _turnoButton(s),
+              const SizedBox(height: 18),
+              const _SectionTitle('Acciones rapidas'),
+              const SizedBox(height: 8),
+              _acciones(s),
+              const SizedBox(height: 22),
+              const _SectionTitle('Modulos'),
+              const SizedBox(height: 8),
+              _modules(s),
+            ],
+          ),
+        ),
       ),
     );
   }
 
   Widget _greeting(String saludo, AppState s, DateTime ahora) {
+    final nombre = s.userNombre?.split(' ').first;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
             colors: [AppColors.azulMarino, Color(0xFF1E6FB8)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight),
+            begin: Alignment.topLeft, end: Alignment.bottomRight),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('$saludo, ${s.userNombre?.split(' ').first ?? ''}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+          Text(nombre != null ? '$saludo, $nombre' : 'Bienvenido',
+              maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Text('${s.userCargo ?? s.userRol ?? ''}  ·  ${s.edificioNombre}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+          Text(s.turnoActivoId != null ? '${s.userCargo ?? 'Guardia'}  ·  ${s.edificioNombre}' : s.edificioNombre,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white70)),
           const SizedBox(height: 10),
           Row(children: [
@@ -111,25 +152,51 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(width: 6),
             Expanded(
               child: Text(DateFormat('EEEE dd/MM/yyyy · HH:mm', 'es').format(ahora),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white70, fontSize: 13)),
             ),
           ]),
-          if (s.turnoActivoId != null) ...[
-            const SizedBox(height: 8),
+          const SizedBox(height: 10),
+          if (s.turnoActivoId != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                  color: AppColors.verde, borderRadius: BorderRadius.circular(20)),
+              decoration: BoxDecoration(color: AppColors.verde, borderRadius: BorderRadius.circular(20)),
               child: const Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.check_circle, color: Colors.white, size: 14),
                 SizedBox(width: 5),
                 Text('Turno activo', style: TextStyle(color: Colors.white, fontSize: 12)),
               ]),
+            )
+          else
+            InkWell(
+              onTap: () => _open(const InicioTurnoScreen()),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.play_arrow, color: AppColors.azulMarino, size: 18),
+                  SizedBox(width: 5),
+                  Text('Iniciar turno', style: TextStyle(color: AppColors.azulMarino, fontWeight: FontWeight.bold)),
+                ]),
+              ),
             ),
-          ],
         ],
+      ),
+    );
+  }
+
+  Widget _turnoButton(AppState s) {
+    final activo = s.turnoActivoId != null;
+    return SizedBox(
+      width: double.infinity,
+      height: 62,
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+            backgroundColor: activo ? const Color(0xFF455A64) : AppColors.verde),
+        onPressed: () => _open(activo ? const SalidaTurnoScreen() : const InicioTurnoScreen()),
+        icon: Icon(activo ? Icons.logout : Icons.play_arrow, size: 26),
+        label: Text(activo ? 'FINALIZAR TURNO' : 'INICIAR TURNO',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
       ),
     );
   }
@@ -137,37 +204,24 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _acciones(AppState s) {
     final acts = <Widget>[];
     if (s.modulo('visitas')) {
-      acts.add(ActionButton(
-          icon: Icons.badge, label: 'Nueva\nVisita', color: AppColors.azulMarino,
-          onTap: () => _open(const VisitaFormScreen())));
-    }
-    if (s.modulo('rondas')) {
-      acts.add(ActionButton(
-          icon: Icons.directions_walk, label: 'Nueva\nRonda', color: const Color(0xFF6A1B9A),
-          onTap: () => _open(const RondaScreen())));
-    }
-    if (s.modulo('encomiendas')) {
-      acts.add(ActionButton(
-          icon: Icons.inventory_2, label: 'Encomienda', color: const Color(0xFFEF6C00),
-          onTap: () => _open(const EncomiendaForm())));
+      acts.add(ActionButton(icon: Icons.badge, label: 'Registrar\nVisita', color: AppColors.azulMarino, onTap: () => _open(const VisitaFormScreen())));
     }
     if (s.modulo('incidentes')) {
-      acts.add(ActionButton(
-          icon: Icons.warning_amber, label: 'Reportar\nIncidente', color: AppColors.rojo,
-          onTap: () => _open(const IncidenteForm())));
+      acts.add(ActionButton(icon: Icons.warning_amber, label: 'Reportar\nIncidente', color: AppColors.rojo, onTap: () => _open(const IncidenteForm())));
     }
-    if (s.turnoActivoId != null) {
-      acts.add(ActionButton(
-          icon: Icons.logout, label: 'Finalizar\nTurno', color: const Color(0xFF455A64),
-          onTap: () => _open(const SalidaTurnoScreen())));
+    if (s.modulo('hospedajes')) {
+      acts.add(ActionButton(icon: Icons.hotel, label: 'Registrar\nHospedaje', color: const Color(0xFF00838F), onTap: () => _open(const HospedajeForm())));
     }
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
+    if (s.modulo('encomiendas')) {
+      acts.add(ActionButton(icon: Icons.inventory_2, label: 'Encomienda', color: const Color(0xFFEF6C00), onTap: () => _open(const EncomiendaForm())));
+    }
+    if (s.modulo('rondas')) {
+      acts.add(ActionButton(icon: Icons.directions_walk, label: 'Nueva\nRonda', color: const Color(0xFF6A1B9A), onTap: () => _open(const RondaScreen())));
+    }
+    return GridView.extent(
+      maxCrossAxisExtent: 220, shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 1.6,
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
+      childAspectRatio: 1.7, mainAxisSpacing: 10, crossAxisSpacing: 10,
       children: acts,
     );
   }
@@ -184,24 +238,23 @@ class _HomeScreenState extends State<HomeScreen> {
       _Mod('rondas', Icons.directions_walk, 'Rondas', const Color(0xFF6A1B9A), () => const RondaScreen()),
       _Mod('guardias', Icons.shield, 'Guardias', AppColors.verde, () => const GuardiasScreen(), always: true),
       _Mod('contactos', Icons.contact_phone, 'Contactos', const Color(0xFF00695C), () => const ContactosScreen()),
-      _Mod('normativas', Icons.picture_as_pdf, 'Normativas', const Color(0xFF37474F), () => const PlaceholderScreen(titulo: 'Normativas')),
-      _Mod('reportes', Icons.bar_chart, 'Reportes', const Color(0xFF283593), () => const PlaceholderScreen(titulo: 'Reportes')),
+      _Mod('normativas', Icons.picture_as_pdf, 'Normativas', const Color(0xFF37474F), () => const NormativasScreen()),
+      _Mod('reportes', Icons.bar_chart, 'Reportes', const Color(0xFF283593), () => const ReportesScreen()),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();
-    return GridView.count(
-      crossAxisCount: 3,
-      shrinkWrap: true,
+    return GridView.extent(
+      maxCrossAxisExtent: 130, shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 0.92,
-      mainAxisSpacing: 4,
-      crossAxisSpacing: 4,
+      childAspectRatio: 0.92, mainAxisSpacing: 6, crossAxisSpacing: 6,
       children: [
         for (final m in visibles)
           ModuleCard(icon: m.icon, label: m.label, color: m.color, onTap: () => _open(m.build())),
-        if (s.isAdmin)
-          ModuleCard(
-              icon: Icons.settings, label: 'Configuracion', color: const Color(0xFF546E7A),
-              onTap: () => _open(const ConfigScreen())),
+        // Funciones de administrador: solo visibles cuando el admin entra.
+        if (s.isAdmin) ...[
+          ModuleCard(icon: Icons.cloud, label: 'En linea', color: const Color(0xFF0277BD), onTap: _openOnline),
+          ModuleCard(icon: Icons.settings, label: 'Configuracion', color: const Color(0xFF546E7A), onTap: _openConfig),
+        ] else
+          ModuleCard(icon: Icons.admin_panel_settings, label: 'Entrar como admin', color: const Color(0xFF546E7A), onTap: _entrarAdmin),
       ],
     );
   }
@@ -230,24 +283,25 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                const CircleAvatar(
-                    radius: 26,
-                    backgroundColor: Colors.white,
-                    child: Icon(Icons.person, color: AppColors.azulMarino, size: 30)),
+                const CircleAvatar(radius: 26, backgroundColor: Colors.white, child: Icon(Icons.apartment, color: AppColors.azulMarino, size: 30)),
                 const SizedBox(height: 10),
-                Text(s.userNombre ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                Text(s.turnoActivoId != null ? (s.userNombre ?? '') : 'CondoControl Pro',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                Text('${s.userRol}  ·  ${s.edificioNombre}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                Text(s.edificioNombre,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.white70, fontSize: 12)),
               ],
             ),
           ),
           item(Icons.home, 'Inicio', const HomeScreen()),
+          if (s.turnoActivoId == null)
+            item(Icons.play_arrow, 'Iniciar turno', const InicioTurnoScreen())
+          else
+            item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen()),
           item(Icons.dashboard, 'Panel / Resumen', const PanelScreen()),
+          item(Icons.shield, 'Guardias', const GuardiasScreen()),
+          const Divider(),
           item(Icons.badge, 'Visitas', const VisitasScreen(), show: s.modulo('visitas')),
           item(Icons.directions_walk, 'Rondas', const RondaScreen(), show: s.modulo('rondas')),
           item(Icons.hotel, 'Hospedajes', const HospedajesScreen(), show: s.modulo('hospedajes')),
@@ -256,23 +310,36 @@ class _HomeScreenState extends State<HomeScreen> {
           item(Icons.build, 'Mantenimiento', const MantenimientoScreen(), show: s.modulo('mantenimiento')),
           item(Icons.people, 'Propietarios', const PropietariosScreen(), show: s.modulo('propietarios')),
           item(Icons.directions_car, 'Vehiculos', const VehiculosScreen(), show: s.modulo('vehiculos')),
-          item(Icons.shield, 'Guardias', const GuardiasScreen()),
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), show: s.modulo('contactos')),
-          item(Icons.bar_chart, 'Reportes', const PlaceholderScreen(titulo: 'Reportes'), show: s.modulo('reportes')),
+          item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), show: s.modulo('normativas')),
+          item(Icons.bar_chart, 'Reportes', const ReportesScreen(), show: s.modulo('reportes')),
           const Divider(),
-          item(Icons.settings, 'Configuracion', const ConfigScreen(), show: s.isAdmin),
           ListTile(
-            leading: const Icon(Icons.logout, color: AppColors.rojo),
-            title: const Text('Cerrar / Finalizar turno'),
+            leading: const Icon(Icons.cloud, color: Color(0xFF0277BD)),
+            title: const Text('En linea (admin)'),
             onTap: () {
               Navigator.pop(context);
-              if (s.turnoActivoId != null) {
-                _open(const SalidaTurnoScreen());
-              } else {
-                _logout();
-              }
+              _openOnline();
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.settings, color: AppColors.azulMarino),
+            title: const Text('Configuracion (admin)'),
+            onTap: () {
+              Navigator.pop(context);
+              _openConfig();
+            },
+          ),
+          if (s.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.lock, color: AppColors.rojo),
+              title: const Text('Salir de admin'),
+              onTap: () {
+                s.isAdmin = false;
+                Navigator.pop(context);
+                setState(() {});
+              },
+            ),
         ],
       ),
     );

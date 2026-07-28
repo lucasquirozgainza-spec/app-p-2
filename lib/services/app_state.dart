@@ -2,19 +2,25 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 
-/// Estado global de sesion: usuario activo, edificio seleccionado y modulos.
+/// Estado global. La app queda SIEMPRE abierta (sin login diario).
+/// - "operador" = guardia que está usando el equipo (se selecciona al iniciar turno).
+/// - "isAdmin" = elevación temporal para entrar a Configuración.
 class AppState {
   AppState._();
   static final AppState instance = AppState._();
 
-  // Usuario en sesion
+  // Guardia operador actual (seleccionado, sin escribir nombre)
   int? userId;
   String? userNombre;
   String? userCargo;
-  String? userRol; // admin, supervisor, guardia, conserje, limpieza
+  String? userRol;
 
-  // Turno activo (id de ingreso_turno)
+  // Turno activo del operador
   int? turnoActivoId;
+
+  // Elevación de administrador
+  bool isAdmin = false;
+  bool get isSupervisor => isAdmin;
 
   // Edificio activo
   String edificioId = 'LIMCO II';
@@ -22,15 +28,24 @@ class AppState {
   Map<String, dynamic> modulos = {};
   List<String> torres = [];
 
-  bool get isLogged => userId != null;
-  bool get isAdmin => userRol == 'admin';
-  bool get isSupervisor => userRol == 'admin' || userRol == 'supervisor';
+  // Ajustes de notificación de incidentes
+  String notifMetodo = 'whatsapp'; // whatsapp | email | ambos | ninguno
+  String adminWhatsapp = '';
+  String adminEmail = '';
+  String senderEmail = ''; // cuenta Gmail que envía
+  String senderPass = '';  // clave de aplicación de esa cuenta
 
+  bool get hayOperador => userId != null;
   bool modulo(String key) => modulos[key] == true;
 
   Future<void> loadEdificio() async {
     final prefs = await SharedPreferences.getInstance();
     edificioId = prefs.getString('edificio_id') ?? 'LIMCO II';
+    notifMetodo = prefs.getString('notif_metodo') ?? 'whatsapp';
+    adminWhatsapp = prefs.getString('admin_whatsapp') ?? '';
+    adminEmail = prefs.getString('admin_email') ?? '';
+    senderEmail = prefs.getString('sender_email') ?? '';
+    senderPass = prefs.getString('sender_pass') ?? '';
     final db = await DB.instance.database;
     final rows = await db.query('edificios', where: 'id = ?', whereArgs: [edificioId]);
     if (rows.isEmpty) {
@@ -61,7 +76,46 @@ class AppState {
     await loadEdificio();
   }
 
-  void logout() {
+  Future<void> setNotifConfig({
+    String? metodo,
+    String? whatsapp,
+    String? email,
+    String? sender,
+    String? senderPassword,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (metodo != null) {
+      notifMetodo = metodo;
+      await prefs.setString('notif_metodo', metodo);
+    }
+    if (whatsapp != null) {
+      adminWhatsapp = whatsapp.trim();
+      await prefs.setString('admin_whatsapp', adminWhatsapp);
+    }
+    if (email != null) {
+      adminEmail = email.trim();
+      await prefs.setString('admin_email', adminEmail);
+    }
+    if (sender != null) {
+      senderEmail = sender.trim();
+      await prefs.setString('sender_email', senderEmail);
+    }
+    if (senderPassword != null) {
+      senderPass = senderPassword;
+      await prefs.setString('sender_pass', senderPassword);
+    }
+  }
+
+  /// Selecciona el guardia operador (al iniciar turno).
+  void setOperador({int? id, String? nombre, String? cargo, String? rol, int? turnoId}) {
+    userId = id;
+    userNombre = nombre;
+    userCargo = cargo;
+    userRol = rol;
+    turnoActivoId = turnoId;
+  }
+
+  void clearOperador() {
     userId = null;
     userNombre = null;
     userCargo = null;

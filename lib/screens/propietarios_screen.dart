@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/contact_launch.dart';
 import '../theme.dart';
 
 class PropietariosScreen extends StatefulWidget {
@@ -145,9 +145,38 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
     setState(() => _residentes = rows);
   }
 
-  Future<void> _llamar(String tel) async {
-    final uri = Uri.parse('tel:$tel');
-    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  Future<void> _agregarResidente() async {
+    final n = TextEditingController();
+    final par = TextEditingController();
+    final cel = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Agregar residente - Depto ${p['depto']}'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: n, decoration: const InputDecoration(labelText: 'Nombre')),
+            const SizedBox(height: 8),
+            TextField(controller: par, decoration: const InputDecoration(labelText: 'Parentesco')),
+            const SizedBox(height: 8),
+            TextField(controller: cel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Celular')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Agregar')),
+        ],
+      ),
+    );
+    if (ok == true && n.text.trim().isNotEmpty) {
+      final db = await DB.instance.database;
+      final id = await db.insert('residentes', {
+        'edificio': p['edificio'], 'depto': p['depto'], 'nombre': n.text.trim(),
+        'parentesco': par.text, 'celular': cel.text,
+      });
+      await Audit.log('CREAR', 'residentes', '$id', detalle: 'depto ${p['depto']}');
+      _loadResidentes();
+    }
   }
 
   Future<void> _editar() async {
@@ -202,8 +231,11 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
       dense: true,
       title: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
       subtitle: Text(value, style: const TextStyle(fontSize: 15, color: Colors.black87)),
-      trailing: tel != null && tel.isNotEmpty
-          ? IconButton(icon: const Icon(Icons.call, color: AppColors.verde), onPressed: () => _llamar(tel))
+      trailing: (tel != null && tel.isNotEmpty)
+          ? Row(mainAxisSize: MainAxisSize.min, children: [
+              IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino), tooltip: 'Llamar', onPressed: () => Contacto.llamar(context, tel)),
+              IconButton(icon: const Icon(Icons.chat, color: AppColors.verde), tooltip: 'WhatsApp', onPressed: () => Contacto.whatsapp(context, tel)),
+            ])
           : null,
     );
   }
@@ -237,11 +269,23 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
             ),
           ),
           const SizedBox(height: 8),
-          if (_residentes.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.all(8),
-              child: Text('Residentes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(8),
+                child: Text('Residentes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+              TextButton.icon(
+                onPressed: _agregarResidente,
+                icon: const Icon(Icons.person_add, size: 18),
+                label: const Text('Agregar'),
+              ),
+            ],
+          ),
+          if (_residentes.isEmpty)
+            const Card(child: ListTile(title: Text('Sin residentes registrados')))
+          else
             Card(
               child: Column(
                 children: [
@@ -253,13 +297,15 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
                           ? Text(r['parentesco'].toString())
                           : null,
                       trailing: (r['celular']?.toString().isNotEmpty ?? false)
-                          ? IconButton(icon: const Icon(Icons.call, color: AppColors.verde), onPressed: () => _llamar(r['celular'].toString()))
+                          ? Row(mainAxisSize: MainAxisSize.min, children: [
+                              IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino), onPressed: () => Contacto.llamar(context, r['celular'].toString())),
+                              IconButton(icon: const Icon(Icons.chat, color: AppColors.verde), onPressed: () => Contacto.whatsapp(context, r['celular'].toString())),
+                            ])
                           : null,
                     ),
                 ],
               ),
             ),
-          ],
         ],
       ),
     );

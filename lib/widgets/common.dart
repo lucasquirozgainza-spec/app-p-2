@@ -42,13 +42,16 @@ class ModuleCard extends StatelessWidget {
                 child: Icon(icon, color: Colors.white, size: 26),
               ),
               const SizedBox(height: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, height: 1.1),
+              SizedBox(
+                width: double.infinity,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                  ),
                 ),
               ),
             ],

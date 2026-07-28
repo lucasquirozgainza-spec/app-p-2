@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/cloud.dart';
+import '../services/contact_launch.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
@@ -37,10 +39,40 @@ class _VisitasScreenState extends State<VisitasScreen> {
   }
 
   Future<void> _registrarSalida(Map<String, dynamic> v) async {
+    final tieneTarjeta = (v['tarjeta']?.toString() ?? '').isNotEmpty;
+    bool devuelta = true;
+    if (tieneTarjeta) {
+      final r = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          icon: const Icon(Icons.badge, color: AppColors.azulMarino, size: 36),
+          title: const Text('Devolucion de tarjeta'),
+          content: Text('¿La visita de ${v['nombre_visita'] ?? ''} (depto ${v['depto'] ?? ''}) devolvio la tarjeta de acceso?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false),
+                child: const Text('NO devolvio', style: TextStyle(color: AppColors.rojo))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Si, devolvio')),
+          ],
+        ),
+      );
+      if (r == null) return;
+      devuelta = r;
+    }
     final db = await DB.instance.database;
-    await db.update('visitas',
-        {'estado': 'salio', 'hora_salida': DateTime.now().toIso8601String()},
-        where: 'id=?', whereArgs: [v['id']]);
+    await db.update('visitas', {
+      'estado': 'salio',
+      'hora_salida': DateTime.now().toIso8601String(),
+      'tarjeta_devuelta': devuelta ? 1 : 0,
+    }, where: 'id=?', whereArgs: [v['id']]);
+    if (tieneTarjeta && !devuelta) {
+      await db.insert('advertencias', {
+        'guardia_nombre': AppState.instance.userNombre,
+        'mensaje': 'Tarjeta NO devuelta - visita ${v['nombre_visita'] ?? ''} (depto ${v['depto'] ?? ''})',
+        'tipo': 'tarjeta',
+        'edificio': AppState.instance.edificioId,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
     await Audit.log('SALIDA_VISITA', 'visitas', '${v['id']}');
     _load();
   }
@@ -135,26 +167,53 @@ class VisitaFormScreen extends StatefulWidget {
 
 class _VisitaFormScreenState extends State<VisitaFormScreen> {
   final _nombre = TextEditingController();
-  final _ci = TextEditingController();
   final _depto = TextEditingController();
   final _autoriza = TextEditingController();
+  final _ci = TextEditingController();
   final _motivo = TextEditingController();
   final _cantidad = TextEditingController(text: '1');
   final _placa = TextEditingController();
   final _obs = TextEditingController();
-  String? _fotoCi;
-  String? _fotoVisita;
   String? _fotoTarjeta;
+  String? _carnetAnverso;
+  String? _carnetReverso;
+  List<Map<String, dynamic>> _contactos = [];
   bool _saving = false;
   final _ahora = DateTime.now();
 
   void _snack(String m) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
 
+  Future<void> _buscarContactos() async {
+    final depto = _depto.text.trim();
+    if (depto.isEmpty) {
+      setState(() => _contactos = []);
+      return;
+    }
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final out = <Map<String, dynamic>>[];
+    final props = await db.query('propietarios', where: 'edificio=? AND depto=?', whereArgs: [ed, depto]);
+    for (final p in props) {
+      if ((p['copropietario']?.toString() ?? '').isNotEmpty) {
+        out.add({'nombre': p['copropietario'], 'tel': p['telefono'], 'rol': 'Propietario'});
+      }
+      if ((p['inquilino']?.toString() ?? '').isNotEmpty) {
+        out.add({'nombre': p['inquilino'], 'tel': p['telefono_inq'], 'rol': 'Inquilino'});
+      }
+    }
+    final resis = await db.query('residentes', where: 'edificio=? AND depto=?', whereArgs: [ed, depto]);
+    for (final r in resis) {
+      out.add({'nombre': r['nombre'], 'tel': r['celular'], 'rol': 'Residente'});
+    }
+    if (!mounted) return;
+    setState(() => _contactos = out);
+  }
+
   Future<void> _guardar() async {
-    if (_nombre.text.trim().isEmpty) return _snack('Ingrese el nombre');
-    if (_fotoCi == null) return _snack('La foto del CI es obligatoria');
-    if (_fotoVisita == null) return _snack('La foto del visitante es obligatoria');
+    if (_nombre.text.trim().isEmpty) return _snack('Ingrese el nombre del visitante');
+    if (_carnetAnverso == null) return _snack('La foto del carnet (anverso) es obligatoria');
+    if (_carnetReverso == null) return _snack('La foto del carnet (reverso) es obligatoria');
     setState(() => _saving = true);
     final s = AppState.instance;
     final gps = await DeviceContext.gps();
@@ -166,8 +225,8 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'tarjeta': _fotoTarjeta,
       'nombre_visita': _nombre.text.trim(),
       'ci': _ci.text,
-      'foto_ci': _fotoCi,
-      'foto_visitante': _fotoVisita,
+      'foto_ci': _carnetAnverso,
+      'foto_visitante': _carnetReverso,
       'depto': _depto.text,
       'autoriza': _autoriza.text,
       'motivo': _motivo.text,
@@ -182,53 +241,100 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'visitas', '$id', detalle: _nombre.text);
+    await Cloud.evento('Visita', detalle: {'nombre': _nombre.text.trim(), 'depto': _depto.text, 'motivo': _motivo.text});
     if (!mounted) return;
     Navigator.pop(context);
   }
+
+  Widget _paso(String n, String t) => Padding(
+        padding: const EdgeInsets.only(top: 10, bottom: 8),
+        child: Row(children: [
+          CircleAvatar(radius: 12, backgroundColor: AppColors.azulMarino,
+              child: Text(n, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
+          const SizedBox(width: 8),
+          Expanded(child: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+        ]),
+      );
 
   @override
   Widget build(BuildContext context) {
     final s = AppState.instance;
     return Scaffold(
       appBar: AppBar(title: const Text('Registrar Visita')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(controller: _nombre, decoration: const InputDecoration(labelText: 'Nombre completo *')),
-          const SizedBox(height: 12),
-          TextField(controller: _ci, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'CI')),
-          const SizedBox(height: 16),
-          PhotoField(label: 'Foto del CI', obligatoria: true, onChanged: (v) => _fotoCi = v),
-          PhotoField(label: 'Foto del visitante', obligatoria: true, onChanged: (v) => _fotoVisita = v),
-          TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento')),
-          const SizedBox(height: 12),
-          TextField(controller: _autoriza, decoration: const InputDecoration(labelText: 'Persona que autoriza')),
-          const SizedBox(height: 12),
-          TextField(controller: _motivo, decoration: const InputDecoration(labelText: 'Motivo')),
-          const SizedBox(height: 12),
-          TextField(controller: _cantidad, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Cantidad de personas')),
-          const SizedBox(height: 12),
-          TextField(controller: _placa, decoration: const InputDecoration(labelText: 'Placa vehiculo')),
-          const SizedBox(height: 16),
-          PhotoField(label: 'Foto de la tarjeta asignada', onChanged: (v) => _fotoTarjeta = v),
-          TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),
-          const SizedBox(height: 16),
-          LockedField(label: 'Guardia', value: s.userNombre ?? '', icon: Icons.shield),
-          Row(children: [
-            Expanded(child: LockedField(label: 'Fecha', value: DateFormat('dd/MM/yyyy').format(_ahora), icon: Icons.calendar_today)),
-            const SizedBox(width: 10),
-            Expanded(child: LockedField(label: 'Hora ingreso', value: DateFormat('HH:mm').format(_ahora), icon: Icons.access_time)),
-          ]),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: _saving ? null : _guardar,
-            icon: _saving
-                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                : const Icon(Icons.save),
-            label: const Text('Registrar ingreso'),
-          ),
-        ],
-      ),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        _paso('1', 'Datos del visitante'),
+        TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Nombre del visitante *')),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(child: TextField(controller: _depto,
+              decoration: const InputDecoration(labelText: 'Departamento a visitar *'),
+              onChanged: (_) => _buscarContactos())),
+          const SizedBox(width: 8),
+          FilledButton(onPressed: _buscarContactos, child: const Text('Buscar')),
+        ]),
+        const SizedBox(height: 12),
+        if (_contactos.isNotEmpty) ...[
+          _paso('2', 'Llama para pedir autorizacion'),
+          for (final c in _contactos)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.person, color: AppColors.azulMarino),
+                title: Text(c['nombre']?.toString() ?? ''),
+                subtitle: Text('${c['rol']}${(c['tel']?.toString().isNotEmpty ?? false) ? ' · ${c['tel']}' : ''}'),
+                trailing: (c['tel']?.toString().isNotEmpty ?? false)
+                    ? Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino),
+                            onPressed: () => Contacto.llamar(context, c['tel'].toString())),
+                        IconButton(icon: const Icon(Icons.chat, color: AppColors.verde),
+                            onPressed: () => Contacto.whatsapp(context, c['tel'].toString(),
+                                mensaje: 'Tiene una visita: ${_nombre.text}. Autoriza el ingreso?')),
+                      ])
+                    : null,
+                onTap: () => setState(() => _autoriza.text = c['nombre']?.toString() ?? ''),
+              ),
+            ),
+        ] else if (_depto.text.trim().isNotEmpty)
+          const Card(child: ListTile(title: Text('Sin contactos registrados para ese depto'))),
+        const SizedBox(height: 8),
+        TextField(controller: _autoriza,
+            decoration: const InputDecoration(labelText: 'Persona que autoriza (toca un contacto)')),
+        const SizedBox(height: 8),
+        _paso('3', 'Asignar tarjeta de acceso'),
+        PhotoField(label: 'Foto de la tarjeta asignada', onChanged: (v) => _fotoTarjeta = v),
+        _paso('4', 'Carnet del visitante y datos'),
+        PhotoField(label: 'Carnet ANVERSO', obligatoria: true, onChanged: (v) => _carnetAnverso = v),
+        PhotoField(label: 'Carnet REVERSO', obligatoria: true, onChanged: (v) => _carnetReverso = v),
+        TextField(controller: _ci, keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Numero de CI')),
+        const SizedBox(height: 12),
+        TextField(controller: _motivo, decoration: const InputDecoration(labelText: 'Motivo')),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(child: TextField(controller: _cantidad, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Cant. personas'))),
+          const SizedBox(width: 10),
+          Expanded(child: TextField(controller: _placa,
+              decoration: const InputDecoration(labelText: 'Placa (opcional)'))),
+        ]),
+        const SizedBox(height: 12),
+        TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),
+        const SizedBox(height: 12),
+        LockedField(label: 'Guardia', value: s.userNombre ?? '', icon: Icons.shield),
+        Row(children: [
+          Expanded(child: LockedField(label: 'Fecha', value: DateFormat('dd/MM/yyyy').format(_ahora), icon: Icons.calendar_today)),
+          const SizedBox(width: 10),
+          Expanded(child: LockedField(label: 'Hora ingreso', value: DateFormat('HH:mm').format(_ahora), icon: Icons.access_time)),
+        ]),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          onPressed: _saving ? null : _guardar,
+          icon: _saving
+              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+              : const Icon(Icons.save),
+          label: const Text('Registrar ingreso'),
+        ),
+      ]),
     );
   }
 }

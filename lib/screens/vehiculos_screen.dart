@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/contact_launch.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 
@@ -69,6 +70,7 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
                     itemBuilder: (_, i) {
                       final v = _rows[i];
                       final placa = (v['placa']?.toString() ?? '').trim();
+                      final tel = (v['telefono']?.toString() ?? '').trim();
                       return Card(
                         child: ListTile(
                           leading: const CircleAvatar(
@@ -81,6 +83,20 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
                             (v['depto']?.toString().isNotEmpty ?? false) ? 'Depto ${v['depto']}' : null,
                             v['propietario'],
                           ].where((e) => e != null && e.toString().trim().isNotEmpty).join(' · ')),
+                          trailing: tel.isEmpty
+                              ? null
+                              : Row(mainAxisSize: MainAxisSize.min, children: [
+                                  IconButton(
+                                      icon: const Icon(Icons.call, color: AppColors.azulMarino),
+                                      tooltip: 'Llamar',
+                                      onPressed: () => Contacto.llamar(context, tel)),
+                                  IconButton(
+                                      icon: const Icon(Icons.chat, color: AppColors.verde),
+                                      tooltip: 'WhatsApp (mal parqueado)',
+                                      onPressed: () => Contacto.whatsapp(context, tel,
+                                          mensaje: 'Estimado, su vehiculo${placa.isNotEmpty ? ' placa $placa' : ''} '
+                                              'se encuentra mal estacionado. Por favor acercarse. (${AppState.instance.edificioNombre})')),
+                                ]),
                         ),
                       );
                     },
@@ -106,6 +122,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
   final _depto = TextEditingController();
   final _prop = TextEditingController();
   final _parqueo = TextEditingController();
+  final _tel = TextEditingController();
   final _obs = TextEditingController();
   String? _foto;
   bool _saving = false;
@@ -128,6 +145,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
       'depto': _depto.text,
       'propietario': _prop.text,
       'nro_parqueo': _parqueo.text,
+      'telefono': _tel.text,
       'foto': _foto,
       'observaciones': _obs.text,
     });
@@ -157,9 +175,13 @@ class _VehiculoFormState extends State<VehiculoForm> {
             Expanded(child: TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento'))),
           ]),
           const SizedBox(height: 12),
-          TextField(controller: _prop, decoration: const InputDecoration(labelText: 'Propietario / responsable')),
+          TextField(controller: _prop, decoration: const InputDecoration(labelText: 'Dueño / responsable')),
           const SizedBox(height: 12),
-          TextField(controller: _parqueo, decoration: const InputDecoration(labelText: 'Nro de parqueo')),
+          Row(children: [
+            Expanded(child: TextField(controller: _parqueo, decoration: const InputDecoration(labelText: 'Parqueo que ocupa'))),
+            const SizedBox(width: 10),
+            Expanded(child: TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefono'))),
+          ]),
           const SizedBox(height: 16),
           PhotoField(label: 'Foto del vehiculo', onChanged: (v) => _foto = v),
           TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),

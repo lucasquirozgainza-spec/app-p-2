@@ -21,13 +21,31 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 3,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, v) async {
         await _createSchema(db);
         await _seed(db);
+      },
+      onUpgrade: (db, oldV, newV) async {
+        if (oldV < 2) {
+          try {
+            await db.execute('ALTER TABLE vehiculos ADD COLUMN telefono TEXT');
+          } catch (_) {}
+        }
+        if (oldV < 3) {
+          try {
+            await db.execute('ALTER TABLE visitas ADD COLUMN tarjeta_devuelta INTEGER DEFAULT 0');
+          } catch (_) {}
+          try {
+            await db.execute('''CREATE TABLE IF NOT EXISTS advertencias (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              guardia_nombre TEXT, mensaje TEXT, tipo TEXT,
+              edificio TEXT, created_at TEXT NOT NULL)''');
+          } catch (_) {}
+        }
       },
     );
   }
@@ -112,6 +130,7 @@ class DB {
         observaciones TEXT,
         hora_salida TEXT,
         estado TEXT DEFAULT 'dentro',
+        tarjeta_devuelta INTEGER DEFAULT 0,
         edificio TEXT,
         created_at TEXT NOT NULL,
         sync_status INTEGER DEFAULT 0
@@ -176,6 +195,7 @@ class DB {
         foto TEXT,
         propietario TEXT,
         nro_parqueo TEXT,
+        telefono TEXT,
         observaciones TEXT
       )''');
 
@@ -224,6 +244,16 @@ class DB {
         lugar TEXT, tipo TEXT, foto_antes TEXT, foto_despues TEXT, observaciones TEXT,
         estado TEXT DEFAULT 'pendiente',
         edificio TEXT, created_at TEXT NOT NULL, sync_status INTEGER DEFAULT 0
+      )''');
+
+    await db.execute('''
+      CREATE TABLE advertencias (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guardia_nombre TEXT,
+        mensaje TEXT,
+        tipo TEXT,
+        edificio TEXT,
+        created_at TEXT NOT NULL
       )''');
 
     await db.execute('''

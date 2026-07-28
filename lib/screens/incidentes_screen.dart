@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/cloud.dart';
+import '../services/notify_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 
@@ -159,6 +161,18 @@ class _IncidenteFormState extends State<IncidenteForm> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'incidentes', '$id');
+    await Cloud.evento('Incidente',
+        detalle: {'tipo': _tipo, 'lugar': _lugar.text, 'descripcion': _desc.text});
+    // Aviso automático al administrador (correo y/o WhatsApp según config).
+    if (mounted) {
+      await NotifyService.incidente(
+        context,
+        tipo: _tipo,
+        lugar: _lugar.text,
+        descripcion: _desc.text,
+        guardia: s.userNombre ?? 'Sin asignar',
+      );
+    }
     if (!mounted) return;
     Navigator.pop(context);
   }

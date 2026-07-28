@@ -68,7 +68,31 @@ El **administrador** puede crear más usuarios y cambiar contraseñas desde **Co
 - **Auditoría**: se registra quién creó/editó cada registro y cuándo.
 - **Fin de turno** con foto obligatoria.
 
-## 5. Novedades de esta versión (v2)
+## 5. Novedades de la versión v3
+
+- **Sin login diario**: la app queda siempre abierta. El guardia solo **selecciona su nombre** (botón) para marcar ingreso/salida de turno, con foto obligatoria y novedades; queda historial. El **login es solo para el administrador** (para entrar a Configuración).
+- **Ingreso/salida de turno** por selección de guardia (varios guardias por puesto). El sistema registra automáticamente quién y cuándo.
+- **Auto-borrado a los 3 meses**: los registros operativos con más de 90 días se borran solos (los datos maestros no).
+- **Rondas**: se quitó el GPS; ahora exige **10 fotos obligatorias** por ronda (además del checklist verde/rojo con foto en novedades).
+- **Aviso de incidentes al admin**: al reportar un incidente, la app avisa por **WhatsApp (un toque)** y/o **correo automático** (configurable en Configuración → Avisos). El correo automático necesita internet y una cuenta Gmail emisora con "clave de aplicación".
+- **Botón de WhatsApp/llamada** en propietarios, residentes y vehículos (ej. avisar "vehículo mal estacionado").
+- **Normativas**: cargar y ver **PDF o imágenes** (el admin sube; todos ven).
+- **Reportes**: totales por día/semana/mes/año.
+- **Vehículos**: dueño, parqueo que ocupa, departamento y teléfono. **Propietarios**: teléfonos, parqueo y **agregar residentes**.
+- **Agregar edificios** y activar/desactivar módulos por edificio (misma APK para varios condominios).
+
+### Configurar el aviso por correo (opcional)
+
+En **Configuración → Avisos** elige el método. Para correo automático necesitas una cuenta Gmail que envíe (puede ser una creada para esto) con una **clave de aplicación** (Google → Seguridad → Verificación en 2 pasos → Contraseñas de aplicaciones). Pones esa cuenta como "correo emisor" y el correo del admin como destinatario.
+
+### Pendiente / próximo paso
+
+- **Modo online** (que el admin vea todos los historiales desde su celular): requiere conectar la nube (Firebase). Es el siguiente paso y necesita crear un proyecto Firebase gratis.
+- Exportar Reportes a Excel/PDF.
+
+---
+
+## 5b. Novedades previas (v2)
 
 - **Diseño responsivo** corregido (sin textos desbordados) y **más colorido**.
 - **Detector de fotos borrosas**: si una foto sale movida/borrosa, la app pide repetirla (umbral ajustable en `lib/services/blur_util.dart`).

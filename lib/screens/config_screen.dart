@@ -160,6 +160,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   DropdownMenuItem(value: 'admin', child: Text('Administrador')),
                   DropdownMenuItem(value: 'supervisor', child: Text('Supervisor')),
                   DropdownMenuItem(value: 'guardia', child: Text('Guardia')),
+                  DropdownMenuItem(value: 'franquero', child: Text('Franquero (temporal)')),
                   DropdownMenuItem(value: 'conserje', child: Text('Conserje')),
                   DropdownMenuItem(value: 'limpieza', child: Text('Limpieza')),
                 ],
@@ -176,18 +177,78 @@ class _ConfigScreenState extends State<ConfigScreen> {
         ),
       ),
     );
-    if (ok == true && u.text.trim().isNotEmpty && pw.text.isNotEmpty) {
+    if (ok == true) {
       try {
-        await AuthService.crearUsuario(
-            usuario: u.text, nombre: n.text, cargo: c.text, rol: rol, password: pw.text);
+        if (rol == 'admin') {
+          if (u.text.trim().isEmpty || pw.text.isEmpty) return;
+          await AuthService.crearAdmin(usuario: u.text, nombre: n.text, password: pw.text);
+        } else {
+          if (n.text.trim().isEmpty) return;
+          await AuthService.crearGuardia(nombre: n.text, cargo: c.text, rol: rol);
+        }
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Usuario creado'), backgroundColor: AppColors.verde));
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Error: usuario ya existe'), backgroundColor: AppColors.rojo));
       }
+    }
+  }
+
+  Future<void> _configAvisos() async {
+    final s = AppState.instance;
+    String metodo = s.notifMetodo;
+    final wa = TextEditingController(text: s.adminWhatsapp);
+    final email = TextEditingController(text: s.adminEmail);
+    final sender = TextEditingController(text: s.senderEmail);
+    final pass = TextEditingController(text: s.senderPass);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Aviso de incidentes al admin'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<String>(
+                value: metodo,
+                decoration: const InputDecoration(labelText: 'Metodo de aviso'),
+                items: const [
+                  DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp (un toque)')),
+                  DropdownMenuItem(value: 'email', child: Text('Correo automatico')),
+                  DropdownMenuItem(value: 'ambos', child: Text('Ambos')),
+                  DropdownMenuItem(value: 'ninguno', child: Text('Ninguno')),
+                ],
+                onChanged: (v) => setD(() => metodo = v ?? 'whatsapp'),
+              ),
+              const SizedBox(height: 8),
+              TextField(controller: wa, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'WhatsApp del admin (ej. 70012345)')),
+              const SizedBox(height: 8),
+              TextField(controller: email, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Correo del admin (recibe avisos)')),
+              const Divider(height: 24),
+              const Text('Cuenta que ENVIA los correos (Gmail):', style: TextStyle(fontSize: 12, color: Colors.black54)),
+              const SizedBox(height: 6),
+              TextField(controller: sender, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Correo emisor (Gmail)')),
+              const SizedBox(height: 8),
+              TextField(controller: pass, obscureText: true, decoration: const InputDecoration(labelText: 'Clave de aplicacion de Gmail')),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Guardar')),
+          ],
+        ),
+      ),
+    );
+    if (ok == true) {
+      await AppState.instance.setNotifConfig(
+        metodo: metodo, whatsapp: wa.text, email: email.text,
+        sender: sender.text, senderPassword: pass.text,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ajustes de aviso guardados'), backgroundColor: AppColors.verde));
     }
   }
 
@@ -254,6 +315,17 @@ class _ConfigScreenState extends State<ConfigScreen> {
               title: const Text('Crear nuevo usuario'),
               subtitle: const Text('Admin, supervisor, guardia, conserje, limpieza'),
               onTap: _nuevoUsuario,
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text('Avisos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.notifications_active, color: Color(0xFFEF6C00)),
+              title: const Text('Aviso de incidentes al admin'),
+              subtitle: const Text('WhatsApp o correo automatico cuando se reporta un incidente'),
+              onTap: _configAvisos,
             ),
           ),
           const SizedBox(height: 24),

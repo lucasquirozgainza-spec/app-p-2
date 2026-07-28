@@ -4,6 +4,8 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/auth_service.dart';
 import '../theme.dart';
+import 'reporte_personal_screen.dart';
+import 'advertencias_screen.dart';
 
 class GuardiasScreen extends StatefulWidget {
   const GuardiasScreen({super.key});
@@ -27,7 +29,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
     final activos = await db.query('ingreso_turno',
         where: 'edificio=? AND activo=1', whereArgs: [ed], orderBy: 'id DESC');
     final personal = await db.query('usuarios',
-        where: "rol IN ('guardia','supervisor','conserje','limpieza') AND activo=1",
+        where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1",
         orderBy: 'nombre');
     if (!mounted) return;
     setState(() {
@@ -37,10 +39,8 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
   }
 
   Future<void> _nuevoGuardia() async {
-    final u = TextEditingController();
     final n = TextEditingController();
     final c = TextEditingController(text: 'Guardia de Seguridad');
-    final pw = TextEditingController();
     String rol = 'guardia';
     final ok = await showDialog<bool>(
       context: context,
@@ -51,8 +51,6 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               TextField(controller: n, decoration: const InputDecoration(labelText: 'Nombre completo')),
               const SizedBox(height: 8),
-              TextField(controller: u, decoration: const InputDecoration(labelText: 'Usuario (para ingresar)')),
-              const SizedBox(height: 8),
               TextField(controller: c, decoration: const InputDecoration(labelText: 'Cargo')),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
@@ -60,14 +58,13 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                 decoration: const InputDecoration(labelText: 'Rol'),
                 items: const [
                   DropdownMenuItem(value: 'guardia', child: Text('Guardia')),
+                  DropdownMenuItem(value: 'franquero', child: Text('Franquero (temporal)')),
                   DropdownMenuItem(value: 'supervisor', child: Text('Supervisor')),
                   DropdownMenuItem(value: 'conserje', child: Text('Conserje')),
                   DropdownMenuItem(value: 'limpieza', child: Text('Limpieza')),
                 ],
                 onChanged: (v) => setD(() => rol = v ?? 'guardia'),
               ),
-              const SizedBox(height: 8),
-              TextField(controller: pw, obscureText: true, decoration: const InputDecoration(labelText: 'Contrasena')),
             ]),
           ),
           actions: [
@@ -77,18 +74,12 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
         ),
       ),
     );
-    if (ok == true && u.text.trim().isNotEmpty && pw.text.isNotEmpty) {
-      try {
-        await AuthService.crearUsuario(usuario: u.text, nombre: n.text, cargo: c.text, rol: rol, password: pw.text);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Guardia registrado'), backgroundColor: AppColors.verde));
-        _load();
-      } catch (_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Ese usuario ya existe'), backgroundColor: AppColors.rojo));
-      }
+    if (ok == true && n.text.trim().isNotEmpty) {
+      await AuthService.crearGuardia(nombre: n.text.trim(), cargo: c.text, rol: rol);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Guardia registrado'), backgroundColor: AppColors.verde));
+      _load();
     }
   }
 
@@ -96,7 +87,23 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
   Widget build(BuildContext context) {
     final s = AppState.instance;
     return Scaffold(
-      appBar: AppBar(title: const Text('Guardias')),
+      appBar: AppBar(
+        title: const Text('Guardias'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.warning_amber),
+            tooltip: 'Advertencias',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const AdvertenciasScreen())),
+          ),
+          IconButton(
+            icon: const Icon(Icons.assessment),
+            tooltip: 'Reporte de personal',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const ReportePersonalScreen())),
+          ),
+        ],
+      ),
       floatingActionButton: s.isSupervisor
           ? FloatingActionButton.extended(
               backgroundColor: AppColors.azulMarino,

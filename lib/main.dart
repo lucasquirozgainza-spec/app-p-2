@@ -3,7 +3,10 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'theme.dart';
 import 'db/database_helper.dart';
 import 'services/app_state.dart';
-import 'screens/login_screen.dart';
+import 'services/retention.dart';
+import 'services/notifications_service.dart';
+import 'services/cloud.dart';
+import 'screens/home_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,14 +41,29 @@ class _BootState extends State<_Boot> {
   }
 
   Future<void> _init() async {
-    // Fuerza creacion de la DB + seed y carga el edificio activo.
+    // Solo lo imprescindible antes de mostrar la app (rapido):
     await initializeDateFormatting('es', null);
     await DB.instance.database;
     await AppState.instance.loadEdificio();
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
     );
+    // El resto corre en segundo plano para no demorar el arranque.
+    _tareasEnSegundoPlano();
+  }
+
+  void _tareasEnSegundoPlano() async {
+    try {
+      await Retention.purgar();
+    } catch (_) {}
+    try {
+      await Cloud.init();
+      await Cloud.heartbeat();
+    } catch (_) {}
+    try {
+      await Notificaciones.programarRondas();
+    } catch (_) {}
   }
 
   @override
@@ -59,8 +77,7 @@ class _BootState extends State<_Boot> {
             Icon(Icons.apartment_rounded, color: Colors.white, size: 72),
             SizedBox(height: 16),
             Text('CondoControl Pro',
-                style: TextStyle(
-                    color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
             SizedBox(height: 24),
             CircularProgressIndicator(color: Colors.white),
           ],
