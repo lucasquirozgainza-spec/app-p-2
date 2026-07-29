@@ -86,5 +86,15 @@ for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
             dep = "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'\n}\n"
         b = b + dep
 
+    # Desactivar R8/minificacion en release (evita errores de clases faltantes de ML Kit).
+    b = re.sub(r"minifyEnabled\s+true", "minifyEnabled false", b)
+    b = re.sub(r"(isMinifyEnabled|isShrinkResources)\s*=\s*true", r"\1 = false", b)
+    b = re.sub(r"shrinkResources\s+true", "shrinkResources false", b)
+    if "minifyEnabled" not in b and "isMinifyEnabled" not in b:
+        if kts:
+            b = re.sub(r"(release\s*\{)", r"\1\n            isMinifyEnabled = false\n            isShrinkResources = false", b, count=1)
+        else:
+            b = re.sub(r"(release\s*\{)", r"\1\n            minifyEnabled false\n            shrinkResources false", b, count=1)
+
     p.write_text(b, encoding="utf-8")
-    print(f"build.gradle ajustado (minSdk + desugaring) en {g}")
+    print(f"build.gradle ajustado (minSdk + desugaring + R8 off) en {g}")
