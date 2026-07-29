@@ -75,9 +75,12 @@ class _VisitasScreenState extends State<VisitasScreen> {
       'tarjeta_devuelta': devuelta ? 1 : 0,
     }, where: 'id=?', whereArgs: [v['id']]);
     if (tieneTarjeta && !devuelta) {
+      final guardiaActual = AppState.instance.userNombre ?? 'Sin turno';
+      final guardiaAsigno = v['guardia_nombre']?.toString() ?? 'desconocido';
       await db.insert('advertencias', {
-        'guardia_nombre': AppState.instance.userNombre,
-        'mensaje': 'Tarjeta NO devuelta - visita ${v['nombre_visita'] ?? ''} (depto ${v['depto'] ?? ''})',
+        'guardia_nombre': guardiaActual,
+        'mensaje': 'Tarjeta NO devuelta - visita ${v['nombre_visita'] ?? ''} (depto ${v['depto'] ?? ''}). '
+            'Tarjeta N° ${v['tarjeta_num'] ?? '-'}. La asigno: $guardiaAsigno. Registro la salida: $guardiaActual.',
         'tipo': 'tarjeta',
         'edificio': AppState.instance.edificioId,
         'created_at': DateTime.now().toIso8601String(),
@@ -272,6 +275,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   final _tarjetaNum = TextEditingController();
   String? _fotoTarjeta;
   bool _ocrLeyendo = false;
+  List<String> _deptoSug = [];
   String? _carnetAnverso;
   String? _carnetReverso;
   bool _saving = false;
@@ -306,6 +310,22 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('CI detectado: $num'), backgroundColor: AppColors.verde));
     }
+  }
+
+  Future<void> _sugerirDeptos() async {
+    final t = _depto.text.trim();
+    if (t.isEmpty) {
+      setState(() => _deptoSug = []);
+      return;
+    }
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final rows = await db.rawQuery(
+        'SELECT DISTINCT depto FROM propietarios WHERE edificio=? AND depto LIKE ? ORDER BY depto LIMIT 8',
+        [ed, '$t%']);
+    final sug = rows.map((r) => r['depto'].toString()).where((d) => d.isNotEmpty && d != t).toList();
+    if (!mounted) return;
+    setState(() => _deptoSug = sug);
   }
 
   Future<List<Map<String, dynamic>>> _consultarContactos(String depto) async {
@@ -345,28 +365,17 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
                   shrinkWrap: true,
                   children: [
                     for (final c in contactos)
-                      Card(
-                        child: ListTile(
-                          leading: const Icon(Icons.person, color: AppColors.azulMarino),
-                          title: Text(c['nombre']?.toString() ?? ''),
-                          subtitle: Text('${c['rol']}${(c['tel']?.toString().isNotEmpty ?? false) ? '\n${c['tel']}' : ''}'),
-                          isThreeLine: (c['tel']?.toString().isNotEmpty ?? false),
-                          trailing: (c['tel']?.toString().isNotEmpty ?? false)
-                              ? Row(mainAxisSize: MainAxisSize.min, children: [
-                                  IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino),
-                                      tooltip: 'Llamar',
-                                      onPressed: () => Contacto.llamar(context, c['tel'].toString())),
-                                  IconButton(icon: const Icon(Icons.chat, color: AppColors.verde),
-                                      tooltip: 'WhatsApp',
-                                      onPressed: () => Contacto.whatsapp(context, c['tel'].toString(),
-                                          mensaje: 'Tiene una visita: ${_nombre.text}. ¿Autoriza el ingreso al depto $depto?')),
-                                ])
-                              : null,
-                          onTap: () {
-                            setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
-                            Navigator.pop(context);
-                          },
-                        ),
+                      _ContactoCard(
+                        nombre: c['nombre']?.toString() ?? '',
+                        rol: c['rol']?.toString() ?? '',
+                        tel: c['tel']?.toString() ?? '',
+                        onLlamar: () => Contacto.llamar(context, c['tel'].toString()),
+                        onWhatsapp: () => Contacto.whatsapp(context, c['tel'].toString(),
+                            mensaje: 'Tiene una visita: ${_nombre.text}. ¿Autoriza el ingreso al depto $depto?'),
+                        onElegir: () {
+                          setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
+                          Navigator.pop(context);
+                        },
                       ),
                   ],
                 ),
@@ -438,7 +447,25 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
               labelText: 'Departamento a visitar *',
               prefixIcon: Icon(Icons.meeting_room),
             ),
-            onChanged: (_) => setState(() {})),
+            onChanged: (_) => _sugerirDeptos()),
+        if (_deptoSug.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final d in _deptoSug)
+                ActionChip(
+                  label: Text(d),
+                  backgroundColor: AppColors.grisClaro,
+                  onPressed: () {
+                    _depto.text = d;
+                    setState(() => _deptoSug = []);
+                    _mostrarContactos();
+                  },
+                ),
+            ],
+          ),
+        ],
         const SizedBox(height: 10),
         SizedBox(
           width: double.infinity,
@@ -503,6 +530,91 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           label: const Text('Registrar ingreso'),
         ),
       ]),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+class _ContactoCard extends StatelessWidget {
+  final String nombre;
+  final String rol;
+  final String tel;
+  final VoidCallback onLlamar;
+  final VoidCallback onWhatsapp;
+  final VoidCallback onElegir;
+  const _ContactoCard({
+    required this.nombre,
+    required this.rol,
+    required this.tel,
+    required this.onLlamar,
+    required this.onWhatsapp,
+    required this.onElegir,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tieneTel = tel.trim().isNotEmpty;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const CircleAvatar(
+                  radius: 18,
+                  backgroundColor: Color(0x1A0A335D),
+                  child: Icon(Icons.person, color: AppColors.azulMarino, size: 20)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(nombre,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    Text('$rol${tieneTel ? '  ·  $tel' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.black54, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ]),
+            if (tieneTel) ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onLlamar,
+                    icon: const Icon(Icons.call, size: 18),
+                    label: const Text('Llamar'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
+                    onPressed: onWhatsapp,
+                    icon: const Icon(Icons.chat, size: 18),
+                    label: const Text('WhatsApp'),
+                  ),
+                ),
+              ]),
+            ],
+            SizedBox(
+              width: double.infinity,
+              child: TextButton.icon(
+                onPressed: onElegir,
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('Elegir como quien autoriza'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

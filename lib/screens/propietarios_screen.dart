@@ -51,6 +51,19 @@ class _PropietariosScreenState extends State<PropietariosScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.soloVehiculos ? 'Vehiculos' : 'Propietarios')),
+      floatingActionButton: widget.soloVehiculos
+          ? null
+          : FloatingActionButton.extended(
+              backgroundColor: const Color(0xFF1565C0),
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add),
+              label: const Text('Registrar'),
+              onPressed: () async {
+                await Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const PropietarioForm()));
+                _load();
+              },
+            ),
       body: Column(
         children: [
           Padding(
@@ -305,6 +318,104 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+class PropietarioForm extends StatefulWidget {
+  const PropietarioForm({super.key});
+  @override
+  State<PropietarioForm> createState() => _PropietarioFormState();
+}
+
+class _PropietarioFormState extends State<PropietarioForm> {
+  final _depto = TextEditingController();
+  final _torre = TextEditingController();
+  final _copro = TextEditingController();
+  final _tel = TextEditingController();
+  final _inq = TextEditingController();
+  final _telInq = TextEditingController();
+  final _parqueo = TextEditingController();
+  final _vehiculo = TextEditingController();
+  final _placa = TextEditingController();
+  final _mascota = TextEditingController();
+  final _obs = TextEditingController();
+  bool _saving = false;
+
+  Future<void> _guardar() async {
+    if (_depto.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Ingrese el departamento'), backgroundColor: AppColors.rojo));
+      return;
+    }
+    setState(() => _saving = true);
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final id = '$ed-${_depto.text.trim()}-${DateTime.now().millisecondsSinceEpoch}';
+    await db.insert('propietarios', {
+      'id': id,
+      'edificio': ed,
+      'torre': _torre.text.trim(),
+      'depto': _depto.text.trim(),
+      'copropietario': _copro.text,
+      'telefono': _tel.text,
+      'inquilino': _inq.text,
+      'telefono_inq': _telInq.text,
+      'nro_parqueo': _parqueo.text,
+      'vehiculo': _vehiculo.text,
+      'placa': _placa.text,
+      'mascota': _mascota.text,
+      'observaciones': _obs.text,
+    });
+    await Audit.log('CREAR', 'propietarios', id, detalle: 'depto ${_depto.text}');
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Registrar Propietario')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Row(children: [
+            Expanded(child: TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento *'))),
+            const SizedBox(width: 10),
+            Expanded(child: TextField(controller: _torre, decoration: const InputDecoration(labelText: 'Torre (A/B)'))),
+          ]),
+          const SizedBox(height: 12),
+          TextField(controller: _copro, decoration: const InputDecoration(labelText: 'Copropietario')),
+          const SizedBox(height: 12),
+          TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefono')),
+          const SizedBox(height: 12),
+          TextField(controller: _inq, decoration: const InputDecoration(labelText: 'Inquilino')),
+          const SizedBox(height: 12),
+          TextField(controller: _telInq, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefono inquilino')),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: TextField(controller: _parqueo, decoration: const InputDecoration(labelText: 'Nro parqueo'))),
+            const SizedBox(width: 10),
+            Expanded(child: TextField(controller: _placa, decoration: const InputDecoration(labelText: 'Placa'))),
+          ]),
+          const SizedBox(height: 12),
+          TextField(controller: _vehiculo, decoration: const InputDecoration(labelText: 'Vehiculo')),
+          const SizedBox(height: 12),
+          TextField(controller: _mascota, decoration: const InputDecoration(labelText: 'Mascota')),
+          const SizedBox(height: 12),
+          TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _saving ? null : _guardar,
+            icon: _saving
+                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                : const Icon(Icons.save),
+            label: const Text('Guardar propietario'),
+          ),
         ],
       ),
     );

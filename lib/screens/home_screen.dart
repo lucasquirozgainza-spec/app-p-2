@@ -77,6 +77,36 @@ class _HomeScreenState extends State<HomeScreen> {
     if (ok == true && mounted) setState(() {});
   }
 
+  /// Si no hay turno iniciado, muestra una advertencia. Devuelve true si se
+  /// puede continuar con la accion.
+  Future<void> _accionConTurno(Widget screen) async {
+    if (AppState.instance.turnoActivoId != null) {
+      _open(screen);
+      return;
+    }
+    final r = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.warning_amber, color: AppColors.rojo, size: 40),
+        title: const Text('No has iniciado turno'),
+        content: const Text('Debes iniciar tu turno antes de registrar. '
+            '¿Quieres iniciar turno ahora?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, 'igual'),
+              child: const Text('Continuar igual')),
+          FilledButton(onPressed: () => Navigator.pop(context, 'turno'),
+              child: const Text('Iniciar turno')),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (r == 'turno') {
+      _open(const InicioTurnoScreen());
+    } else if (r == 'igual') {
+      _open(screen);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = AppState.instance;
@@ -208,19 +238,19 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _acciones(AppState s) {
     final acts = <Widget>[];
     if (s.modulo('visitas')) {
-      acts.add(ActionButton(icon: Icons.badge, label: 'Registrar\nVisita', color: AppColors.azulMarino, onTap: () => _open(const VisitaFormScreen())));
+      acts.add(ActionButton(icon: Icons.badge, label: 'Registrar\nVisita', color: AppColors.azulMarino, onTap: () => _accionConTurno(const VisitaFormScreen())));
     }
     if (s.modulo('incidentes')) {
-      acts.add(ActionButton(icon: Icons.warning_amber, label: 'Reportar\nIncidente', color: AppColors.rojo, onTap: () => _open(const IncidenteForm())));
+      acts.add(ActionButton(icon: Icons.warning_amber, label: 'Reportar\nIncidente', color: AppColors.rojo, onTap: () => _accionConTurno(const IncidenteForm())));
     }
     if (s.modulo('hospedajes')) {
-      acts.add(ActionButton(icon: Icons.hotel, label: 'Registrar\nHospedaje', color: const Color(0xFF00838F), onTap: () => _open(const HospedajeForm())));
+      acts.add(ActionButton(icon: Icons.hotel, label: 'Registrar\nHospedaje', color: const Color(0xFF00838F), onTap: () => _accionConTurno(const HospedajeForm())));
     }
     if (s.modulo('encomiendas')) {
-      acts.add(ActionButton(icon: Icons.inventory_2, label: 'Encomienda', color: const Color(0xFFEF6C00), onTap: () => _open(const EncomiendaForm())));
+      acts.add(ActionButton(icon: Icons.inventory_2, label: 'Encomienda', color: const Color(0xFFEF6C00), onTap: () => _accionConTurno(const EncomiendaForm())));
     }
     if (s.modulo('rondas')) {
-      acts.add(ActionButton(icon: Icons.directions_walk, label: 'Nueva\nRonda', color: const Color(0xFF6A1B9A), onTap: () => _open(const RondaScreen())));
+      acts.add(ActionButton(icon: Icons.directions_walk, label: 'Nueva\nRonda', color: const Color(0xFF6A1B9A), onTap: () => _accionConTurno(const RondaScreen())));
     }
     if (s.modulo('reportes')) {
       acts.add(ActionButton(icon: Icons.bar_chart, label: 'Reportes', color: const Color(0xFF283593), onTap: () => _open(const ReportesScreen())));
@@ -235,16 +265,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _modules(AppState s) {
     final all = <_Mod>[
+      // Historiales
       _Mod('visitas', Icons.badge, 'Historial Visitas', AppColors.azulMarino, () => const VisitasScreen()),
       _Mod('rondas', Icons.directions_walk, 'Historial Rondas', const Color(0xFF6A1B9A), () => const RondasHistorialScreen()),
+      // Personas y bienes
       _Mod('propietarios', Icons.people, 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
       _Mod('vehiculos', Icons.directions_car, 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
-      _Mod('mantenimiento', Icons.build, 'Mantenimiento', const Color(0xFF5D4037), () => const MantenimientoScreen()),
-      _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
-      _Mod('panel', Icons.dashboard, 'Panel', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
-      _Mod('guardias', Icons.shield, 'Guardias', AppColors.verde, () => const GuardiasScreen(), always: true),
       _Mod('contactos', Icons.contact_phone, 'Contactos', const Color(0xFF00695C), () => const ContactosScreen()),
-      _Mod('normativas', Icons.picture_as_pdf, 'Normativas', const Color(0xFF37474F), () => const NormativasScreen()),
+      // Operacion
+      _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
+      _Mod('mantenimiento', Icons.build, 'Mantenimiento', const Color(0xFF5D4037), () => const MantenimientoScreen()),
+      // Gestion
+      _Mod('panel', Icons.dashboard, 'Panel', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();
     return GridView.extent(
@@ -254,12 +286,6 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         for (final m in visibles)
           ModuleCard(icon: m.icon, label: m.label, color: m.color, onTap: () => _open(m.build())),
-        // Funciones de administrador: solo visibles cuando el admin entra.
-        if (s.isAdmin) ...[
-          ModuleCard(icon: Icons.cloud, label: 'En linea', color: const Color(0xFF0277BD), onTap: _openOnline),
-          ModuleCard(icon: Icons.settings, label: 'Configuracion', color: const Color(0xFF546E7A), onTap: _openConfig),
-        ] else
-          ModuleCard(icon: Icons.admin_panel_settings, label: 'Entrar como admin', color: const Color(0xFF546E7A), onTap: _entrarAdmin),
       ],
     );
   }
@@ -305,6 +331,8 @@ class _HomeScreenState extends State<HomeScreen> {
           else
             item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen()),
           item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen()),
+          item(Icons.shield, 'Guardias', const GuardiasScreen()),
+          item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), show: s.modulo('normativas')),
           const Divider(),
           if (!s.isAdmin)
             ListTile(

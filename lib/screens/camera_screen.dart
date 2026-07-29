@@ -21,6 +21,8 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
   CameraController? _controller;
   Future<void>? _initFuture;
+  List<CameraDescription> _cams = [];
+  int _idx = 0;
   final List<String> _fotos = [];
   bool _capturando = false;
   String? _error;
@@ -29,28 +31,44 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _iniciar();
+    _cargarCamaras();
+  }
+
+  Future<void> _cargarCamaras() async {
+    try {
+      _cams = await availableCameras();
+      if (_cams.isEmpty) {
+        setState(() => _error = 'No se encontro camara');
+        return;
+      }
+      // Empezar con la camara trasera.
+      _idx = _cams.indexWhere((c) => c.lensDirection == CameraLensDirection.back);
+      if (_idx < 0) _idx = 0;
+      await _iniciar();
+    } catch (_) {
+      if (mounted) setState(() => _error = 'No se pudo abrir la camara');
+    }
   }
 
   Future<void> _iniciar() async {
     try {
-      final cams = await availableCameras();
-      if (cams.isEmpty) {
-        setState(() => _error = 'No se encontro camara');
-        return;
-      }
-      final back = cams.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cams.first,
-      );
-      final c = CameraController(back, ResolutionPreset.high, enableAudio: false);
+      if (_cams.isEmpty) return;
+      await _controller?.dispose();
+      final c = CameraController(_cams[_idx], ResolutionPreset.high, enableAudio: false);
       _controller = c;
       _initFuture = c.initialize();
       await _initFuture;
       if (mounted) setState(() {});
-    } catch (e) {
+    } catch (_) {
       if (mounted) setState(() => _error = 'No se pudo abrir la camara');
     }
+  }
+
+  Future<void> _voltear() async {
+    if (_cams.length < 2) return;
+    _idx = (_idx + 1) % _cams.length;
+    setState(() {});
+    await _iniciar();
   }
 
   @override
@@ -114,6 +132,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         backgroundColor: Colors.black,
         title: Text(widget.multi ? 'Fotos: ${_fotos.length}${widget.minFotos > 0 ? '/${widget.minFotos}' : ''}' : 'Tomar foto'),
         actions: [
+          if (_cams.length > 1)
+            IconButton(
+              icon: const Icon(Icons.cameraswitch, color: Colors.white),
+              tooltip: 'Voltear camara (selfie)',
+              onPressed: _voltear,
+            ),
           if (widget.multi)
             TextButton(
               onPressed: () => Navigator.pop(context, _fotos),

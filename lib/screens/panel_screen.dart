@@ -5,6 +5,15 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'visitas_screen.dart';
+import 'rondas_historial_screen.dart';
+import 'hospedajes_screen.dart';
+import 'encomiendas_screen.dart';
+import 'incidentes_screen.dart';
+import 'mantenimiento_screen.dart';
+import 'vehiculos_screen.dart';
+import 'propietarios_screen.dart';
+import 'guardias_screen.dart';
 
 class PanelScreen extends StatefulWidget {
   const PanelScreen({super.key});
@@ -48,19 +57,27 @@ class _PanelScreenState extends State<PanelScreen> {
     });
   }
 
+  Widget _tile(IconData icon, String value, String label, Color color, Widget Function() builder) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => builder())),
+      child: StatTile(icon: icon, value: value, label: label, color: color),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tiles = <Widget>[
-      StatTile(icon: Icons.login, value: '${stats['visitas_hoy'] ?? 0}', label: 'Visitas hoy', color: AppColors.azulMarino),
-      StatTile(icon: Icons.people_alt, value: '${stats['dentro'] ?? 0}', label: 'Dentro ahora', color: AppColors.verde),
-      StatTile(icon: Icons.directions_walk, value: '${stats['rondas_hoy'] ?? 0}', label: 'Rondas hoy', color: const Color(0xFF6A1B9A)),
-      StatTile(icon: Icons.hotel, value: '${stats['hospedajes'] ?? 0}', label: 'Hospedajes activos', color: const Color(0xFF00838F)),
-      StatTile(icon: Icons.inventory_2, value: '${stats['encomiendas'] ?? 0}', label: 'Encomiendas pend.', color: const Color(0xFFEF6C00)),
-      StatTile(icon: Icons.warning_amber, value: '${stats['incidentes'] ?? 0}', label: 'Incidentes abiertos', color: AppColors.rojo),
-      StatTile(icon: Icons.build, value: '${stats['mantenimiento'] ?? 0}', label: 'Mantenim. pend.', color: const Color(0xFF5D4037)),
-      StatTile(icon: Icons.directions_car, value: '${stats['vehiculos'] ?? 0}', label: 'Vehiculos', color: const Color(0xFF283593)),
-      StatTile(icon: Icons.people, value: '${stats['propietarios'] ?? 0}', label: 'Propietarios', color: const Color(0xFF1565C0)),
-      StatTile(icon: Icons.shield, value: '${stats['guardias'] ?? 0}', label: 'Guardias activos', color: AppColors.verde),
+      _tile(Icons.login, '${stats['visitas_hoy'] ?? 0}', 'Visitas hoy', AppColors.azulMarino, () => const VisitasScreen()),
+      _tile(Icons.people_alt, '${stats['dentro'] ?? 0}', 'Dentro ahora', AppColors.verde, () => const VisitasScreen()),
+      _tile(Icons.directions_walk, '${stats['rondas_hoy'] ?? 0}', 'Rondas hoy', const Color(0xFF6A1B9A), () => const RondasHistorialScreen()),
+      _tile(Icons.hotel, '${stats['hospedajes'] ?? 0}', 'Hospedajes activos', const Color(0xFF00838F), () => const HospedajesScreen()),
+      _tile(Icons.inventory_2, '${stats['encomiendas'] ?? 0}', 'Encomiendas pend.', const Color(0xFFEF6C00), () => const EncomiendasScreen()),
+      _tile(Icons.warning_amber, '${stats['incidentes'] ?? 0}', 'Incidentes abiertos', AppColors.rojo, () => const IncidentesScreen()),
+      _tile(Icons.build, '${stats['mantenimiento'] ?? 0}', 'Mantenim. pend.', const Color(0xFF5D4037), () => const MantenimientoScreen()),
+      _tile(Icons.directions_car, '${stats['vehiculos'] ?? 0}', 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
+      _tile(Icons.people, '${stats['propietarios'] ?? 0}', 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
+      _tile(Icons.shield, '${stats['guardias'] ?? 0}', 'Guardias activos', AppColors.verde, () => const GuardiasScreen()),
     ];
     return Scaffold(
       appBar: AppBar(title: const Text('Panel / Resumen')),
