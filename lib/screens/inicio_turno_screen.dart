@@ -33,8 +33,11 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
 
   Future<void> _load() async {
     final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
     final rows = await db.query('usuarios',
-        where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1",
+        where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1 "
+            "AND (edificio=? OR edificio IS NULL OR edificio='')",
+        whereArgs: [ed],
         orderBy: 'nombre');
     if (!mounted) return;
     setState(() => _guardias = rows);
@@ -96,26 +99,28 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(16),
-                child: Text('No hay guardias registrados. Pide al administrador '
-                    'que los registre en el modulo Guardias.'),
+                child: Text('No hay guardias registrados para este edificio. '
+                    'Pide al administrador que los registre en el modulo Guardias.'),
               ),
             )
           else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
+            DropdownButtonFormField<int>(
+              value: _sel?['id'] as int?,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Guardia',
+                prefixIcon: Icon(Icons.person),
+              ),
+              items: [
                 for (final g in _guardias)
-                  ChoiceChip(
-                    label: Text(g['nombre']?.toString() ?? ''),
-                    selected: _sel?['id'] == g['id'],
-                    onSelected: (_) => setState(() => _sel = g),
-                    selectedColor: AppColors.azulMarino,
-                    labelStyle: TextStyle(
-                        color: _sel?['id'] == g['id'] ? Colors.white : Colors.black87),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  DropdownMenuItem<int>(
+                    value: g['id'] as int,
+                    child: Text('${g['nombre']}  ·  ${g['cargo'] ?? ''}',
+                        overflow: TextOverflow.ellipsis),
                   ),
               ],
+              onChanged: (id) => setState(() =>
+                  _sel = _guardias.firstWhere((g) => g['id'] == id)),
             ),
           const SizedBox(height: 16),
           PhotoField(label: 'Foto del guardia', obligatoria: true, onChanged: (v) => setState(() => _foto = v)),

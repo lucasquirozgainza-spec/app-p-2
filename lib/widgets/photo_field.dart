@@ -73,7 +73,9 @@ class _PhotoFieldState extends State<PhotoField> {
                 width: has ? 2 : 1,
               ),
               image: has
-                  ? DecorationImage(image: FileImage(File(_path!)), fit: BoxFit.cover)
+                  ? DecorationImage(
+                      image: ResizeImage(FileImage(File(_path!)), width: 900),
+                      fit: BoxFit.cover)
                   : null,
             ),
             child: has

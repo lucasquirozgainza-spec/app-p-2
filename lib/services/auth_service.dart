@@ -37,9 +37,27 @@ class AuthService {
       'pass_hash': CryptoUtil.hash('sin-clave', salt),
       'salt': salt,
       'activo': 1,
+      'edificio': AppState.instance.edificioId,
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'usuarios', '$id', detalle: 'guardia=$nombre');
+  }
+
+  /// Cambia la contraseña de un administrador. Devuelve null si ok o el error.
+  static Future<String?> cambiarPasswordAdmin(String usuario, String actual, String nueva) async {
+    final db = await DB.instance.database;
+    final rows = await db.query('usuarios', where: "usuario=? AND rol='admin'", whereArgs: [usuario.trim()]);
+    if (rows.isEmpty) return 'Administrador no encontrado';
+    final u = rows.first;
+    if (!CryptoUtil.verify(actual, u['salt'] as String, u['pass_hash'] as String)) {
+      return 'Contrasena actual incorrecta';
+    }
+    if (nueva.trim().length < 4) return 'La nueva contrasena es muy corta';
+    final salt = CryptoUtil.newSalt();
+    await db.update('usuarios', {'salt': salt, 'pass_hash': CryptoUtil.hash(nueva, salt)},
+        where: 'id=?', whereArgs: [u['id']]);
+    await Audit.log('CAMBIO_PASS', 'usuarios', '${u['id']}');
+    return null;
   }
 
   /// Crea un usuario administrador (con contraseña).

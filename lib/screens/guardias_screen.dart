@@ -29,7 +29,9 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
     final activos = await db.query('ingreso_turno',
         where: 'edificio=? AND activo=1', whereArgs: [ed], orderBy: 'id DESC');
     final personal = await db.query('usuarios',
-        where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1",
+        where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1 "
+            "AND (edificio=? OR edificio IS NULL OR edificio='')",
+        whereArgs: [ed],
         orderBy: 'nombre');
     if (!mounted) return;
     setState(() {

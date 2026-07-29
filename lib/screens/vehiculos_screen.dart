@@ -70,21 +70,26 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
                     itemBuilder: (_, i) {
                       final v = _rows[i];
                       final placa = (v['placa']?.toString() ?? '').trim();
+                      final depto = (v['depto']?.toString() ?? '').trim();
                       final tel = (v['telefono']?.toString() ?? '').trim();
                       return Card(
                         child: ListTile(
                           leading: const CircleAvatar(
                               backgroundColor: Color(0x1A283593),
                               child: Icon(Icons.directions_car, color: Color(0xFF283593))),
-                          title: Text(placa.isNotEmpty ? placa : (v['vehiculo']?.toString() ?? '—'),
+                          title: Text(depto.isNotEmpty ? 'Depto $depto' : 'Sin depto',
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text([
-                            v['vehiculo'], v['marca'], v['modelo'], v['color'],
-                            (v['depto']?.toString().isNotEmpty ?? false) ? 'Depto ${v['depto']}' : null,
-                            v['propietario'],
+                            placa.isNotEmpty ? 'Placa $placa' : null,
+                            v['vehiculo'], v['marca'], v['color'], v['propietario'],
                           ].where((e) => e != null && e.toString().trim().isNotEmpty).join(' · ')),
+                          onTap: () async {
+                            await Navigator.push(context,
+                                MaterialPageRoute(builder: (_) => VehiculoForm(existente: v)));
+                            _load();
+                          },
                           trailing: tel.isEmpty
-                              ? null
+                              ? const Icon(Icons.edit, color: Colors.grey, size: 20)
                               : Row(mainAxisSize: MainAxisSize.min, children: [
                                   IconButton(
                                       icon: const Icon(Icons.call, color: AppColors.azulMarino),
@@ -109,7 +114,8 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
 }
 
 class VehiculoForm extends StatefulWidget {
-  const VehiculoForm({super.key});
+  final Map<String, dynamic>? existente;
+  const VehiculoForm({super.key, this.existente});
   @override
   State<VehiculoForm> createState() => _VehiculoFormState();
 }
@@ -127,6 +133,26 @@ class _VehiculoFormState extends State<VehiculoForm> {
   String? _foto;
   bool _saving = false;
 
+  bool get _editando => widget.existente != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existente;
+    if (e != null) {
+      _placa.text = e['placa']?.toString() ?? '';
+      _marca.text = e['marca']?.toString() ?? '';
+      _modelo.text = e['modelo']?.toString() ?? '';
+      _color.text = e['color']?.toString() ?? '';
+      _depto.text = e['depto']?.toString() ?? '';
+      _prop.text = e['propietario']?.toString() ?? '';
+      _parqueo.text = e['nro_parqueo']?.toString() ?? '';
+      _tel.text = e['telefono']?.toString() ?? '';
+      _obs.text = e['observaciones']?.toString() ?? '';
+      _foto = e['foto']?.toString();
+    }
+  }
+
   Future<void> _guardar() async {
     if (_placa.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -135,7 +161,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
     }
     setState(() => _saving = true);
     final db = await DB.instance.database;
-    final id = await db.insert('vehiculos', {
+    final data = {
       'edificio': AppState.instance.edificioId,
       'placa': _placa.text.trim().toUpperCase(),
       'marca': _marca.text,
@@ -148,8 +174,14 @@ class _VehiculoFormState extends State<VehiculoForm> {
       'telefono': _tel.text,
       'foto': _foto,
       'observaciones': _obs.text,
-    });
-    await Audit.log('CREAR', 'vehiculos', '$id', detalle: _placa.text);
+    };
+    if (_editando) {
+      await db.update('vehiculos', data, where: 'id=?', whereArgs: [widget.existente!['id']]);
+      await Audit.log('EDITAR', 'vehiculos', '${widget.existente!['id']}', detalle: _placa.text);
+    } else {
+      final id = await db.insert('vehiculos', data);
+      await Audit.log('CREAR', 'vehiculos', '$id', detalle: _placa.text);
+    }
     if (!mounted) return;
     Navigator.pop(context);
   }
@@ -157,7 +189,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Registrar Vehiculo')),
+      appBar: AppBar(title: Text(_editando ? 'Editar Vehiculo' : 'Registrar Vehiculo')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -183,7 +215,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
             Expanded(child: TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefono'))),
           ]),
           const SizedBox(height: 16),
-          PhotoField(label: 'Foto del vehiculo', onChanged: (v) => _foto = v),
+          PhotoField(label: 'Foto del vehiculo', initialPath: _foto, onChanged: (v) => _foto = v),
           TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),
           const SizedBox(height: 16),
           FilledButton.icon(

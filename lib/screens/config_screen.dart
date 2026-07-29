@@ -134,6 +134,38 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
   }
 
+  Future<void> _cambiarPassword() async {
+    final u = TextEditingController(text: 'admin');
+    final act = TextEditingController();
+    final nue = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Cambiar contrasena de admin'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: u, decoration: const InputDecoration(labelText: 'Usuario admin')),
+            const SizedBox(height: 8),
+            TextField(controller: act, obscureText: true, decoration: const InputDecoration(labelText: 'Contrasena actual')),
+            const SizedBox(height: 8),
+            TextField(controller: nue, obscureText: true, decoration: const InputDecoration(labelText: 'Nueva contrasena')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Cambiar')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final err = await AuthService.cambiarPasswordAdmin(u.text, act.text, nue.text);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(err ?? 'Contrasena actualizada'),
+          backgroundColor: err == null ? AppColors.verde : AppColors.rojo));
+    }
+  }
+
   Future<void> _nuevoUsuario() async {
     final u = TextEditingController();
     final n = TextEditingController();
@@ -315,6 +347,13 @@ class _ConfigScreenState extends State<ConfigScreen> {
               title: const Text('Crear nuevo usuario'),
               subtitle: const Text('Admin, supervisor, guardia, conserje, limpieza'),
               onTap: _nuevoUsuario,
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.password, color: AppColors.azulMarino),
+              title: const Text('Cambiar contrasena de admin'),
+              onTap: _cambiarPassword,
             ),
           ),
           const SizedBox(height: 16),

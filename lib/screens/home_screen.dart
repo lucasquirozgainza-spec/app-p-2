@@ -263,8 +263,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _modules(AppState s) {
     final all = <_Mod>[
       // Historiales
-      _Mod('visitas', Icons.badge, 'Historial Visitas', AppColors.azulMarino, () => const VisitasScreen()),
-      _Mod('rondas', Icons.directions_walk, 'Historial Rondas', const Color(0xFF6A1B9A), () => const RondasHistorialScreen()),
+      _Mod('visitas', Icons.manage_search, 'Historial Visitas', const Color(0xFF00897B), () => const VisitasScreen()),
+      _Mod('rondas', Icons.history, 'Historial Rondas', const Color(0xFF512DA8), () => const RondasHistorialScreen()),
       // Personas y bienes
       _Mod('propietarios', Icons.people, 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
       _Mod('vehiculos', Icons.directions_car, 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
