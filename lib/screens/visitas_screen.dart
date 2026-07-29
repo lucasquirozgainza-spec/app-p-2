@@ -329,8 +329,9 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     if (!mounted) return;
     setState(() {
       _ocrLeyendo = false;
-      if (data.ci != null && _ci.text.trim().isEmpty) _ci.text = data.ci!;
-      if (data.nombre != null && _nombre.text.trim().isEmpty) _nombre.text = data.nombre!;
+      // Se rellena con lo detectado (el guardia puede corregir despues).
+      if (data.ci != null) _ci.text = data.ci!;
+      if (data.nombre != null) _nombre.text = data.nombre!;
     });
     if (data.ci != null || data.nombre != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -413,9 +414,10 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   }
 
   Future<void> _guardar() async {
+    final pideCarnet = AppState.instance.campoVisita('v_carnet');
     if (_nombre.text.trim().isEmpty) return _snack('Ingrese el nombre del visitante');
-    if (_carnetAnverso == null) return _snack('La foto del carnet (anverso) es obligatoria');
-    if (_carnetReverso == null) return _snack('La foto del carnet (reverso) es obligatoria');
+    if (pideCarnet && _carnetAnverso == null) return _snack('La foto del carnet (anverso) es obligatoria');
+    if (pideCarnet && _carnetReverso == null) return _snack('La foto del carnet (reverso) es obligatoria');
     setState(() => _saving = true);
     final s = AppState.instance;
     final gps = await DeviceContext.gps();
@@ -507,46 +509,54 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
               prefixIcon: Icon(Icons.how_to_reg),
             )),
         const SizedBox(height: 8),
-        // PASO 2: Tarjeta
-        _paso('2', 'Asignar tarjeta de acceso'),
-        PhotoField(label: 'Foto de la tarjeta (lee el numero solo)', onChanged: _ocrTarjeta),
-        TextField(controller: _tarjetaNum,
-            decoration: const InputDecoration(labelText: 'N° de tarjeta (automatico o manual)')),
-        const SizedBox(height: 12),
+        // PASO 2: Tarjeta (configurable por edificio)
+        if (s.campoVisita('v_tarjeta')) ...[
+          _paso('2', 'Asignar tarjeta de acceso'),
+          PhotoField(label: 'Foto de la tarjeta (lee el numero solo)', onChanged: _ocrTarjeta),
+          TextField(controller: _tarjetaNum,
+              decoration: const InputDecoration(labelText: 'N° de tarjeta (automatico o manual)')),
+          const SizedBox(height: 12),
+        ],
         // PASO 3: Carnet -> llena nombre y CI solos
-        _paso('3', 'Foto del carnet (llena nombre y CI solos)'),
-        PhotoField(label: 'Carnet ANVERSO', obligatoria: true, onChanged: (v) => _procesarCarnet(v, true)),
-        PhotoField(label: 'Carnet REVERSO', obligatoria: true, onChanged: (v) => _procesarCarnet(v, false)),
-        if (_ocrLeyendo)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
-            child: Row(children: [
-              SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2.5)),
-              SizedBox(width: 8),
-              Text('Leyendo el carnet...', style: TextStyle(color: AppColors.azulMarino)),
-            ]),
-          ),
+        _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Foto del carnet (llena nombre y CI solos)'),
+        if (s.campoVisita('v_carnet')) ...[
+          PhotoField(label: 'Carnet ANVERSO', obligatoria: true, onChanged: (v) => _procesarCarnet(v, true)),
+          PhotoField(label: 'Carnet REVERSO', obligatoria: true, onChanged: (v) => _procesarCarnet(v, false)),
+          if (_ocrLeyendo)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2.5)),
+                SizedBox(width: 8),
+                Text('Leyendo el carnet...', style: TextStyle(color: AppColors.azulMarino)),
+              ]),
+            ),
+        ],
         TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(labelText: 'Nombre completo del visitante *', prefixIcon: Icon(Icons.person))),
         const SizedBox(height: 12),
         TextField(controller: _ci, keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Numero de CI', prefixIcon: Icon(Icons.badge))),
+            decoration: const InputDecoration(labelText: 'Numero de documento', prefixIcon: Icon(Icons.badge))),
         const SizedBox(height: 12),
         // PASO 4: Vehiculo, motivo, observaciones
-        _paso('4', 'Vehiculo y detalles'),
-        SwitchListTile(
-          value: _tieneVehiculo,
-          onChanged: (v) => setState(() => _tieneVehiculo = v),
-          title: const Text('¿Ingresa con vehiculo?'),
-          activeColor: AppColors.verde,
-          contentPadding: EdgeInsets.zero,
-        ),
-        if (_tieneVehiculo)
-          TextField(controller: _placa, textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'Placa del vehiculo', prefixIcon: Icon(Icons.directions_car))),
-        const SizedBox(height: 12),
-        TextField(controller: _motivo, decoration: const InputDecoration(labelText: 'Motivo')),
-        const SizedBox(height: 12),
+        _paso('4', 'Detalles'),
+        if (s.campoVisita('v_vehiculo')) ...[
+          SwitchListTile(
+            value: _tieneVehiculo,
+            onChanged: (v) => setState(() => _tieneVehiculo = v),
+            title: const Text('¿Ingresa con vehiculo?'),
+            activeColor: AppColors.verde,
+            contentPadding: EdgeInsets.zero,
+          ),
+          if (_tieneVehiculo)
+            TextField(controller: _placa, textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(labelText: 'Placa del vehiculo', prefixIcon: Icon(Icons.directions_car))),
+          const SizedBox(height: 12),
+        ],
+        if (s.campoVisita('v_motivo')) ...[
+          TextField(controller: _motivo, decoration: const InputDecoration(labelText: 'Motivo')),
+          const SizedBox(height: 12),
+        ],
         TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),
         const SizedBox(height: 12),
         LockedField(label: 'Guardia', value: s.userNombre ?? '', icon: Icons.shield),

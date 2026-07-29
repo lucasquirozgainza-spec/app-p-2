@@ -38,6 +38,9 @@ class AppState {
   bool get hayOperador => userId != null;
   bool modulo(String key) => modulos[key] == true;
 
+  /// Campo de visita habilitado (por defecto SI, salvo que el admin lo apague).
+  bool campoVisita(String key) => modulos[key] != false;
+
   Future<void> loadEdificio() async {
     final prefs = await SharedPreferences.getInstance();
     edificioId = prefs.getString('edificio_id') ?? 'LIMCO II';

@@ -21,13 +21,18 @@ class OcrService {
     }
   }
 
-  /// Secuencia de digitos mas larga (para el numero de tarjeta).
+  /// Numero de la tarjeta de acceso. Las tarjetas tienen 10 digitos, asi que
+  /// se prioriza una secuencia de exactamente 10; si no, la mas larga.
   static Future<String?> leerNumero(String path) async {
     final texto = await leerTexto(path);
-    final matches = RegExp(r'\d{4,}').allMatches(texto).map((m) => m.group(0)!).toList();
-    if (matches.isEmpty) return null;
-    matches.sort((a, b) => b.length.compareTo(a.length));
-    return matches.first;
+    // Unir digitos separados por espacios (a veces el OCR los parte).
+    final limpio = texto.replaceAll(RegExp(r'(?<=\d)[ \-](?=\d)'), '');
+    final nums = RegExp(r'\d{3,}').allMatches(limpio).map((m) => m.group(0)!).toList();
+    if (nums.isEmpty) return null;
+    final diez = nums.where((n) => n.length == 10).toList();
+    if (diez.isNotEmpty) return diez.first;
+    nums.sort((a, b) => b.length.compareTo(a.length));
+    return nums.first;
   }
 
   /// Analiza el texto de un carnet boliviano (nuevo o antiguo) y devuelve CI y nombre.
@@ -90,8 +95,30 @@ class OcrService {
       }
     }
 
-    if (nombre != null) nombre = _titulo(nombre.replaceAll(RegExp(r'\s+'), ' ').trim());
+    if (nombre != null) nombre = _limpiarNombre(nombre);
     return CarnetData(ci, (nombre != null && nombre.trim().isNotEmpty) ? nombre : null);
+  }
+
+  // Palabras que NO forman parte de un nombre (etiquetas del carnet).
+  static const _stop = {
+    'FECHA', 'NACIMIENTO', 'EMISION', 'EMISIÓN', 'EXPIRACION', 'EXPIRACIÓN',
+    'SERIE', 'SECCION', 'SECCIÓN', 'NOMBRES', 'APELLIDOS', 'CEDULA', 'CÉDULA',
+    'IDENTIDAD', 'ESTADO', 'PLURINACIONAL', 'BOLIVIA', 'FIRMA', 'TITULAR',
+    'SERVICIO', 'GENERAL', 'IDENTIFICACION', 'IDENTIFICACIÓN', 'PERSONAL',
+    'DOMICILIO', 'OCUPACION', 'OCUPACIÓN', 'CIVIL', 'LUGAR', 'BIO', 'NO', 'N',
+    'CERTIFICA', 'IMPRESION', 'IMPRESIÓN', 'PERTENECE', 'DOCUMENTOS', 'REGISTRADOS',
+  };
+
+  /// Deja solo palabras alfabeticas del nombre, quita numeros y etiquetas.
+  static String _limpiarNombre(String s) {
+    final tokens = s.toUpperCase().split(RegExp(r'[^A-ZÁÉÍÓÚÑ]+')).where((w) => w.length >= 2).toList();
+    final keep = <String>[];
+    for (final t in tokens) {
+      if (_stop.contains(t)) continue;
+      keep.add(t);
+      if (keep.length >= 5) break;
+    }
+    return _titulo(keep.join(' '));
   }
 
   static String? _valorLabel(List<String> lines, int i) {
@@ -100,7 +127,9 @@ class OcrService {
     String v = '';
     if (idx >= 0 && idx < line.length - 1) v = line.substring(idx + 1).trim();
     if (v.isEmpty && i + 1 < lines.length) v = lines[i + 1].trim();
-    if (RegExp(r'[A-Za-zÁÉÍÓÚÑ]{2,}').hasMatch(v) && !v.toUpperCase().contains('APELLIDO')) return v;
+    // Quedarse solo con la parte de letras (cortar en el primer numero).
+    final soloLetras = RegExp(r'^[A-Za-zÁÉÍÓÚÑ\s]+').firstMatch(v)?.group(0)?.trim() ?? '';
+    if (soloLetras.length >= 2 && !soloLetras.toUpperCase().contains('APELLIDO')) return soloLetras;
     return null;
   }
 

@@ -1,12 +1,15 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 
-const _plataformas = ['Airbnb', 'Booking', 'Directo', 'Otro'];
+// WhatsApp es la forma mas comun de confirmar hospedaje -> por defecto.
+const _plataformas = ['WhatsApp', 'Airbnb', 'Booking', 'Directo', 'Otro'];
 
 class HospedajesScreen extends StatefulWidget {
   const HospedajesScreen({super.key});
@@ -16,11 +19,18 @@ class HospedajesScreen extends StatefulWidget {
 
 class _HospedajesScreenState extends State<HospedajesScreen> {
   List<Map<String, dynamic>> _rows = [];
+  final _buscar = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _buscar.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -38,8 +48,18 @@ class _HospedajesScreenState extends State<HospedajesScreen> {
     _load();
   }
 
+  List<Map<String, dynamic>> get _filtrados {
+    final q = _buscar.text.trim().toLowerCase();
+    if (q.isEmpty) return _rows;
+    return _rows.where((x) {
+      final s = '${x['depto']} ${x['huesped']} ${x['documento']} ${x['plataforma']}'.toLowerCase();
+      return s.contains(q);
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final rows = _filtrados;
     return Scaffold(
       appBar: AppBar(title: const Text('Hospedajes')),
       floatingActionButton: FloatingActionButton.extended(
@@ -52,32 +72,60 @@ class _HospedajesScreenState extends State<HospedajesScreen> {
           _load();
         },
       ),
-      body: _rows.isEmpty
-          ? const Center(child: Text('Sin hospedajes'))
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _rows.length,
-              itemBuilder: (_, i) {
-                final x = _rows[i];
-                final activo = x['estado'] == 'activo';
-                return Card(
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: (activo ? const Color(0xFF00838F) : Colors.grey).withOpacity(.15),
-                      child: Icon(Icons.hotel, color: activo ? const Color(0xFF00838F) : Colors.grey),
-                    ),
-                    title: Text('Depto ${x['depto']} · ${x['huesped'] ?? ''}',
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text('${x['plataforma'] ?? ''} · ${x['fecha_ingreso'] ?? ''} → ${x['fecha_salida'] ?? ''}\n${x['cantidad'] ?? 1} huesped(es)',
-                        maxLines: 3, overflow: TextOverflow.ellipsis),
-                    isThreeLine: true,
-                    trailing: activo
-                        ? TextButton(onPressed: () => _finalizar(x), child: const Text('Cerrar'))
-                        : const Icon(Icons.done, color: Colors.grey),
-                  ),
-                );
-              },
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: TextField(
+              controller: _buscar,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                hintText: 'Buscar por depto, huesped o documento',
+                prefixIcon: const Icon(Icons.search),
+                isDense: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
+          ),
+          Expanded(
+            child: rows.isEmpty
+                ? const Center(child: Text('Sin hospedajes'))
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: rows.length,
+                    itemBuilder: (_, i) {
+                      final x = rows[i];
+                      final activo = x['estado'] == 'activo';
+                      final foto = x['foto_doc'] as String?;
+                      return Card(
+                        child: ListTile(
+                          onTap: () async {
+                            await Navigator.push(context,
+                                MaterialPageRoute(builder: (_) => HospedajeDetalle(row: x)));
+                            _load();
+                          },
+                          leading: (foto != null && foto.isNotEmpty && File(foto).existsSync())
+                              ? CircleAvatar(backgroundImage: FileImage(File(foto)))
+                              : CircleAvatar(
+                                  backgroundColor: (activo ? const Color(0xFF00838F) : Colors.grey).withOpacity(.15),
+                                  child: Icon(Icons.hotel, color: activo ? const Color(0xFF00838F) : Colors.grey),
+                                ),
+                          title: Text('Depto ${x['depto']} · ${x['huesped'] ?? ''}',
+                              style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text(
+                              '${x['plataforma'] ?? ''} · ${x['fecha_ingreso'] ?? ''} → ${x['fecha_salida'] ?? ''}\n${x['cantidad'] ?? 1} huesped(es)',
+                              maxLines: 3, overflow: TextOverflow.ellipsis),
+                          isThreeLine: true,
+                          trailing: activo
+                              ? TextButton(onPressed: () => _finalizar(x), child: const Text('Cerrar'))
+                              : const Icon(Icons.done, color: Colors.grey),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -100,12 +148,31 @@ class _HospedajeFormState extends State<HospedajeForm> {
   DateTime? _salida;
   String? _fotoDoc;
   bool _saving = false;
+  bool _ocr = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Registro de ingreso automatico: por defecto hoy.
+    _ingreso = DateTime.now();
+  }
+
+  @override
+  void dispose() {
+    _huesped.dispose();
+    _doc.dispose();
+    _depto.dispose();
+    _cantidad.dispose();
+    _placa.dispose();
+    _obs.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickFecha(bool ingreso) async {
     final now = DateTime.now();
     final d = await showDatePicker(
       context: context,
-      initialDate: now,
+      initialDate: ingreso ? (_ingreso ?? now) : (_salida ?? now),
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 2),
     );
@@ -113,6 +180,35 @@ class _HospedajeFormState extends State<HospedajeForm> {
   }
 
   String _fmt(DateTime? d) => d == null ? 'Seleccionar' : DateFormat('dd/MM/yyyy').format(d);
+
+  // Lee la foto del documento (carnet o pasaporte) y autocompleta nombre + numero.
+  Future<void> _procesarDoc(String? path) async {
+    _fotoDoc = path;
+    if (path == null) return;
+    setState(() => _ocr = true);
+    try {
+      final texto = await OcrService.leerTexto(path);
+      final carnet = OcrService.parseCarnet(texto);
+      if (carnet.nombre != null && _huesped.text.trim().isEmpty) {
+        _huesped.text = carnet.nombre!;
+      }
+      if (carnet.ci != null && _doc.text.trim().isEmpty) {
+        _doc.text = carnet.ci!;
+      }
+      // Pasaporte: si no hubo CI, intentar un numero/codigo largo del texto.
+      if (_doc.text.trim().isEmpty) {
+        final m = RegExp(r'[A-Z0-9]{7,}').firstMatch(texto.toUpperCase().replaceAll(' ', ''));
+        if (m != null) _doc.text = m.group(0)!;
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() => _ocr = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Documento leido. Revisa nombre y numero.'), duration: Duration(seconds: 2)));
+      }
+    }
+  }
 
   Future<void> _guardar() async {
     if (_huesped.text.trim().isEmpty || _fotoDoc == null) {
@@ -127,14 +223,14 @@ class _HospedajeFormState extends State<HospedajeForm> {
       'guardia_nombre': s.userNombre,
       'plataforma': _plataforma,
       'huesped': _huesped.text.trim(),
-      'documento': _doc.text,
+      'documento': _doc.text.trim(),
       'foto_doc': _fotoDoc,
-      'depto': _depto.text,
+      'depto': _depto.text.trim(),
       'fecha_ingreso': _ingreso == null ? '' : DateFormat('dd/MM/yyyy').format(_ingreso!),
       'fecha_salida': _salida == null ? '' : DateFormat('dd/MM/yyyy').format(_salida!),
       'cantidad': int.tryParse(_cantidad.text) ?? 1,
-      'placa': _placa.text,
-      'observaciones': _obs.text,
+      'placa': _placa.text.trim(),
+      'observaciones': _obs.text.trim(),
       'estado': 'activo',
       'edificio': s.edificioId,
       'created_at': DateTime.now().toIso8601String(),
@@ -151,18 +247,31 @@ class _HospedajeFormState extends State<HospedajeForm> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          DropdownButtonFormField<String>(
-            value: _plataforma,
-            decoration: const InputDecoration(labelText: 'Plataforma'),
-            items: [for (final p in _plataformas) DropdownMenuItem(value: p, child: Text(p))],
-            onChanged: (v) => setState(() => _plataforma = v ?? _plataforma),
-          ),
+          const Text('Foto del documento (carnet o pasaporte)',
+              style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          PhotoField(label: 'Foto del documento', obligatoria: true, onChanged: _procesarDoc),
+          if (_ocr)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Row(children: [
+                SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                SizedBox(width: 10),
+                Text('Leyendo documento...'),
+              ]),
+            ),
           const SizedBox(height: 12),
           TextField(controller: _huesped, decoration: const InputDecoration(labelText: 'Huesped principal *')),
           const SizedBox(height: 12),
           TextField(controller: _doc, decoration: const InputDecoration(labelText: 'Documento / pasaporte')),
-          const SizedBox(height: 16),
-          PhotoField(label: 'Foto del documento', obligatoria: true, onChanged: (v) => _fotoDoc = v),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _plataforma,
+            decoration: const InputDecoration(labelText: 'Plataforma / confirmacion'),
+            items: [for (final p in _plataformas) DropdownMenuItem(value: p, child: Text(p))],
+            onChanged: (v) => setState(() => _plataforma = v ?? _plataforma),
+          ),
+          const SizedBox(height: 12),
           TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento')),
           const SizedBox(height: 12),
           Row(children: [
@@ -189,6 +298,54 @@ class _HospedajeFormState extends State<HospedajeForm> {
                 : const Icon(Icons.save),
             label: const Text('Guardar hospedaje'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class HospedajeDetalle extends StatelessWidget {
+  final Map<String, dynamic> row;
+  const HospedajeDetalle({super.key, required this.row});
+
+  Widget _dato(IconData ic, String label, String? valor) {
+    if (valor == null || valor.trim().isEmpty) return const SizedBox.shrink();
+    return ListTile(
+      dense: true,
+      leading: Icon(ic, color: const Color(0xFF00838F)),
+      title: Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      subtitle: Text(valor, style: const TextStyle(fontSize: 15, color: Colors.black87)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final foto = row['foto_doc'] as String?;
+    return Scaffold(
+      appBar: AppBar(title: Text('Depto ${row['depto']}')),
+      body: ListView(
+        children: [
+          if (foto != null && foto.isNotEmpty && File(foto).existsSync())
+            GestureDetector(
+              onTap: () => showDialog(
+                context: context,
+                builder: (_) => Dialog(
+                  child: InteractiveViewer(child: Image.file(File(foto))),
+                ),
+              ),
+              child: Image.file(File(foto), height: 240, width: double.infinity, fit: BoxFit.cover),
+            ),
+          _dato(Icons.person, 'Huesped', row['huesped'] as String?),
+          _dato(Icons.badge, 'Documento', row['documento'] as String?),
+          _dato(Icons.apartment, 'Departamento', row['depto'] as String?),
+          _dato(Icons.chat, 'Plataforma', row['plataforma'] as String?),
+          _dato(Icons.login, 'Ingreso', row['fecha_ingreso'] as String?),
+          _dato(Icons.logout, 'Salida', row['fecha_salida'] as String?),
+          _dato(Icons.groups, 'Nro huespedes', '${row['cantidad'] ?? 1}'),
+          _dato(Icons.directions_car, 'Placa', row['placa'] as String?),
+          _dato(Icons.notes, 'Observaciones', row['observaciones'] as String?),
+          _dato(Icons.badge_outlined, 'Registrado por', row['guardia_nombre'] as String?),
+          _dato(Icons.info_outline, 'Estado', row['estado'] as String?),
         ],
       ),
     );

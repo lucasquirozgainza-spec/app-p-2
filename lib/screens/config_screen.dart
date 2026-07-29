@@ -339,6 +339,27 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          const Text('Campos que se piden en Visitas', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text('Ej: en edificios sin tarjeta de acceso, apaga "Tarjeta".',
+              style: TextStyle(color: Colors.black54, fontSize: 12)),
+          const SizedBox(height: 8),
+          Card(
+            child: Column(children: [
+              for (final e in const {
+                'v_tarjeta': 'Tarjeta de acceso',
+                'v_carnet': 'Foto del carnet (obligatoria)',
+                'v_vehiculo': 'Preguntar por vehiculo',
+                'v_motivo': 'Motivo de la visita',
+              }.entries)
+                SwitchListTile(
+                  value: _modulos[e.key] != false,
+                  onChanged: (v) => _toggle(e.key, v),
+                  title: Text(e.value),
+                  activeColor: AppColors.verde,
+                ),
+            ]),
+          ),
+          const SizedBox(height: 16),
           const Text('Usuarios', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Card(

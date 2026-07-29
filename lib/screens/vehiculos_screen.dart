@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
@@ -72,11 +73,14 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
                       final placa = (v['placa']?.toString() ?? '').trim();
                       final depto = (v['depto']?.toString() ?? '').trim();
                       final tel = (v['telefono']?.toString() ?? '').trim();
+                      final foto = (v['foto']?.toString() ?? '');
+                      final tieneFoto = foto.isNotEmpty && File(foto).existsSync();
                       return Card(
                         child: ListTile(
-                          leading: const CircleAvatar(
-                              backgroundColor: Color(0x1A283593),
-                              child: Icon(Icons.directions_car, color: Color(0xFF283593))),
+                          leading: CircleAvatar(
+                              backgroundColor: const Color(0x1A283593),
+                              backgroundImage: tieneFoto ? FileImage(File(foto)) : null,
+                              child: tieneFoto ? null : const Icon(Icons.directions_car, color: Color(0xFF283593))),
                           title: Text(depto.isNotEmpty ? 'Depto $depto' : 'Sin depto',
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text([
@@ -85,7 +89,7 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
                           ].where((e) => e != null && e.toString().trim().isNotEmpty).join(' · ')),
                           onTap: () async {
                             await Navigator.push(context,
-                                MaterialPageRoute(builder: (_) => VehiculoForm(existente: v)));
+                                MaterialPageRoute(builder: (_) => VehiculoDetalle(veh: v)));
                             _load();
                           },
                           trailing: tel.isEmpty
@@ -225,6 +229,118 @@ class _VehiculoFormState extends State<VehiculoForm> {
                 : const Icon(Icons.save),
             label: const Text('Guardar vehiculo'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+class VehiculoDetalle extends StatefulWidget {
+  final Map<String, dynamic> veh;
+  const VehiculoDetalle({super.key, required this.veh});
+  @override
+  State<VehiculoDetalle> createState() => _VehiculoDetalleState();
+}
+
+class _VehiculoDetalleState extends State<VehiculoDetalle> {
+  late Map<String, dynamic> v;
+
+  @override
+  void initState() {
+    super.initState();
+    v = Map<String, dynamic>.from(widget.veh);
+  }
+
+  Future<void> _recargar() async {
+    final db = await DB.instance.database;
+    final rows = await db.query('vehiculos', where: 'id=?', whereArgs: [v['id']]);
+    if (rows.isNotEmpty && mounted) setState(() => v = rows.first);
+  }
+
+  Widget _dato(String label, Object? value) {
+    final val = value?.toString() ?? '';
+    if (val.trim().isEmpty) return const SizedBox.shrink();
+    return ListTile(
+      dense: true,
+      title: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+      subtitle: Text(val, style: const TextStyle(fontSize: 15, color: Colors.black87)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final foto = v['foto']?.toString() ?? '';
+    final tieneFoto = foto.isNotEmpty && File(foto).existsSync();
+    final tel = (v['telefono']?.toString() ?? '').trim();
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(v['depto']?.toString().isNotEmpty ?? false ? 'Depto ${v['depto']}' : 'Vehiculo'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit),
+            tooltip: 'Editar',
+            onPressed: () async {
+              await Navigator.push(context, MaterialPageRoute(builder: (_) => VehiculoForm(existente: v)));
+              _recargar();
+            },
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (tieneFoto)
+            GestureDetector(
+              onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto))))),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.file(File(foto), height: 220, width: double.infinity, fit: BoxFit.cover, cacheWidth: 900),
+              ),
+            )
+          else
+            Container(
+              height: 160,
+              decoration: BoxDecoration(color: const Color(0x1A283593), borderRadius: BorderRadius.circular(12)),
+              child: const Center(child: Icon(Icons.directions_car, size: 60, color: Color(0xFF283593))),
+            ),
+          const SizedBox(height: 12),
+          Card(child: Column(children: [
+            _dato('Departamento', v['depto']),
+            _dato('Placa', v['placa']),
+            _dato('Vehiculo', v['vehiculo']),
+            _dato('Marca', v['marca']),
+            _dato('Modelo', v['modelo']),
+            _dato('Color', v['color']),
+            _dato('Dueño / responsable', v['propietario']),
+            _dato('Nro parqueo', v['nro_parqueo']),
+            _dato('Telefono', v['telefono']),
+            _dato('Observaciones', v['observaciones']),
+          ])),
+          if (tel.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
+                onPressed: () => Contacto.whatsapp(context, tel,
+                    mensaje: 'Estimado, su vehiculo placa ${v['placa'] ?? ''} se encuentra mal estacionado. '
+                        'Por favor acercarse. (${AppState.instance.edificioNombre})'),
+                icon: const Icon(Icons.chat),
+                label: const Text('Avisar por WhatsApp'),
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => Contacto.llamar(context, tel),
+                icon: const Icon(Icons.call),
+                label: const Text('Llamar'),
+              ),
+            ),
+          ],
         ],
       ),
     );
