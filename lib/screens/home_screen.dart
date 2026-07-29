@@ -252,9 +252,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (s.modulo('rondas')) {
       acts.add(ActionButton(icon: Icons.directions_walk, label: 'Nueva\nRonda', color: const Color(0xFF6A1B9A), onTap: () => _accionConTurno(const RondaScreen())));
     }
-    if (s.modulo('reportes')) {
-      acts.add(ActionButton(icon: Icons.bar_chart, label: 'Reportes', color: const Color(0xFF283593), onTap: () => _open(const ReportesScreen())));
-    }
     return GridView.extent(
       maxCrossAxisExtent: 220, shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -276,6 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
       _Mod('mantenimiento', Icons.build, 'Mantenimiento', const Color(0xFF5D4037), () => const MantenimientoScreen()),
       // Gestion
+      _Mod('reportes', Icons.bar_chart, 'Reportes', const Color(0xFF283593), () => const ReportesScreen()),
       _Mod('panel', Icons.dashboard, 'Panel', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();

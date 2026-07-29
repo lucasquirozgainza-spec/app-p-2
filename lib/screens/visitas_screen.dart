@@ -585,30 +585,33 @@ class _ContactoCard extends StatelessWidget {
             ]),
             if (tieneTel) ...[
               const SizedBox(height: 10),
-              Row(children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onLlamar,
-                    icon: const Icon(Icons.call, size: 18),
-                    label: const Text('Llamar'),
-                  ),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(46)),
+                  onPressed: onWhatsapp,
+                  icon: const Icon(Icons.chat, size: 18),
+                  label: const Text('Llamar por WhatsApp'),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
-                    onPressed: onWhatsapp,
-                    icon: const Icon(Icons.chat, size: 18),
-                    label: const Text('WhatsApp'),
-                  ),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(46)),
+                  onPressed: onLlamar,
+                  icon: const Icon(Icons.call, size: 18),
+                  label: const Text('Llamada normal'),
                 ),
-              ]),
+              ),
             ],
+            const SizedBox(height: 6),
             SizedBox(
               width: double.infinity,
               child: TextButton.icon(
                 onPressed: onElegir,
-                icon: const Icon(Icons.check, size: 18),
+                icon: const Icon(Icons.check_circle, size: 18),
                 label: const Text('Elegir como quien autoriza'),
               ),
             ),
