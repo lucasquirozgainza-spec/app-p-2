@@ -96,12 +96,13 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
             onPressed: () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const AdvertenciasScreen())),
           ),
-          IconButton(
-            icon: const Icon(Icons.assessment),
-            tooltip: 'Reporte de personal',
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const ReportePersonalScreen())),
-          ),
+          if (AppState.instance.isAdmin)
+            IconButton(
+              icon: const Icon(Icons.assessment),
+              tooltip: 'Reporte de personal (admin)',
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ReportePersonalScreen())),
+            ),
         ],
       ),
       floatingActionButton: s.isSupervisor

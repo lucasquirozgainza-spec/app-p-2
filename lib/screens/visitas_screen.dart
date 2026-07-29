@@ -274,7 +274,6 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   bool _ocrLeyendo = false;
   String? _carnetAnverso;
   String? _carnetReverso;
-  List<Map<String, dynamic>> _contactos = [];
   bool _saving = false;
   final _ahora = DateTime.now();
 
@@ -297,12 +296,19 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     }
   }
 
-  Future<void> _buscarContactos() async {
-    final depto = _depto.text.trim();
-    if (depto.isEmpty) {
-      setState(() => _contactos = []);
-      return;
+  Future<void> _ocrCarnet(String? path) async {
+    _carnetAnverso = path;
+    if (path == null) return;
+    final num = await OcrService.leerNumero(path);
+    if (!mounted) return;
+    if (num != null && _ci.text.trim().isEmpty) {
+      setState(() => _ci.text = num);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('CI detectado: $num'), backgroundColor: AppColors.verde));
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _consultarContactos(String depto) async {
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
     final out = <Map<String, dynamic>>[];
@@ -319,8 +325,55 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     for (final r in resis) {
       out.add({'nombre': r['nombre'], 'tel': r['celular'], 'rol': 'Residente'});
     }
+    return out;
+  }
+
+  Future<void> _mostrarContactos() async {
+    final depto = _depto.text.trim();
+    if (depto.isEmpty) return _snack('Primero escribe el departamento');
+    final contactos = await _consultarContactos(depto);
     if (!mounted) return;
-    setState(() => _contactos = out);
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Depto $depto'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: contactos.isEmpty
+              ? const Padding(padding: EdgeInsets.all(8), child: Text('No hay personas registradas para ese departamento.'))
+              : ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final c in contactos)
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.person, color: AppColors.azulMarino),
+                          title: Text(c['nombre']?.toString() ?? ''),
+                          subtitle: Text('${c['rol']}${(c['tel']?.toString().isNotEmpty ?? false) ? '\n${c['tel']}' : ''}'),
+                          isThreeLine: (c['tel']?.toString().isNotEmpty ?? false),
+                          trailing: (c['tel']?.toString().isNotEmpty ?? false)
+                              ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                  IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino),
+                                      tooltip: 'Llamar',
+                                      onPressed: () => Contacto.llamar(context, c['tel'].toString())),
+                                  IconButton(icon: const Icon(Icons.chat, color: AppColors.verde),
+                                      tooltip: 'WhatsApp',
+                                      onPressed: () => Contacto.whatsapp(context, c['tel'].toString(),
+                                          mensaje: 'Tiene una visita: ${_nombre.text}. ¿Autoriza el ingreso al depto $depto?')),
+                                ])
+                              : null,
+                          onTap: () {
+                            setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+      ),
+    );
   }
 
   Future<void> _guardar() async {
@@ -380,39 +433,27 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(labelText: 'Nombre del visitante *')),
         const SizedBox(height: 12),
-        Row(children: [
-          Expanded(child: TextField(controller: _depto,
-              decoration: const InputDecoration(labelText: 'Departamento a visitar *'),
-              onChanged: (_) => _buscarContactos())),
-          const SizedBox(width: 8),
-          FilledButton(onPressed: _buscarContactos, child: const Text('Buscar')),
-        ]),
-        const SizedBox(height: 12),
-        if (_contactos.isNotEmpty) ...[
-          _paso('2', 'Llama para pedir autorizacion'),
-          for (final c in _contactos)
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.person, color: AppColors.azulMarino),
-                title: Text(c['nombre']?.toString() ?? ''),
-                subtitle: Text('${c['rol']}${(c['tel']?.toString().isNotEmpty ?? false) ? ' · ${c['tel']}' : ''}'),
-                trailing: (c['tel']?.toString().isNotEmpty ?? false)
-                    ? Row(mainAxisSize: MainAxisSize.min, children: [
-                        IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino),
-                            onPressed: () => Contacto.llamar(context, c['tel'].toString())),
-                        IconButton(icon: const Icon(Icons.chat, color: AppColors.verde),
-                            onPressed: () => Contacto.whatsapp(context, c['tel'].toString(),
-                                mensaje: 'Tiene una visita: ${_nombre.text}. Autoriza el ingreso?')),
-                      ])
-                    : null,
-                onTap: () => setState(() => _autoriza.text = c['nombre']?.toString() ?? ''),
-              ),
+        TextField(controller: _depto,
+            decoration: const InputDecoration(
+              labelText: 'Departamento a visitar *',
+              prefixIcon: Icon(Icons.meeting_room),
             ),
-        ] else if (_depto.text.trim().isNotEmpty)
-          const Card(child: ListTile(title: Text('Sin contactos registrados para ese depto'))),
-        const SizedBox(height: 8),
+            onChanged: (_) => setState(() {})),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _mostrarContactos,
+            icon: const Icon(Icons.people),
+            label: const Text('Ver contactos del depto y autorizar'),
+          ),
+        ),
+        const SizedBox(height: 12),
         TextField(controller: _autoriza,
-            decoration: const InputDecoration(labelText: 'Persona que autoriza (toca un contacto)')),
+            decoration: const InputDecoration(
+              labelText: 'Persona que autoriza',
+              prefixIcon: Icon(Icons.how_to_reg),
+            )),
         const SizedBox(height: 8),
         _paso('3', 'Asignar tarjeta de acceso'),
         PhotoField(
@@ -430,7 +471,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         ]),
         const SizedBox(height: 12),
         _paso('4', 'Carnet del visitante y datos'),
-        PhotoField(label: 'Carnet ANVERSO', obligatoria: true, onChanged: (v) => _carnetAnverso = v),
+        PhotoField(label: 'Carnet ANVERSO (lee el CI solo)', obligatoria: true, onChanged: _ocrCarnet),
         PhotoField(label: 'Carnet REVERSO', obligatoria: true, onChanged: (v) => _carnetReverso = v),
         TextField(controller: _ci, keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Numero de CI')),

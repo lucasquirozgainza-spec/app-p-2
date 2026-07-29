@@ -24,6 +24,8 @@ import 'guardias_screen.dart';
 import 'normativas_screen.dart';
 import 'reportes_screen.dart';
 import 'online_screen.dart';
+import 'rondas_historial_screen.dart';
+import 'advertencias_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -118,13 +120,9 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 8),
               _acciones(s),
               const SizedBox(height: 20),
-              Row(children: [
-                Expanded(child: OutlinedButton.icon(
-                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-                  icon: const Icon(Icons.menu),
-                  label: const Text('Ver todos los modulos'),
-                )),
-              ]),
+              const _SectionTitle('Historiales y modulos'),
+              const SizedBox(height: 8),
+              _modules(s),
             ],
           ),
         ),
@@ -237,18 +235,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _modules(AppState s) {
     final all = <_Mod>[
-      _Mod('panel', Icons.dashboard, 'Panel', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
+      _Mod('visitas', Icons.badge, 'Historial Visitas', AppColors.azulMarino, () => const VisitasScreen()),
+      _Mod('rondas', Icons.directions_walk, 'Historial Rondas', const Color(0xFF6A1B9A), () => const RondasHistorialScreen()),
       _Mod('propietarios', Icons.people, 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
       _Mod('vehiculos', Icons.directions_car, 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
-      _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
-      _Mod('encomiendas', Icons.inventory_2, 'Encomiendas', const Color(0xFFEF6C00), () => const EncomiendasScreen()),
-      _Mod('incidentes', Icons.warning_amber, 'Incidentes', AppColors.rojo, () => const IncidentesScreen()),
       _Mod('mantenimiento', Icons.build, 'Mantenimiento', const Color(0xFF5D4037), () => const MantenimientoScreen()),
-      _Mod('rondas', Icons.directions_walk, 'Rondas', const Color(0xFF6A1B9A), () => const RondaScreen()),
+      _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
+      _Mod('panel', Icons.dashboard, 'Panel', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
       _Mod('guardias', Icons.shield, 'Guardias', AppColors.verde, () => const GuardiasScreen(), always: true),
       _Mod('contactos', Icons.contact_phone, 'Contactos', const Color(0xFF00695C), () => const ContactosScreen()),
       _Mod('normativas', Icons.picture_as_pdf, 'Normativas', const Color(0xFF37474F), () => const NormativasScreen()),
-      _Mod('reportes', Icons.bar_chart, 'Reportes', const Color(0xFF283593), () => const ReportesScreen()),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();
     return GridView.extent(
@@ -308,20 +304,7 @@ class _HomeScreenState extends State<HomeScreen> {
             item(Icons.play_arrow, 'Iniciar turno', const InicioTurnoScreen())
           else
             item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen()),
-          item(Icons.dashboard, 'Panel / Resumen', const PanelScreen()),
-          item(Icons.shield, 'Guardias', const GuardiasScreen()),
-          const Divider(),
-          item(Icons.badge, 'Visitas', const VisitasScreen(), show: s.modulo('visitas')),
-          item(Icons.directions_walk, 'Rondas', const RondaScreen(), show: s.modulo('rondas')),
-          item(Icons.hotel, 'Hospedajes', const HospedajesScreen(), show: s.modulo('hospedajes')),
-          item(Icons.inventory_2, 'Encomiendas', const EncomiendasScreen(), show: s.modulo('encomiendas')),
-          item(Icons.warning_amber, 'Incidentes', const IncidentesScreen(), show: s.modulo('incidentes')),
-          item(Icons.build, 'Mantenimiento', const MantenimientoScreen(), show: s.modulo('mantenimiento')),
-          item(Icons.people, 'Propietarios', const PropietariosScreen(), show: s.modulo('propietarios')),
-          item(Icons.directions_car, 'Vehiculos', const VehiculosScreen(), show: s.modulo('vehiculos')),
-          item(Icons.contact_phone, 'Contactos', const ContactosScreen(), show: s.modulo('contactos')),
-          item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), show: s.modulo('normativas')),
-          item(Icons.bar_chart, 'Reportes', const ReportesScreen(), show: s.modulo('reportes')),
+          item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen()),
           const Divider(),
           if (!s.isAdmin)
             ListTile(

@@ -87,6 +87,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         if (mounted) Navigator.pop(context, _fotos);
         return;
       }
+      // En modo multi: al llegar al mínimo requerido, se cierra solo.
+      if (widget.minFotos > 0 && _fotos.length >= widget.minFotos) {
+        if (mounted) Navigator.pop(context, _fotos);
+        return;
+      }
       if (mounted) setState(() => _capturando = false);
     } catch (_) {
       if (mounted) setState(() => _capturando = false);
