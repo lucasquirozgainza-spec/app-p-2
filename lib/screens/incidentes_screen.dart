@@ -8,6 +8,7 @@ import '../services/cloud.dart';
 import '../services/notify_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
+import '../widgets/depto_field.dart';
 
 const _tiposIncidente = ['Seguridad', 'Mantenimiento', 'Accidente', 'Mascotas', 'Ruido', 'Otro'];
 
@@ -115,13 +116,13 @@ class _IncidenteFormState extends State<IncidenteForm> {
             onChanged: (v) => setState(() => _tipo = v ?? _tipo),
           ),
           const SizedBox(height: 12),
-          TextField(controller: _lugar, decoration: const InputDecoration(labelText: 'Lugar')),
+          DeptoField(controller: _lugar, label: 'Lugar / Depto'),
           const SizedBox(height: 12),
           TextField(controller: _desc, maxLines: 3, decoration: const InputDecoration(labelText: 'Descripcion *', alignLabelWithHint: true)),
           const SizedBox(height: 12),
           TextField(controller: _involucrados, decoration: const InputDecoration(labelText: 'Personas involucradas')),
           const SizedBox(height: 16),
-          PhotoField(label: 'Fotografia', obligatoria: true, onChanged: (v) {
+          PhotoField(label: 'Fotografia', obligatoria: true, album: 'OSIRIS Incidentes', onChanged: (v) {
             if (v != null) setState(() => _fotos.add(v));
           }),
           if (_fotos.length > 1)

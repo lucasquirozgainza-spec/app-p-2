@@ -30,7 +30,7 @@ class _RondaScreenState extends State<RondaScreen> {
   Future<void> _tomarFotos() async {
     final res = await Navigator.push<List<String>>(
       context,
-      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: kFotosMinimas)),
+      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: kFotosMinimas, album: 'OSIRIS Rondas')),
     );
     if (res != null && res.isNotEmpty) setState(() => _fotos.addAll(res));
   }

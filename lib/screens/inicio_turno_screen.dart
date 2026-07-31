@@ -5,6 +5,8 @@ import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../services/device_context.dart';
+import '../services/uniform_check.dart';
+import '../services/notifications_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
@@ -23,6 +25,9 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
   Map<String, dynamic>? _sel;
   String? _foto;
   bool _saving = false;
+  int _fotoKey = 0;
+  bool _sinUniforme = false; // el guardia declaro que no trajo uniforme
+  bool _revisando = false;
   final _ahora = DateTime.now();
 
   @override
@@ -45,6 +50,56 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
 
   void _snack(String m) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
+
+  /// Al tomar la foto del guardia, revisa si lleva uniforme (camisa roja o
+  /// chaleco negro). Si no lo detecta, avisa y ofrece repetir o continuar.
+  Future<void> _onFoto(String? path) async {
+    setState(() {
+      _foto = path;
+      _sinUniforme = false;
+    });
+    if (path == null || !AppState.instance.controlUniforme) return;
+    setState(() => _revisando = true);
+    final r = await UniformeCheck.revisar(path);
+    if (!mounted) return;
+    setState(() => _revisando = false);
+    if (r.ok) return; // uniforme detectado, todo bien
+    await Notificaciones.mostrarAviso('Guardia sin uniforme',
+        'No se detectó la camisa roja ni el chaleco negro en la foto.');
+    if (!mounted) return;
+    final accion = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.report_gmailerrorred, color: AppColors.rojo, size: 40),
+        title: const Text('No se ve el uniforme'),
+        content: const Text('La foto no muestra camisa roja ni chaleco negro. '
+            '¿Quieres repetir la foto con el uniforme puesto, o registrar que no lo trajiste?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'no'),
+            child: const Text('No traje uniforme', style: TextStyle(color: AppColors.rojo)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'repetir'),
+            child: const Text('Repetir foto con uniforme'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (accion == 'repetir') {
+      // Reinicia el campo de foto para tomarla de nuevo.
+      setState(() {
+        _foto = null;
+        _sinUniforme = false;
+        _fotoKey++;
+      });
+    } else if (accion == 'no') {
+      setState(() => _sinUniforme = true);
+      _snack('Se registrará una advertencia: sin uniforme.');
+    }
+  }
 
   Future<void> _iniciar() async {
     if (_sel == null) return _snack('Selecciona el guardia');
@@ -76,6 +131,18 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
         cargo: _sel!['cargo'] as String?,
         rol: _sel!['rol'] as String?,
         turnoId: id);
+    // Si el guardia declaro que no trajo uniforme, se guarda una advertencia.
+    if (_sinUniforme) {
+      await db.insert('advertencias', {
+        'guardia_nombre': _sel!['nombre'],
+        'mensaje': 'Inició turno SIN uniforme (sin camisa roja ni chaleco negro).',
+        'tipo': 'uniforme',
+        'foto': _foto,
+        'edificio': s.edificioId,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      await Cloud.evento('Guardia sin uniforme', guardia: _sel!['nombre'] as String?);
+    }
     await Audit.log('INICIO_TURNO', 'ingreso_turno', '$id');
     await Cloud.evento('Ingreso de turno',
         guardia: _sel!['nombre'] as String?,
@@ -123,7 +190,24 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
                   _sel = _guardias.firstWhere((g) => g['id'] == id)),
             ),
           const SizedBox(height: 16),
-          PhotoField(label: 'Foto del guardia', obligatoria: true, onChanged: (v) => setState(() => _foto = v)),
+          PhotoField(key: ValueKey(_fotoKey), label: 'Foto del guardia (selfie)', obligatoria: true, frontal: true, album: 'OSIRIS Turnos', onChanged: _onFoto),
+          if (_revisando)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                SizedBox(width: 10),
+                Text('Revisando uniforme...'),
+              ]),
+            ),
+          if (_sinUniforme)
+            const Card(
+              color: Color(0x14C62828),
+              child: ListTile(
+                leading: Icon(Icons.warning_amber, color: AppColors.rojo),
+                title: Text('Se registrará: guardia sin uniforme'),
+              ),
+            ),
           if (_sel != null) LockedField(label: 'Cargo', value: _sel!['cargo']?.toString() ?? '', icon: Icons.badge_outlined),
           Row(children: [
             Expanded(child: LockedField(label: 'Fecha', value: DateFormat('dd/MM/yyyy').format(_ahora), icon: Icons.calendar_today)),

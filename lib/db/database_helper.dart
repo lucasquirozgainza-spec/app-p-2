@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -54,6 +54,11 @@ class DB {
         if (oldV < 5) {
           try {
             await db.execute('ALTER TABLE usuarios ADD COLUMN edificio TEXT');
+          } catch (_) {}
+        }
+        if (oldV < 6) {
+          try {
+            await db.execute('ALTER TABLE advertencias ADD COLUMN foto TEXT');
           } catch (_) {}
         }
       },
@@ -264,6 +269,7 @@ class DB {
         guardia_nombre TEXT,
         mensaje TEXT,
         tipo TEXT,
+        foto TEXT,
         edificio TEXT,
         created_at TEXT NOT NULL
       )''');

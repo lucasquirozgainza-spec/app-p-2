@@ -1,10 +1,15 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/contact_launch.dart';
+import '../services/contactos_repo.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
+import '../widgets/depto_field.dart';
 
 class EncomiendasScreen extends StatefulWidget {
   const EncomiendasScreen({super.key});
@@ -131,16 +136,82 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
     final id = await db.insert('encomiendas', {
       'guardia_nombre': s.userNombre,
       'foto': _foto,
-      'depto': _depto.text,
-      'destinatario': _dest.text,
-      'empresa': _empresa.text,
+      'depto': _depto.text.trim(),
+      'destinatario': _dest.text.trim(),
+      'empresa': _empresa.text.trim(),
       'estado': 'pendiente',
       'edificio': s.edificioId,
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'encomiendas', '$id');
     if (!mounted) return;
+    await _avisarDepto();
+    if (!mounted) return;
     Navigator.pop(context);
+  }
+
+  /// Tras guardar, ofrece avisar al residente del depto por WhatsApp
+  /// ("ya llego tu pedido"), con opcion de enviar la foto del paquete.
+  Future<void> _avisarDepto() async {
+    final depto = _depto.text.trim();
+    if (depto.isEmpty) return;
+    final contactos = await ContactosRepo.delDepto(depto);
+    if (!mounted || contactos.isEmpty) return;
+    final msg = '📦 Encomienda para el depto $depto'
+        '${_dest.text.trim().isNotEmpty ? ' (${_dest.text.trim()})' : ''}. '
+        'Ya llegó tu pedido y está en portería. — ${AppState.instance.edificioNombre}';
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Avisar al depto $depto'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final c in contactos.where((c) => c.tel.trim().isNotEmpty))
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${c.nombre}  ·  ${c.rol}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text(c.tel, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(44)),
+                          onPressed: () => Contacto.whatsapp(context, c.tel, mensaje: msg),
+                          icon: const Icon(Icons.chat, size: 18),
+                          label: const Text('WhatsApp (mensaje)'),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            if (_foto != null && File(_foto!).existsSync()) {
+                              Share.shareXFiles([XFile(_foto!)], text: msg);
+                            } else {
+                              Share.share(msg);
+                            }
+                          },
+                          icon: const Icon(Icons.photo, size: 18),
+                          label: const Text('Enviar con foto'),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ),
+              if (contactos.every((c) => c.tel.trim().isEmpty))
+                const Padding(padding: EdgeInsets.all(8), child: Text('Los contactos del depto no tienen teléfono registrado.')),
+            ],
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Listo'))],
+      ),
+    );
   }
 
   @override
@@ -150,8 +221,8 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          PhotoField(label: 'Foto del paquete', obligatoria: true, onChanged: (v) => _foto = v),
-          TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento')),
+          PhotoField(label: 'Foto del paquete', obligatoria: true, album: 'OSIRIS Encomiendas', onChanged: (v) => _foto = v),
+          DeptoField(controller: _depto),
           const SizedBox(height: 12),
           TextField(controller: _dest, decoration: const InputDecoration(labelText: 'Persona destinataria')),
           const SizedBox(height: 12),
@@ -214,7 +285,7 @@ class _EntregaEncomiendaState extends State<EntregaEncomienda> {
             ),
           ),
           const SizedBox(height: 12),
-          PhotoField(label: 'Foto del residente recibiendo', obligatoria: true, onChanged: (v) => _foto = v),
+          PhotoField(label: 'Foto del residente recibiendo', obligatoria: true, album: 'OSIRIS Encomiendas', onChanged: (v) => _foto = v),
           const SizedBox(height: 12),
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: AppColors.verde),

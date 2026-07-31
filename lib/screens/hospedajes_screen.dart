@@ -7,6 +7,7 @@ import '../services/audit.dart';
 import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
+import '../widgets/depto_field.dart';
 
 // WhatsApp es la forma mas comun de confirmar hospedaje -> por defecto.
 const _plataformas = ['WhatsApp', 'Airbnb', 'Booking', 'Directo', 'Otro'];
@@ -250,7 +251,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
           const Text('Foto del documento (carnet o pasaporte)',
               style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          PhotoField(label: 'Foto del documento', obligatoria: true, onChanged: _procesarDoc),
+          PhotoField(label: 'Foto del documento', obligatoria: true, album: 'OSIRIS Documentos', onChanged: _procesarDoc),
           if (_ocr)
             const Padding(
               padding: EdgeInsets.only(top: 6),
@@ -272,7 +273,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
             onChanged: (v) => setState(() => _plataforma = v ?? _plataforma),
           ),
           const SizedBox(height: 12),
-          TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento')),
+          DeptoField(controller: _depto),
           const SizedBox(height: 12),
           Row(children: [
             Expanded(child: OutlinedButton.icon(onPressed: () => _pickFecha(true), icon: const Icon(Icons.login, size: 18), label: Text('Ingreso: ${_fmt(_ingreso)}'))),

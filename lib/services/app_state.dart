@@ -35,6 +35,11 @@ class AppState {
   String senderEmail = ''; // cuenta Gmail que envía
   String senderPass = '';  // clave de aplicación de esa cuenta
 
+  // Alarmas y recordatorios
+  bool notifRondas = true;      // recordatorio de ronda cada 2 horas
+  bool alarmaCandados = true;   // alarma a las 00:00 para cerrar candados
+  bool controlUniforme = true;  // revisar uniforme (camisa roja / chaleco negro) al iniciar turno
+
   bool get hayOperador => userId != null;
   bool modulo(String key) => modulos[key] == true;
 
@@ -49,6 +54,9 @@ class AppState {
     adminEmail = prefs.getString('admin_email') ?? '';
     senderEmail = prefs.getString('sender_email') ?? '';
     senderPass = prefs.getString('sender_pass') ?? '';
+    notifRondas = prefs.getBool('notif_rondas') ?? true;
+    alarmaCandados = prefs.getBool('alarma_candados') ?? true;
+    controlUniforme = prefs.getBool('control_uniforme') ?? true;
     final db = await DB.instance.database;
     final rows = await db.query('edificios', where: 'id = ?', whereArgs: [edificioId]);
     if (rows.isEmpty) {
@@ -106,6 +114,22 @@ class AppState {
     if (senderPassword != null) {
       senderPass = senderPassword;
       await prefs.setString('sender_pass', senderPassword);
+    }
+  }
+
+  Future<void> setRecordatorios({bool? rondas, bool? candados, bool? uniforme}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (rondas != null) {
+      notifRondas = rondas;
+      await prefs.setBool('notif_rondas', rondas);
+    }
+    if (candados != null) {
+      alarmaCandados = candados;
+      await prefs.setBool('alarma_candados', candados);
+    }
+    if (uniforme != null) {
+      controlUniforme = uniforme;
+      await prefs.setBool('control_uniforme', uniforme);
     }
   }
 

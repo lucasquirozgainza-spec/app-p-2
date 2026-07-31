@@ -86,6 +86,44 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Informe OSIRIS - ${AppState.instance.edificioNombre}');
   }
 
+  /// Informe PDF solo de advertencias (descargable/compartible).
+  static Future<void> advertencias() async {
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final rows = await db.query('advertencias',
+        where: 'edificio=?', whereArgs: [ed], orderBy: 'created_at DESC');
+
+    final doc = pw.Document();
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(28),
+      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
+      footer: (ctx) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        margin: const pw.EdgeInsets.only(top: 8),
+        child: pw.Text('OSIRIS Seguridad  ·  Pagina ${ctx.pageNumber}/${ctx.pagesCount}',
+            style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+      ),
+      build: (ctx) => [
+        _portada('Advertencias', fecha),
+        pw.SizedBox(height: 14),
+        _tabla('Advertencias', ['Fecha', 'Tipo', 'Guardia', 'Detalle'],
+            rows.map((v) => [
+              _h(v['created_at']), _s(v['tipo']), _s(v['guardia_nombre']), _s(v['mensaje']),
+            ]).toList()),
+        if (rows.isEmpty)
+          pw.Padding(padding: const pw.EdgeInsets.only(top: 20),
+              child: pw.Text('No hay advertencias registradas.')),
+      ],
+    ));
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Advertencias_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'Advertencias OSIRIS - ${AppState.instance.edificioNombre}');
+  }
+
   static pw.Widget _portada(String periodo, String fecha) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(16),

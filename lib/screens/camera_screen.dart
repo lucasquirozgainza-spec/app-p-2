@@ -3,16 +3,21 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../services/gallery.dart';
 import '../theme.dart';
 
 /// Cámara propia: permite tomar fotos SEGUIDAS sin la confirmación del
 /// sistema. Devuelve la lista de rutas de las fotos tomadas.
 /// - multi=false: toma una foto y regresa.
 /// - multi=true: toma varias; el usuario toca "Listo" al terminar.
+/// - frontal=true: abre la cámara de selfie por defecto.
+/// - album: nombre del álbum de galería donde también se guarda la foto.
 class CameraScreen extends StatefulWidget {
   final bool multi;
   final int minFotos;
-  const CameraScreen({super.key, this.multi = false, this.minFotos = 0});
+  final bool frontal;
+  final String? album;
+  const CameraScreen({super.key, this.multi = false, this.minFotos = 0, this.frontal = false, this.album});
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -41,8 +46,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         setState(() => _error = 'No se encontro camara');
         return;
       }
-      // Empezar con la camara trasera.
-      _idx = _cams.indexWhere((c) => c.lensDirection == CameraLensDirection.back);
+      // Empezar con la camara pedida (selfie o trasera).
+      final buscada = widget.frontal ? CameraLensDirection.front : CameraLensDirection.back;
+      _idx = _cams.indexWhere((c) => c.lensDirection == buscada);
       if (_idx < 0) _idx = 0;
       await _iniciar();
     } catch (_) {
@@ -54,7 +60,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      final c = CameraController(_cams[_idx], ResolutionPreset.high, enableAudio: false);
+      final c = CameraController(_cams[_idx], ResolutionPreset.veryHigh,
+          enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
       _initFuture = c.initialize();
       await _initFuture;
@@ -101,6 +108,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final dest = p.join(fotosDir.path, 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(shot.path).copy(dest);
       _fotos.add(dest);
+      // Guardar tambien en la galeria del telefono, en su album con nombre.
+      await Gallery.guardar(dest, album: widget.album);
       if (!widget.multi) {
         if (mounted) Navigator.pop(context, _fotos);
         return;

@@ -21,18 +21,20 @@ class OcrService {
     }
   }
 
-  /// Numero de la tarjeta de acceso. Las tarjetas tienen 10 digitos, asi que
-  /// se prioriza una secuencia de exactamente 10; si no, la mas larga.
+  /// Numero de la tarjeta de acceso. Las tarjetas tienen EXACTAMENTE 10 digitos.
+  /// Devuelve la secuencia de 10 digitos; si no encuentra 10, devuelve null
+  /// para que la pantalla obligue a repetir la foto.
   static Future<String?> leerNumero(String path) async {
     final texto = await leerTexto(path);
     // Unir digitos separados por espacios (a veces el OCR los parte).
     final limpio = texto.replaceAll(RegExp(r'(?<=\d)[ \-](?=\d)'), '');
-    final nums = RegExp(r'\d{3,}').allMatches(limpio).map((m) => m.group(0)!).toList();
-    if (nums.isEmpty) return null;
-    final diez = nums.where((n) => n.length == 10).toList();
-    if (diez.isNotEmpty) return diez.first;
-    nums.sort((a, b) => b.length.compareTo(a.length));
-    return nums.first;
+    // Buscar una secuencia de 10 digitos aislada (sin mas digitos pegados).
+    final exacto = RegExp(r'(?<!\d)(\d{10})(?!\d)').firstMatch(limpio);
+    if (exacto != null) return exacto.group(1);
+    // Si aparece una corrida mas larga, tomar sus primeros 10 digitos.
+    final larga = RegExp(r'\d{10,}').firstMatch(limpio);
+    if (larga != null) return larga.group(0)!.substring(0, 10);
+    return null;
   }
 
   /// Analiza el texto de un carnet boliviano (nuevo o antiguo) y devuelve CI y nombre.
@@ -79,12 +81,15 @@ class OcrService {
       final full = [nom, ape].where((e) => e != null && e.isNotEmpty).join(' ');
       if (full.trim().isNotEmpty) nombre = full;
     }
-    // 3) Carnet antiguo (reverso):  ...PERTENECE  A:  MARCELO RIVERO OCHOA
+    // 3) Carnet antiguo (reverso): tras PERTENECE A: / A NOMBRE DE: viene el nombre.
     if (nombre == null) {
       for (int i = 0; i < lines.length; i++) {
-        if (lines[i].toUpperCase().contains('PERTENECE')) {
+        final L = lines[i].toUpperCase();
+        if (L.contains('PERTENECE') || L.contains('NOMBRE DE') || L.contains('A NOMBRE')) {
           for (int j = i; j < lines.length && j < i + 4; j++) {
-            var cand = lines[j].replaceAll(RegExp(r'^A\s*:?\s*'), '').trim();
+            var cand = lines[j]
+                .replaceAll(RegExp(r'pertenece|a\s+nombre\s+de|nombre\s+de|^A\s*:?\s*', caseSensitive: false), '')
+                .trim();
             if (_pareceNombre(cand)) {
               nombre = cand;
               break;
@@ -93,6 +98,21 @@ class OcrService {
           if (nombre != null) break;
         }
       }
+    }
+    // 4) Ultimo recurso: cualquier linea que parezca un nombre completo
+    //    (2 a 4 palabras, solo letras, sin etiquetas) -> nombre y apellido.
+    if (nombre == null) {
+      String? mejor;
+      for (final l in lines) {
+        final u = l.toUpperCase().trim();
+        if (RegExp(r'\d').hasMatch(u)) continue;
+        if (!RegExp(r'^[A-ZÁÉÍÓÚÑ ]+$').hasMatch(u)) continue;
+        final palabras = u.split(RegExp(r'\s+')).where((w) => w.length >= 2).toList();
+        if (palabras.length < 2 || palabras.length > 4) continue;
+        if (palabras.any((w) => _stop.contains(w))) continue;
+        if (mejor == null || u.length > mejor.length) mejor = u;
+      }
+      if (mejor != null) nombre = mejor;
     }
 
     if (nombre != null) nombre = _limpiarNombre(nombre);

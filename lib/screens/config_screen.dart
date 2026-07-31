@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/auth_service.dart';
+import '../services/notifications_service.dart';
 import '../theme.dart';
 
 class ConfigScreen extends StatefulWidget {
@@ -376,6 +377,52 @@ class _ConfigScreenState extends State<ConfigScreen> {
               title: const Text('Cambiar contrasena de admin'),
               onTap: _cambiarPassword,
             ),
+          ),
+          const SizedBox(height: 16),
+          const Text('Alarmas y recordatorios', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text('Notificaciones automaticas en el telefono del guardia.',
+              style: TextStyle(color: Colors.black54, fontSize: 12)),
+          const SizedBox(height: 8),
+          Card(
+            child: Column(children: [
+              SwitchListTile(
+                value: AppState.instance.notifRondas,
+                activeColor: AppColors.verde,
+                secondary: const Icon(Icons.directions_walk, color: Color(0xFF6A1B9A)),
+                title: const Text('Recordatorio de ronda cada 2 horas'),
+                subtitle: const Text('Avisa a las 00, 02, 04 ... 22 hs'),
+                onChanged: (v) async {
+                  await AppState.instance.setRecordatorios(rondas: v);
+                  await Notificaciones.programarRecordatorios();
+                  setState(() {});
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                value: AppState.instance.alarmaCandados,
+                activeColor: AppColors.verde,
+                secondary: const Icon(Icons.lock_clock, color: AppColors.rojo),
+                title: const Text('Alarma de cerrar candados (00:00)'),
+                subtitle: const Text('Recordatorio cada noche a medianoche'),
+                onChanged: (v) async {
+                  await AppState.instance.setRecordatorios(candados: v);
+                  await Notificaciones.programarRecordatorios();
+                  setState(() {});
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                value: AppState.instance.controlUniforme,
+                activeColor: AppColors.verde,
+                secondary: const Icon(Icons.checkroom, color: AppColors.azulMarino),
+                title: const Text('Controlar uniforme al iniciar turno'),
+                subtitle: const Text('Detecta camisa roja / chaleco negro en la foto'),
+                onChanged: (v) async {
+                  await AppState.instance.setRecordatorios(uniforme: v);
+                  setState(() {});
+                },
+              ),
+            ]),
           ),
           const SizedBox(height: 16),
           const Text('Avisos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),

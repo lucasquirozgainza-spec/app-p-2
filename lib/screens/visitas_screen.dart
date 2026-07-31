@@ -306,11 +306,23 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     if (!mounted) return;
     setState(() {
       _ocrLeyendo = false;
-      if (num != null) _tarjetaNum.text = num;
+      _tarjetaNum.text = (num != null && num.length == 10) ? num : '';
     });
-    if (num != null) {
+    if (num != null && num.length == 10) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('N° de tarjeta detectado: $num'), backgroundColor: AppColors.verde));
+    } else {
+      // La tarjeta SIEMPRE tiene 10 digitos: obligar a repetir la foto.
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          icon: const Icon(Icons.error_outline, color: AppColors.rojo, size: 38),
+          title: const Text('Repite la foto'),
+          content: const Text('No se leyeron los 10 dígitos de la tarjeta. '
+              'Toma la foto de nuevo, más cerca y sin reflejos.'),
+          actions: [FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Entendido'))],
+        ),
+      );
     }
   }
 
@@ -415,7 +427,11 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
 
   Future<void> _guardar() async {
     final pideCarnet = AppState.instance.campoVisita('v_carnet');
+    final pideTarjeta = AppState.instance.campoVisita('v_tarjeta');
     if (_nombre.text.trim().isEmpty) return _snack('Ingrese el nombre del visitante');
+    if (pideTarjeta && _fotoTarjeta != null && _tarjetaNum.text.trim().length != 10) {
+      return _snack('La tarjeta debe tener 10 dígitos. Repite la foto de la tarjeta.');
+    }
     if (pideCarnet && _carnetAnverso == null) return _snack('La foto del carnet (anverso) es obligatoria');
     if (pideCarnet && _carnetReverso == null) return _snack('La foto del carnet (reverso) es obligatoria');
     setState(() => _saving = true);
@@ -468,10 +484,10 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       appBar: AppBar(title: const Text('Registrar Visita')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         // PASO 1: Depto y autorizacion
-        _paso('1', 'Departamento y autorizacion'),
+        _paso('1', 'Escribe el depto y tócalo'),
         TextField(controller: _depto,
             decoration: const InputDecoration(
-              labelText: 'Departamento a visitar *',
+              labelText: 'Depto (ej. 303)',
               prefixIcon: Icon(Icons.meeting_room),
             ),
             onChanged: (_) => _sugerirDeptos()),
@@ -498,30 +514,30 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           width: double.infinity,
           child: FilledButton.icon(
             onPressed: _mostrarContactos,
-            icon: const Icon(Icons.people),
-            label: const Text('Llamar al depto para autorizar'),
+            icon: const Icon(Icons.phone_in_talk),
+            label: const Text('Toca aquí para llamar y autorizar'),
           ),
         ),
         const SizedBox(height: 12),
         TextField(controller: _autoriza,
             decoration: const InputDecoration(
-              labelText: 'Persona que autoriza',
+              labelText: '¿Quién autoriza?',
               prefixIcon: Icon(Icons.how_to_reg),
             )),
         const SizedBox(height: 8),
         // PASO 2: Tarjeta (configurable por edificio)
         if (s.campoVisita('v_tarjeta')) ...[
-          _paso('2', 'Asignar tarjeta de acceso'),
-          PhotoField(label: 'Foto de la tarjeta (lee el numero solo)', onChanged: _ocrTarjeta),
-          TextField(controller: _tarjetaNum,
-              decoration: const InputDecoration(labelText: 'N° de tarjeta (automatico o manual)')),
+          _paso('2', 'Foto de la tarjeta (10 dígitos)'),
+          PhotoField(label: 'Toca para fotografiar la tarjeta', album: 'OSIRIS Tarjetas', onChanged: _ocrTarjeta),
+          TextField(controller: _tarjetaNum, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'N° de tarjeta (se llena solo)')),
           const SizedBox(height: 12),
         ],
         // PASO 3: Carnet -> llena nombre y CI solos
-        _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Foto del carnet (llena nombre y CI solos)'),
+        _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Foto del carnet (llena nombre y CI)'),
         if (s.campoVisita('v_carnet')) ...[
-          PhotoField(label: 'Carnet ANVERSO', obligatoria: true, onChanged: (v) => _procesarCarnet(v, true)),
-          PhotoField(label: 'Carnet REVERSO', obligatoria: true, onChanged: (v) => _procesarCarnet(v, false)),
+          PhotoField(label: 'Carnet — lado de la foto', obligatoria: true, album: 'OSIRIS Carnet', onChanged: (v) => _procesarCarnet(v, true)),
+          PhotoField(label: 'Carnet — lado de atrás (nombre)', obligatoria: true, album: 'OSIRIS Carnet', onChanged: (v) => _procesarCarnet(v, false)),
           if (_ocrLeyendo)
             const Padding(
               padding: EdgeInsets.only(bottom: 8),
@@ -539,7 +555,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
             decoration: const InputDecoration(labelText: 'Numero de documento', prefixIcon: Icon(Icons.badge))),
         const SizedBox(height: 12),
         // PASO 4: Vehiculo, motivo, observaciones
-        _paso('4', 'Detalles'),
+        _paso('4', 'Detalles finales'),
         if (s.campoVisita('v_vehiculo')) ...[
           SwitchListTile(
             value: _tieneVehiculo,

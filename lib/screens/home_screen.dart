@@ -22,7 +22,6 @@ import 'mantenimiento_screen.dart';
 import 'hospedajes_screen.dart';
 import 'guardias_screen.dart';
 import 'normativas_screen.dart';
-import 'reportes_screen.dart';
 import 'online_screen.dart';
 import 'rondas_historial_screen.dart';
 import 'advertencias_screen.dart';
@@ -272,9 +271,8 @@ class _HomeScreenState extends State<HomeScreen> {
       // Operacion
       _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
       _Mod('mantenimiento', Icons.build, 'Mantenimiento', const Color(0xFF5D4037), () => const MantenimientoScreen()),
-      // Gestion
-      _Mod('reportes', Icons.bar_chart, 'Reportes', const Color(0xFF283593), () => const ReportesScreen()),
-      _Mod('panel', Icons.dashboard, 'Panel', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
+      // Gestion (Panel incluye reportes por periodo + PDF)
+      _Mod('panel', Icons.dashboard, 'Panel y Reportes', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();
     return GridView.extent(

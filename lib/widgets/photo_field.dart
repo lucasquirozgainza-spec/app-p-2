@@ -9,6 +9,8 @@ class PhotoField extends StatefulWidget {
   final bool obligatoria;
   final ValueChanged<String?> onChanged;
   final String? initialPath;
+  final bool frontal;
+  final String? album;
 
   const PhotoField({
     super.key,
@@ -16,6 +18,8 @@ class PhotoField extends StatefulWidget {
     required this.onChanged,
     this.obligatoria = false,
     this.initialPath,
+    this.frontal = false,
+    this.album,
   });
 
   @override
@@ -34,7 +38,7 @@ class _PhotoFieldState extends State<PhotoField> {
   Future<void> _capturar() async {
     final res = await Navigator.push<List<String>>(
       context,
-      MaterialPageRoute(builder: (_) => const CameraScreen(multi: false)),
+      MaterialPageRoute(builder: (_) => CameraScreen(multi: false, frontal: widget.frontal, album: widget.album)),
     );
     if (res != null && res.isNotEmpty) {
       setState(() => _path = res.first);
