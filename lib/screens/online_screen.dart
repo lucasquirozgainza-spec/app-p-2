@@ -104,7 +104,26 @@ class _OnlineScreenState extends State<OnlineScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.soloEdificio ? 'Actividad del edificio' : 'En linea (todos)'),
-        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _cargar)],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.wifi_find),
+            tooltip: 'Probar conexión',
+            onPressed: () async {
+              final r = await Cloud.probar();
+              if (!mounted) return;
+              await showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('Prueba de conexión a la nube'),
+                  content: SingleChildScrollView(child: SelectableText(r)),
+                  actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+                ),
+              );
+              _cargar();
+            },
+          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _cargar),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())

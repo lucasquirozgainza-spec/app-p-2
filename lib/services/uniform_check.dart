@@ -37,9 +37,11 @@ class UniformeCheck {
       }
       if (total == 0) return UniformeResultado(true, 0, 0);
       final fr = rojos / total, fn = negros / total;
-      // Regla: el pecho debe tener al menos 10% de ROJO (camisa). Como opcion,
-      // tambien vale un chaleco NEGRO bien marcado (>= 25%).
-      final ok = fr >= 0.10 || fn >= 0.25;
+      // Regla: el pecho DEBE tener al menos 10% de ROJO (camisa del uniforme).
+      // Una polera negra u otro color sin rojo se marca como SIN uniforme.
+      // (No se puede distinguir un chaleco negro de una polera negra solo por
+      //  color, por eso se exige el rojo.)
+      final ok = fr >= 0.10;
       return UniformeResultado(ok, fr, fn);
     } catch (_) {
       return UniformeResultado(true, 0, 0); // ante cualquier error, no bloquear

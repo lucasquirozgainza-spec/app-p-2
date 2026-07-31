@@ -81,8 +81,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                           ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
                           : const Text('Ingresar'),
                     ),
-                    const SizedBox(height: 8),
-                    const Text('Por defecto: admin / admin123', style: TextStyle(color: Colors.black45, fontSize: 12)),
                   ],
                 ),
               ),

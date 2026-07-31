@@ -60,7 +60,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      final c = CameraController(_cams[_idx], ResolutionPreset.veryHigh,
+      // ResolutionPreset.high (720p) enfoca mas rapido y sale nitido para OCR.
+      final c = CameraController(_cams[_idx], ResolutionPreset.high,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
       _initFuture = c.initialize();
@@ -104,6 +105,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
+      // Dar un instante al autoenfoque para que la tarjeta/carnet salga nitido.
+      try {
+        await c.setFocusMode(FocusMode.auto);
+        await Future.delayed(const Duration(milliseconds: 600));
+      } catch (_) {}
       final XFile shot = await c.takePicture();
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));

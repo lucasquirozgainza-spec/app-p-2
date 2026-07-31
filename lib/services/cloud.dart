@@ -12,6 +12,7 @@ class Cloud {
 
   static bool enabled = false;
   static String deviceId = 'device';
+  static String? lastError; // ultimo error de la nube (para diagnostico)
 
   static SupabaseClient get _c => Supabase.instance.client;
 
@@ -19,13 +20,35 @@ class Cloud {
     try {
       await Supabase.initialize(url: url, anonKey: anonKey);
       enabled = true;
-    } catch (_) {
+    } catch (e) {
       enabled = false;
+      lastError = 'init: $e';
     }
     try {
       final info = await DeviceInfoPlugin().androidInfo;
       deviceId = info.id;
     } catch (_) {}
+  }
+
+  /// Prueba de conexión: inserta un evento de prueba y lo lee. Devuelve 'OK'
+  /// o el mensaje de error para diagnosticar la sincronización.
+  static Future<String> probar() async {
+    if (!enabled) return 'Nube desactivada (no se pudo inicializar). ${lastError ?? ''}';
+    try {
+      await _c.from('eventos').insert({
+        'tipo': 'Prueba de conexión',
+        'edificio': AppState.instance.edificioId,
+        'guardia': AppState.instance.userNombre ?? 'Prueba',
+        'detalle': {'device': deviceId},
+        'device_id': deviceId,
+      });
+      await heartbeat();
+      final rows = await _c.from('eventos').select().limit(1);
+      return 'OK · La nube responde (${(rows as List).length} lectura). Los datos deberían cruzarse.';
+    } catch (e) {
+      lastError = 'probar: $e';
+      return 'ERROR: $e';
+    }
   }
 
   /// Sube un evento (turno, visita, ronda, incidente...) a la nube.
@@ -39,7 +62,9 @@ class Cloud {
         'detalle': detalle ?? {},
         'device_id': deviceId,
       });
-    } catch (_) {}
+    } catch (e) {
+      lastError = 'evento: $e';
+    }
   }
 
   /// Actualiza la presencia del equipo/guardia (para saber quién está en línea).
@@ -53,8 +78,10 @@ class Cloud {
         'edificio': s.edificioId,
         'en_turno': s.turnoActivoId != null,
         'last_seen': DateTime.now().toUtc().toIso8601String(),
-      });
-    } catch (_) {}
+      }, onConflict: 'device_id');
+    } catch (e) {
+      lastError = 'heartbeat: $e';
+    }
   }
 
   /// Lee eventos recientes. Si se pasa [edificio], solo trae los de ese
@@ -67,7 +94,8 @@ class Cloud {
       if (edificio != null) q = q.eq('edificio', edificio);
       final rows = await q.order('created_at', ascending: false).limit(limit);
       return List<Map<String, dynamic>>.from(rows);
-    } catch (_) {
+    } catch (e) {
+      lastError = 'eventos: $e';
       return [];
     }
   }
@@ -96,7 +124,8 @@ class Cloud {
     try {
       final rows = await _c.from('presencia').select().order('last_seen', ascending: false);
       return List<Map<String, dynamic>>.from(rows);
-    } catch (_) {
+    } catch (e) {
+      lastError = 'presencia: $e';
       return [];
     }
   }

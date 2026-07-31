@@ -63,6 +63,32 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
         .toList();
   }
 
+  Future<void> _eliminarPersonal(Map<String, dynamic> p) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.person_remove, color: AppColors.rojo, size: 36),
+        title: const Text('Eliminar personal'),
+        content: Text('¿Eliminar a "${p['nombre'] ?? ''}" del personal registrado?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final db = await DB.instance.database;
+    await db.delete('usuarios', where: 'id=?', whereArgs: [p['id']]);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Personal eliminado'), backgroundColor: AppColors.verde));
+    _load();
+  }
+
   Future<void> _nuevoGuardia() async {
     final n = TextEditingController();
     final c = TextEditingController(text: 'Guardia de Seguridad');
@@ -217,6 +243,11 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                     title: Text(p['nombre']?.toString() ?? '—',
                         style: const TextStyle(fontWeight: FontWeight.w600)),
                     subtitle: Text('${p['cargo'] ?? ''} · Usuario: ${p['usuario']} · ${p['rol']}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: AppColors.rojo),
+                      tooltip: 'Eliminar',
+                      onPressed: () => _eliminarPersonal(p),
+                    ),
                   ),
                 ),
             ] else ...[
