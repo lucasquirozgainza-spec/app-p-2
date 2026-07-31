@@ -211,12 +211,31 @@ class _PanelScreenState extends State<PanelScreen> {
                       ),
                     ),
                   const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(backgroundColor: AppColors.rojo, minimumSize: const Size.fromHeight(48)),
+                      onPressed: () async {
+                        try {
+                          await PdfExport.informeMensual(mes: DateTime(DateTime.now().year, DateTime.now().month));
+                        } catch (_) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('No se pudo generar el PDF')));
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.description),
+                      label: const Text('Informe mensual del edificio (PDF)'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   const Card(
                     child: Padding(
                       padding: EdgeInsets.all(14),
                       child: Text(
-                        'Usa el botón PDF (arriba a la derecha) para exportar y compartir '
-                        'el informe completo del periodo.',
+                        'El informe mensual incluye totales, visitas por departamento, incidentes, '
+                        'mantenimiento, encomiendas, hospedajes y rondas. El botón PDF de arriba exporta el periodo elegido.',
                         style: TextStyle(color: Colors.black54),
                       ),
                     ),

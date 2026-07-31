@@ -66,9 +66,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _controller = c;
       _initFuture = c.initialize();
       await _initFuture;
-      // Enfoque y exposicion automaticos continuos: agiliza y enfoca numeros/letras.
+      // Enfoque y exposicion automaticos continuos: enfoca numeros/letras solo.
       try { await c.setFocusMode(FocusMode.auto); } catch (_) {}
       try { await c.setExposureMode(ExposureMode.auto); } catch (_) {}
+      // Enfocar al centro de entrada (donde suele estar la tarjeta/carnet).
+      try { await c.setFocusPoint(const Offset(0.5, 0.5)); } catch (_) {}
+      try { await c.setExposurePoint(const Offset(0.5, 0.5)); } catch (_) {}
       if (mounted) setState(() {});
     } catch (_) {
       if (mounted) setState(() => _error = 'No se pudo abrir la camara');
@@ -105,10 +108,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // Dar un instante al autoenfoque para que la tarjeta/carnet salga nitido.
+      // Enfoque continuo activo: solo un instante corto para que asiente.
       try {
         await c.setFocusMode(FocusMode.auto);
-        await Future.delayed(const Duration(milliseconds: 600));
+        await Future.delayed(const Duration(milliseconds: 250));
       } catch (_) {}
       final XFile shot = await c.takePicture();
       final dir = await getApplicationDocumentsDirectory();
@@ -117,8 +120,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final dest = p.join(fotosDir.path, 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(shot.path).copy(dest);
       _fotos.add(dest);
-      // Guardar tambien en la galeria del telefono, en su album con nombre.
-      await Gallery.guardar(dest, album: widget.album);
+      // Guardar en galeria en segundo plano (sin await) para pasar rapido a la
+      // siguiente foto en modo ronda.
+      Gallery.guardar(dest, album: widget.album);
       if (!widget.multi) {
         if (mounted) Navigator.pop(context, _fotos);
         return;
@@ -181,7 +185,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           await c.setExposurePoint(p);
                         } catch (_) {}
                       },
-                      child: CameraPreview(c),
+                      child: Stack(
+                        alignment: Alignment.bottomCenter,
+                        children: [
+                          CameraPreview(c),
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text('Toca el número/carnet para enfocar',
+                                style: TextStyle(color: Colors.white, fontSize: 12)),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

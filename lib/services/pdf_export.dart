@@ -124,6 +124,161 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Advertencias OSIRIS - ${AppState.instance.edificioNombre}');
   }
 
+  /// Informe MENSUAL de toda la actividad del edificio.
+  static Future<void> informeMensual({required DateTime mes}) async {
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final desde = DateTime(mes.year, mes.month, 1);
+    final hasta = DateTime(mes.year, mes.month + 1, 1);
+    final di = desde.toIso8601String(), ha = hasta.toIso8601String();
+
+    Future<List<Map<String, dynamic>>> q(String t) async => db.query(t,
+        where: 'edificio=? AND created_at>=? AND created_at<?', whereArgs: [ed, di, ha], orderBy: 'created_at DESC');
+
+    final visitas = await q('visitas');
+    final rondas = await q('rondas');
+    final incidentes = await q('incidentes');
+    final encomiendas = await q('encomiendas');
+    final mantenimiento = await q('mantenimiento');
+    final hospedajes = await q('hospedajes');
+    final turnos = await q('ingreso_turno');
+
+    // Visitas por departamento.
+    final porDepto = <String, int>{};
+    for (final v in visitas) {
+      final d = (v['depto']?.toString().trim().isNotEmpty ?? false) ? v['depto'].toString() : '—';
+      porDepto[d] = (porDepto[d] ?? 0) + 1;
+    }
+    final deptoOrden = porDepto.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+
+    final doc = pw.Document();
+    final periodo = DateFormat('MMMM yyyy', 'es').format(mes);
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(28),
+      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
+      footer: (ctx) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        margin: const pw.EdgeInsets.only(top: 8),
+        child: pw.Text('OSIRIS Seguridad  ·  Pagina ${ctx.pageNumber}/${ctx.pagesCount}',
+            style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+      ),
+      build: (ctx) => [
+        _portada('Informe mensual · $periodo', fecha),
+        pw.SizedBox(height: 14),
+        _resumen({
+          'Visitas': visitas.length,
+          'Rondas': rondas.length,
+          'Incidentes': incidentes.length,
+          'Encomiendas': encomiendas.length,
+          'Mantenimiento': mantenimiento.length,
+          'Hospedajes': hospedajes.length,
+          'Ingresos de turno': turnos.length,
+        }),
+        _tabla('Visitas por departamento', ['Departamento', 'Total visitas'],
+            deptoOrden.map((e) => [e.key, '${e.value}']).toList()),
+        _tabla('Incidentes', ['Fecha', 'Tipo', 'Lugar', 'Descripcion', 'Estado'],
+            incidentes.map((v) => [_h(v['created_at']), _s(v['tipo']), _s(v['lugar']), _s(v['descripcion']), _s(v['estado'])]).toList()),
+        _tabla('Mantenimiento', ['Fecha', 'Lugar', 'Tipo', 'Observaciones', 'Estado'],
+            mantenimiento.map((v) => [_h(v['created_at']), _s(v['lugar']), _s(v['tipo']), _s(v['observaciones']), _s(v['estado'])]).toList()),
+        _tabla('Encomiendas', ['Fecha', 'Depto', 'Destinatario', 'Empresa', 'Estado'],
+            encomiendas.map((v) => [_h(v['created_at']), _s(v['depto']), _s(v['destinatario']), _s(v['empresa']), _s(v['estado'])]).toList()),
+        _tabla('Hospedajes', ['Fecha', 'Depto', 'Huesped', 'Plataforma', 'Estado'],
+            hospedajes.map((v) => [_h(v['created_at']), _s(v['depto']), _s(v['huesped']), _s(v['plataforma']), _s(v['estado'])]).toList()),
+        _tabla('Rondas', ['Fecha', 'Guardia', 'Observaciones'],
+            rondas.map((v) => [_h(v['created_at']), _s(v['guardia_nombre']), _s(v['observaciones'])]).toList()),
+      ],
+    ));
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Informe_Mensual_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'Informe mensual OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
+  }
+
+  /// Reporte MENSUAL de guardias: dias, horas, horas extra (>12h), turnos 24h
+  /// y dias sin uniforme.
+  static Future<void> reporteGuardias({required DateTime mes}) async {
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final desde = DateTime(mes.year, mes.month, 1);
+    final hasta = DateTime(mes.year, mes.month + 1, 1);
+    final di = desde.toIso8601String(), ha = hasta.toIso8601String();
+
+    final ingresos = await db.query('ingreso_turno',
+        where: 'edificio=? AND created_at>=? AND created_at<?', whereArgs: [ed, di, ha], orderBy: 'created_at');
+    final salidas = await db.query('salida_turno', where: 'edificio=?', whereArgs: [ed]);
+    final salMap = <int, String>{};
+    for (final s in salidas) {
+      if (s['turno_id'] != null) salMap[s['turno_id'] as int] = s['created_at'] as String;
+    }
+    final advUni = await db.query('advertencias',
+        where: "edificio=? AND tipo='uniforme' AND created_at>=? AND created_at<?", whereArgs: [ed, di, ha]);
+    final sinUni = <String, int>{};
+    for (final a in advUni) {
+      final g = a['guardia_nombre']?.toString() ?? 'Sin nombre';
+      sinUni[g] = (sinUni[g] ?? 0) + 1;
+    }
+
+    final mapa = <String, Map<String, dynamic>>{};
+    for (final ing in ingresos) {
+      final nombre = ing['guardia_nombre']?.toString() ?? 'Sin nombre';
+      final m = mapa.putIfAbsent(nombre, () => {'dias': <String>{}, 'horas': 0.0, 'extra': 0.0, 'turnos': 0, 'dobles': 0});
+      final inicio = DateTime.parse(ing['created_at'] as String);
+      (m['dias'] as Set).add(DateFormat('yyyy-MM-dd').format(inicio));
+      m['turnos'] = (m['turnos'] as int) + 1;
+      final salStr = salMap[ing['id']];
+      if (salStr != null) {
+        final horas = DateTime.parse(salStr).difference(inicio).inMinutes / 60.0;
+        if (horas > 0 && horas < 48) {
+          m['horas'] = (m['horas'] as double) + horas;
+          if (horas >= 20) m['dobles'] = (m['dobles'] as int) + 1;
+          if (horas > AppState.horasTurno) m['extra'] = (m['extra'] as double) + (horas - AppState.horasTurno);
+        }
+      }
+    }
+    // Incluir guardias que solo tienen advertencias de uniforme.
+    for (final g in sinUni.keys) {
+      mapa.putIfAbsent(g, () => {'dias': <String>{}, 'horas': 0.0, 'extra': 0.0, 'turnos': 0, 'dobles': 0});
+    }
+    final filas = mapa.entries.toList()
+      ..sort((a, b) => (b.value['horas'] as double).compareTo(a.value['horas'] as double));
+
+    final doc = pw.Document();
+    final periodo = DateFormat('MMMM yyyy', 'es').format(mes);
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(28),
+      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
+      footer: (ctx) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        margin: const pw.EdgeInsets.only(top: 8),
+        child: pw.Text('OSIRIS Seguridad  ·  Pagina ${ctx.pageNumber}/${ctx.pagesCount}',
+            style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+      ),
+      build: (ctx) => [
+        _portada('Reporte de guardias · $periodo', fecha),
+        pw.SizedBox(height: 14),
+        _tabla('Personal del mes', ['Guardia', 'Dias', 'Horas', 'H. extra', 'Turnos 24h', 'Dias sin uniforme'],
+            filas.map((e) => [
+              e.key,
+              '${(e.value['dias'] as Set).length}',
+              (e.value['horas'] as double).toStringAsFixed(1),
+              (e.value['extra'] as double).toStringAsFixed(1),
+              '${e.value['dobles']}',
+              '${sinUni[e.key] ?? 0}',
+            ]).toList()),
+      ],
+    ));
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Reporte_Guardias_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'Reporte de guardias OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
+  }
+
   static pw.Widget _portada(String periodo, String fecha) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(16),

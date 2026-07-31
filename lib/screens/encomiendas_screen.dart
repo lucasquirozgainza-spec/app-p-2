@@ -187,6 +187,16 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
                         width: double.infinity,
                         child: FilledButton.icon(
                           style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(44)),
+                          onPressed: () => Contacto.whatsapp(context, c.tel, mensaje: msg),
+                          icon: const Icon(Icons.message, size: 18),
+                          label: const Text('Enviar mensaje'),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(backgroundColor: AppColors.azulMarino, minimumSize: const Size.fromHeight(44)),
                           onPressed: () {
                             // Enviar por WhatsApp CON la foto del paquete.
                             if (_foto != null && File(_foto!).existsSync()) {
@@ -195,17 +205,8 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
                               Contacto.whatsapp(context, c.tel, mensaje: msg);
                             }
                           },
-                          icon: const Icon(Icons.chat, size: 18),
-                          label: const Text('WhatsApp con foto'),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () => Contacto.whatsapp(context, c.tel, mensaje: msg),
-                          icon: const Icon(Icons.message, size: 18),
-                          label: const Text('Solo mensaje al número'),
+                          icon: const Icon(Icons.photo_camera, size: 18),
+                          label: const Text('Enviar con foto'),
                         ),
                       ),
                     ]),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
+import '../services/pdf_export.dart';
 import '../theme.dart';
 
 /// Reporte de personal por mes: días trabajados, horas totales,
@@ -89,7 +90,25 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Reporte de personal')),
+      appBar: AppBar(
+        title: const Text('Reporte de personal'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            tooltip: 'Descargar PDF del mes',
+            onPressed: () async {
+              try {
+                await PdfExport.reporteGuardias(mes: _mes);
+              } catch (_) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('No se pudo generar el PDF')));
+                }
+              }
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Container(

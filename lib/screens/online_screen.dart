@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -25,16 +26,26 @@ class _OnlineScreenState extends State<OnlineScreen> {
 
   static const _tipos = ['Ingreso de turno', 'Salida de turno', 'Visita', 'Ronda', 'Incidente', 'Encomienda', 'Hospedaje', 'Guardia sin uniforme'];
 
+  Timer? _auto;
+
   @override
   void initState() {
     super.initState();
     _cargar();
+    // Actualiza solo cada 15 s (vinculación automática entre celulares).
+    _auto = Timer.periodic(const Duration(seconds: 15), (_) => _cargar(silencioso: true));
+  }
+
+  @override
+  void dispose() {
+    _auto?.cancel();
+    super.dispose();
   }
 
   String? get _edFiltro => widget.soloEdificio ? AppState.instance.edificioId : null;
 
-  Future<void> _cargar() async {
-    setState(() => _loading = true);
+  Future<void> _cargar({bool silencioso = false}) async {
+    if (!silencioso) setState(() => _loading = true);
     await Cloud.heartbeat();
     final pres = await Cloud.presencia();
     final evs = await Cloud.eventos(tipo: _filtro, edificio: _edFiltro);

@@ -1,99 +1,116 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app_state.dart';
 
-/// Capa ONLINE (Supabase). Cada equipo sube sus eventos y su "presencia"
-/// para que el administrador vea todo en tiempo real desde su celular.
-/// Si no hay internet, la app sigue funcionando offline sin problema.
+/// Capa ONLINE con REST directo a Supabase (PostgREST).
+///
+/// Importante: las claves nuevas de Supabase (sb_publishable_...) SOLO se
+/// pueden enviar en el header `apikey`, NO en `Authorization: Bearer`. Por eso
+/// usamos REST directo (y no la librería supabase_flutter, que manda el Bearer
+/// y provocaba error 401 → los datos no se cruzaban).
 class Cloud {
-  // Datos del proyecto Supabase (la clave publishable es segura en apps).
   static const String url = 'https://idwsbukgtogiwvfrurlc.supabase.co';
   static const String anonKey = 'sb_publishable_-uuIV9H6rYYWjhyGNNtQww_0oww_OyF';
+  static const String _rest = '$url/rest/v1';
 
-  static bool enabled = false;
+  static bool enabled = true;
   static String deviceId = 'device';
-  static String? lastError; // ultimo error de la nube (para diagnostico)
+  static String? lastError;
 
-  static SupabaseClient get _c => Supabase.instance.client;
+  static Map<String, String> get _h => {
+        'apikey': anonKey,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
 
   static Future<void> init() async {
-    try {
-      await Supabase.initialize(url: url, anonKey: anonKey);
-      enabled = true;
-    } catch (e) {
-      enabled = false;
-      lastError = 'init: $e';
-    }
     try {
       final info = await DeviceInfoPlugin().androidInfo;
       deviceId = info.id;
     } catch (_) {}
+    enabled = true;
   }
 
-  /// Prueba de conexión: inserta un evento de prueba y lo lee. Devuelve 'OK'
-  /// o el mensaje de error para diagnosticar la sincronización.
+  /// Prueba de conexión: inserta un evento de prueba y lee la tabla.
   static Future<String> probar() async {
-    if (!enabled) return 'Nube desactivada (no se pudo inicializar). ${lastError ?? ''}';
     try {
-      await _c.from('eventos').insert({
-        'tipo': 'Prueba de conexión',
-        'edificio': AppState.instance.edificioId,
-        'guardia': AppState.instance.userNombre ?? 'Prueba',
-        'detalle': {'device': deviceId},
-        'device_id': deviceId,
-      });
-      await heartbeat();
-      final rows = await _c.from('eventos').select().limit(1);
-      return 'OK · La nube responde (${(rows as List).length} lectura). Los datos deberían cruzarse.';
+      final r = await http.post(
+        Uri.parse('$_rest/eventos'),
+        headers: {..._h, 'Prefer': 'return=minimal'},
+        body: jsonEncode({
+          'tipo': 'Prueba de conexión',
+          'edificio': AppState.instance.edificioId,
+          'guardia': AppState.instance.userNombre ?? 'Prueba',
+          'detalle': {'device': deviceId},
+          'device_id': deviceId,
+        }),
+      );
+      if (r.statusCode >= 200 && r.statusCode < 300) {
+        await heartbeat();
+        return 'OK · La nube respondió (código ${r.statusCode}). Los datos deberían cruzarse entre celulares.';
+      }
+      lastError = 'probar ${r.statusCode}: ${r.body}';
+      return 'ERROR ${r.statusCode}: ${r.body}';
     } catch (e) {
       lastError = 'probar: $e';
-      return 'ERROR: $e';
+      return 'ERROR de red: $e';
     }
   }
 
   /// Sube un evento (turno, visita, ronda, incidente...) a la nube.
   static Future<void> evento(String tipo, {String? guardia, Map<String, dynamic>? detalle}) async {
-    if (!enabled) return;
     try {
-      await _c.from('eventos').insert({
-        'tipo': tipo,
-        'edificio': AppState.instance.edificioId,
-        'guardia': guardia ?? AppState.instance.userNombre,
-        'detalle': detalle ?? {},
-        'device_id': deviceId,
-      });
+      final r = await http.post(
+        Uri.parse('$_rest/eventos'),
+        headers: {..._h, 'Prefer': 'return=minimal'},
+        body: jsonEncode({
+          'tipo': tipo,
+          'edificio': AppState.instance.edificioId,
+          'guardia': guardia ?? AppState.instance.userNombre,
+          'detalle': detalle ?? {},
+          'device_id': deviceId,
+        }),
+      );
+      if (r.statusCode >= 300) lastError = 'evento ${r.statusCode}: ${r.body}';
     } catch (e) {
       lastError = 'evento: $e';
     }
   }
 
-  /// Actualiza la presencia del equipo/guardia (para saber quién está en línea).
+  /// Actualiza la presencia del equipo/guardia (upsert por device_id).
   static Future<void> heartbeat() async {
-    if (!enabled) return;
     final s = AppState.instance;
     try {
-      await _c.from('presencia').upsert({
-        'device_id': deviceId,
-        'guardia': s.userNombre ?? 'Sin turno',
-        'edificio': s.edificioId,
-        'en_turno': s.turnoActivoId != null,
-        'last_seen': DateTime.now().toUtc().toIso8601String(),
-      }, onConflict: 'device_id');
+      final r = await http.post(
+        Uri.parse('$_rest/presencia?on_conflict=device_id'),
+        headers: {..._h, 'Prefer': 'resolution=merge-duplicates,return=minimal'},
+        body: jsonEncode({
+          'device_id': deviceId,
+          'guardia': s.userNombre ?? 'Sin turno',
+          'edificio': s.edificioId,
+          'en_turno': s.turnoActivoId != null,
+          'last_seen': DateTime.now().toUtc().toIso8601String(),
+        }),
+      );
+      if (r.statusCode >= 300) lastError = 'heartbeat ${r.statusCode}: ${r.body}';
     } catch (e) {
       lastError = 'heartbeat: $e';
     }
   }
 
-  /// Lee eventos recientes. Si se pasa [edificio], solo trae los de ese
-  /// edificio (para los guardias); sin edificio trae todos (para el admin).
+  /// Lee eventos recientes. Con [edificio] solo trae los de ese edificio.
   static Future<List<Map<String, dynamic>>> eventos({String? tipo, String? edificio, int limit = 120}) async {
-    if (!enabled) return [];
     try {
-      var q = _c.from('eventos').select();
-      if (tipo != null) q = q.eq('tipo', tipo);
-      if (edificio != null) q = q.eq('edificio', edificio);
-      final rows = await q.order('created_at', ascending: false).limit(limit);
-      return List<Map<String, dynamic>>.from(rows);
+      final params = <String>['select=*', 'order=created_at.desc', 'limit=$limit'];
+      if (tipo != null) params.add('tipo=eq.${Uri.encodeComponent(tipo)}');
+      if (edificio != null) params.add('edificio=eq.${Uri.encodeComponent(edificio)}');
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h);
+      if (r.statusCode >= 300) {
+        lastError = 'eventos ${r.statusCode}: ${r.body}';
+        return [];
+      }
+      return List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
     } catch (e) {
       lastError = 'eventos: $e';
       return [];
@@ -102,28 +119,37 @@ class Cloud {
 
   /// Eventos de turno (ingreso/salida) del mes actual, de TODOS los edificios.
   static Future<List<Map<String, dynamic>>> eventosTurnoMes() async {
-    if (!enabled) return [];
     try {
       final now = DateTime.now();
       final desde = DateTime(now.year, now.month, 1).toUtc().toIso8601String();
-      final rows = await _c
-          .from('eventos')
-          .select()
-          .inFilter('tipo', ['Ingreso de turno', 'Salida de turno'])
-          .gte('created_at', desde)
-          .order('created_at')
-          .limit(2000);
-      return List<Map<String, dynamic>>.from(rows);
-    } catch (_) {
+      final inval = '("Ingreso de turno","Salida de turno")';
+      final params = [
+        'select=*',
+        'tipo=in.${Uri.encodeComponent(inval)}',
+        'created_at=gte.${Uri.encodeComponent(desde)}',
+        'order=created_at.asc',
+        'limit=2000',
+      ];
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h);
+      if (r.statusCode >= 300) {
+        lastError = 'turnos ${r.statusCode}: ${r.body}';
+        return [];
+      }
+      return List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
+    } catch (e) {
+      lastError = 'turnos: $e';
       return [];
     }
   }
 
   static Future<List<Map<String, dynamic>>> presencia() async {
-    if (!enabled) return [];
     try {
-      final rows = await _c.from('presencia').select().order('last_seen', ascending: false);
-      return List<Map<String, dynamic>>.from(rows);
+      final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc'), headers: _h);
+      if (r.statusCode >= 300) {
+        lastError = 'presencia ${r.statusCode}: ${r.body}';
+        return [];
+      }
+      return List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
     } catch (e) {
       lastError = 'presencia: $e';
       return [];

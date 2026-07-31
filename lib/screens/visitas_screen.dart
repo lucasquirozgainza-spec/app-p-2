@@ -12,6 +12,7 @@ import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
+import 'camera_screen.dart';
 
 class VisitasScreen extends StatefulWidget {
   const VisitasScreen({super.key});
@@ -329,6 +330,34 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     }
   }
 
+  /// Captura los DOS lados del carnet seguidos (como en rondas) y lee CI+nombre.
+  Future<void> _capturarCarnet() async {
+    final res = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
+    );
+    if (res == null || res.isEmpty) return;
+    _carnetAnverso = res.isNotEmpty ? res[0] : null;
+    _carnetReverso = res.length > 1 ? res[1] : null;
+    setState(() => _ocrLeyendo = true);
+    _carnetTexto = '';
+    for (final path in res) {
+      _carnetTexto = '$_carnetTexto\n${await OcrService.leerTexto(path)}';
+    }
+    final data = OcrService.parseCarnet(_carnetTexto);
+    if (!mounted) return;
+    setState(() {
+      _ocrLeyendo = false;
+      if (data.ci != null) _ci.text = data.ci!;
+      if (data.nombre != null) _nombre.text = data.nombre!;
+    });
+    if (data.ci != null || data.nombre != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim()),
+          backgroundColor: AppColors.verde));
+    }
+  }
+
   /// Lee el carnet (anverso o reverso), acumula el texto y llena CI y nombre.
   Future<void> _procesarCarnet(String? path, bool anverso) async {
     if (anverso) {
@@ -487,6 +516,21 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     Navigator.pop(context);
   }
 
+  Widget _miniCarnet(String path, String label) {
+    return Expanded(
+      child: Column(children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.file(File(path), height: 90, width: double.infinity, fit: BoxFit.cover,
+              gaplessPlayback: true, cacheWidth: 600,
+              errorBuilder: (_, __, ___) => Container(height: 90, color: Colors.black12,
+                  child: const Icon(Icons.broken_image, color: Colors.grey))),
+        ),
+        Text(label, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+      ]),
+    );
+  }
+
   Widget _paso(String n, String t) => Padding(
         padding: const EdgeInsets.only(top: 10, bottom: 8),
         child: Row(children: [
@@ -556,17 +600,37 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         // PASO 3: Carnet -> llena nombre y CI solos
         _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Foto del carnet (llena nombre y CI)'),
         if (s.campoVisita('v_carnet')) ...[
-          PhotoField(label: 'Carnet — lado de la foto', obligatoria: true, album: 'OSIRIS Carnet', onChanged: (v) => _procesarCarnet(v, true)),
-          PhotoField(label: 'Carnet — lado de atrás (nombre)', obligatoria: true, album: 'OSIRIS Carnet', onChanged: (v) => _procesarCarnet(v, false)),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+              onPressed: _capturarCarnet,
+              icon: const Icon(Icons.camera_alt),
+              label: Text(_carnetAnverso == null
+                  ? 'Fotografiar carnet (los 2 lados seguidos)'
+                  : 'Repetir fotos del carnet'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_carnetAnverso != null || _carnetReverso != null)
+            Row(children: [
+              if (_carnetAnverso != null)
+                _miniCarnet(_carnetAnverso!, 'Adelante'),
+              if (_carnetReverso != null) ...[
+                const SizedBox(width: 8),
+                _miniCarnet(_carnetReverso!, 'Atrás'),
+              ],
+            ]),
           if (_ocrLeyendo)
             const Padding(
-              padding: EdgeInsets.only(bottom: 8),
+              padding: EdgeInsets.only(top: 8, bottom: 8),
               child: Row(children: [
                 SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2.5)),
                 SizedBox(width: 8),
                 Text('Leyendo el carnet...', style: TextStyle(color: AppColors.azulMarino)),
               ]),
             ),
+          const SizedBox(height: 8),
         ],
         TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(labelText: 'Nombre completo del visitante *', prefixIcon: Icon(Icons.person))),

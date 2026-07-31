@@ -87,12 +87,12 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (_) => AlertDialog(
         icon: const Icon(Icons.warning_amber, color: AppColors.rojo, size: 40),
-        title: const Text('No has iniciado turno'),
-        content: const Text('Debes iniciar tu turno antes de registrar. '
-            '¿Quieres iniciar turno ahora?'),
+        title: const Text('Primero inicia tu turno'),
+        content: const Text('No puedes registrar nada sin iniciar turno. '
+            'Inicia tu turno para continuar.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, 'igual'),
-              child: const Text('Continuar igual')),
+          TextButton(onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar')),
           FilledButton(onPressed: () => Navigator.pop(context, 'turno'),
               child: const Text('Iniciar turno')),
         ],
@@ -101,8 +101,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     if (r == 'turno') {
       _open(const InicioTurnoScreen());
-    } else if (r == 'igual') {
-      _open(screen);
     }
   }
 
@@ -326,9 +324,9 @@ class _HomeScreenState extends State<HomeScreen> {
             item(Icons.play_arrow, 'Iniciar turno', const InicioTurnoScreen())
           else
             item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen()),
-          item(Icons.wifi_tethering, 'Actividad del edificio', const OnlineScreen(soloEdificio: true)),
-          item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen()),
-          item(Icons.shield, 'Guardias', const GuardiasScreen()),
+          item(Icons.wifi_tethering, 'Actividad del edificio', const OnlineScreen(soloEdificio: true), show: s.isAdmin),
+          item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen(), show: s.isAdmin),
+          item(Icons.shield, 'Guardias', const GuardiasScreen(), show: s.isAdmin),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), show: s.modulo('normativas')),
           const Divider(),
           if (!s.isAdmin)

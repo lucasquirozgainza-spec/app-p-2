@@ -45,6 +45,7 @@ class _BootState extends State<_Boot> {
     await initializeDateFormatting('es', null);
     await DB.instance.database;
     await AppState.instance.loadEdificio();
+    await AppState.instance.restaurarOperador();
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const HomeScreen()),

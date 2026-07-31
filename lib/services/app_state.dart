@@ -158,13 +158,15 @@ class AppState {
     }
   }
 
-  /// Selecciona el guardia operador (al iniciar turno).
+  /// Selecciona el guardia operador (al iniciar turno). Se guarda en el
+  /// dispositivo para que el turno siga abierto aunque se cierre la app.
   void setOperador({int? id, String? nombre, String? cargo, String? rol, int? turnoId}) {
     userId = id;
     userNombre = nombre;
     userCargo = cargo;
     userRol = rol;
     turnoActivoId = turnoId;
+    _guardarOperador();
   }
 
   void clearOperador() {
@@ -173,5 +175,47 @@ class AppState {
     userCargo = null;
     userRol = null;
     turnoActivoId = null;
+    _guardarOperador();
+  }
+
+  Future<void> _guardarOperador() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (turnoActivoId != null && userId != null) {
+      await prefs.setInt('op_turno', turnoActivoId!);
+      await prefs.setInt('op_uid', userId!);
+      await prefs.setString('op_nombre', userNombre ?? '');
+      await prefs.setString('op_cargo', userCargo ?? '');
+      await prefs.setString('op_rol', userRol ?? '');
+    } else {
+      for (final k in ['op_turno', 'op_uid', 'op_nombre', 'op_cargo', 'op_rol']) {
+        await prefs.remove(k);
+      }
+    }
+  }
+
+  /// Restaura el turno activo al abrir la app (si el guardia no lo finalizó).
+  Future<void> restaurarOperador() async {
+    final prefs = await SharedPreferences.getInstance();
+    final turno = prefs.getInt('op_turno');
+    if (turno == null) return;
+    if (!await _turnoSigueActivo(turno)) {
+      await _guardarOperador(); // ya no está activo: limpiar
+      return;
+    }
+    userId = prefs.getInt('op_uid');
+    userNombre = prefs.getString('op_nombre');
+    userCargo = prefs.getString('op_cargo');
+    userRol = prefs.getString('op_rol');
+    turnoActivoId = turno;
+  }
+
+  Future<bool> _turnoSigueActivo(int turnoId) async {
+    try {
+      final db = await DB.instance.database;
+      final rows = await db.query('ingreso_turno', where: 'id=? AND activo=1', whereArgs: [turnoId]);
+      return rows.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 }
