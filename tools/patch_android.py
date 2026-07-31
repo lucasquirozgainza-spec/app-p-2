@@ -12,7 +12,7 @@ permisos = """    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" tools:replace="android:maxSdkVersion"/>
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
@@ -21,6 +21,10 @@ permisos = """    <uses-permission android:name="android.permission.INTERNET"/>
 
 if "android.permission.CAMERA" not in txt:
     txt = txt.replace("<application", permisos + "\n    <application", 1)
+
+# Asegurar el namespace tools en <manifest> (necesario para tools:replace)
+if "xmlns:tools=" not in txt:
+    txt = re.sub(r"(<manifest\b)", r'\1 xmlns:tools="http://schemas.android.com/tools"', txt, count=1)
 
 # Nombre visible de la app (bajo el icono)
 txt = re.sub(r'android:label="[^"]*"', 'android:label="OSIRIS"', txt, count=1)
