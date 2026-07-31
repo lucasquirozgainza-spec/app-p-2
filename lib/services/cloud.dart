@@ -79,19 +79,25 @@ class Cloud {
   }
 
   /// Actualiza la presencia del equipo/guardia (upsert por device_id).
-  static Future<void> heartbeat() async {
+  /// Si se pasan lat/lng, guarda la ubicacion actual (monitoreo constante).
+  static Future<void> heartbeat({double? lat, double? lng}) async {
     final s = AppState.instance;
     try {
+      final body = <String, dynamic>{
+        'device_id': deviceId,
+        'guardia': s.userNombre ?? 'Sin turno',
+        'edificio': s.edificioId,
+        'en_turno': s.turnoActivoId != null,
+        'last_seen': DateTime.now().toUtc().toIso8601String(),
+      };
+      if (lat != null && lng != null) {
+        body['lat'] = lat;
+        body['lng'] = lng;
+      }
       final r = await http.post(
         Uri.parse('$_rest/presencia?on_conflict=device_id'),
         headers: {..._h, 'Prefer': 'resolution=merge-duplicates,return=minimal'},
-        body: jsonEncode({
-          'device_id': deviceId,
-          'guardia': s.userNombre ?? 'Sin turno',
-          'edificio': s.edificioId,
-          'en_turno': s.turnoActivoId != null,
-          'last_seen': DateTime.now().toUtc().toIso8601String(),
-        }),
+        body: jsonEncode(body),
       );
       if (r.statusCode >= 300) lastError = 'heartbeat ${r.statusCode}: ${r.body}';
     } catch (e) {

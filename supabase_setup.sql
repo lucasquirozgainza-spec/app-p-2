@@ -22,6 +22,10 @@ create table if not exists presencia (
   last_seen timestamptz default now()
 );
 
+-- Ubicacion del celular (monitoreo constante)
+alter table presencia add column if not exists lat double precision;
+alter table presencia add column if not exists lng double precision;
+
 -- 2) Permisos para la clave publica (rol anon)
 grant usage on schema public to anon;
 grant select, insert, update, delete on eventos to anon;

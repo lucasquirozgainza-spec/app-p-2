@@ -9,6 +9,7 @@ import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/depto_field.dart';
+import '../widgets/toast.dart';
 
 // WhatsApp es la forma mas comun de confirmar hospedaje -> por defecto.
 const _plataformas = ['WhatsApp', 'Airbnb', 'Booking', 'Directo', 'Otro'];
@@ -206,8 +207,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
     } finally {
       if (mounted) {
         setState(() => _ocr = false);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Documento leido. Revisa nombre y numero.'), duration: Duration(seconds: 2)));
+        TopToast.show(context, 'Documento leído. Revisa nombre y número.');
       }
     }
   }

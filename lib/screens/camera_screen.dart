@@ -60,19 +60,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // ResolutionPreset.high (720p) enfoca mas rapido y sale nitido para OCR.
-      final c = CameraController(_cams[_idx], ResolutionPreset.high,
+      // Rondas (multi): resolucion media = abre y dispara mas rapido.
+      // Tarjeta/carnet (single): alta, para que el OCR lea bien.
+      final preset = widget.multi ? ResolutionPreset.medium : ResolutionPreset.high;
+      final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
       _initFuture = c.initialize();
       await _initFuture;
-      // Enfoque y exposicion automaticos continuos: enfoca numeros/letras solo.
-      try { await c.setFocusMode(FocusMode.auto); } catch (_) {}
-      try { await c.setExposureMode(ExposureMode.auto); } catch (_) {}
-      // Enfocar al centro de entrada (donde suele estar la tarjeta/carnet).
-      try { await c.setFocusPoint(const Offset(0.5, 0.5)); } catch (_) {}
-      try { await c.setExposurePoint(const Offset(0.5, 0.5)); } catch (_) {}
       if (mounted) setState(() {});
+      // Enfoque/exposicion automaticos en segundo plano (no bloquea la apertura).
+      c.setFocusMode(FocusMode.auto).catchError((_) {});
+      c.setExposureMode(ExposureMode.auto).catchError((_) {});
+      c.setFocusPoint(const Offset(0.5, 0.5)).catchError((_) {});
+      c.setExposurePoint(const Offset(0.5, 0.5)).catchError((_) {});
     } catch (_) {
       if (mounted) setState(() => _error = 'No se pudo abrir la camara');
     }
@@ -108,11 +109,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // Enfoque continuo activo: solo un instante corto para que asiente.
-      try {
-        await c.setFocusMode(FocusMode.auto);
-        await Future.delayed(const Duration(milliseconds: 250));
-      } catch (_) {}
+      // En fotos sueltas (tarjeta/carnet) damos un instante al enfoque; en
+      // modo ronda no, para pasar rapido de una foto a la siguiente.
+      if (!widget.multi) {
+        try {
+          await c.setFocusMode(FocusMode.auto);
+          await Future.delayed(const Duration(milliseconds: 200));
+        } catch (_) {}
+      }
       final XFile shot = await c.takePicture();
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
+import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import 'login_screen.dart';
@@ -39,14 +40,22 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Mantiene la presencia "en linea" actualizada mientras la app este abierta.
-    _hb = Timer.periodic(const Duration(seconds: 60), (_) => Cloud.heartbeat());
+    // Mantiene la presencia "en linea" + ubicacion actualizada (monitoreo
+    // constante) mientras la app este abierta.
+    _latido();
+    _hb = Timer.periodic(const Duration(seconds: 60), (_) => _latido());
   }
 
   @override
   void dispose() {
     _hb?.cancel();
     super.dispose();
+  }
+
+  /// Latido de presencia con ubicacion (monitoreo constante del celular).
+  Future<void> _latido() async {
+    final g = await DeviceContext.gps();
+    await Cloud.heartbeat(lat: g?['lat'], lng: g?['lng']);
   }
 
   Future<void> _openOnline() async {

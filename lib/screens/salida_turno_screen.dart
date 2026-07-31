@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
+import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
@@ -50,6 +51,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     if (_foto == null) return _snack('La foto de salida es obligatoria');
     setState(() => _saving = true);
     final s = AppState.instance;
+    final gps = await DeviceContext.gps();
     final db = await DB.instance.database;
     final id = await db.insert('salida_turno', {
       'turno_id': _sel!['id'],
@@ -64,7 +66,10 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     await Audit.log('FIN_TURNO', 'salida_turno', '$id');
     await Cloud.evento('Salida de turno',
         guardia: _sel!['guardia_nombre'] as String?,
-        detalle: {'observaciones': _obs.text});
+        detalle: {
+          'observaciones': _obs.text,
+          'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
+        });
 
     // Advertencia: tarjetas de visita que NO fueron devueltas.
     final pend = await db.query('visitas',
@@ -95,7 +100,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
 
     // Si el que sale es el operador actual, se limpia.
     if (s.turnoActivoId == _sel!['id']) s.clearOperador();
-    await Cloud.heartbeat();
+    await Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
     if (!mounted) return;
     Navigator.pop(context);
   }

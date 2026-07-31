@@ -5,6 +5,7 @@ import '../services/app_state.dart';
 import '../services/auth_service.dart';
 import '../services/cloud.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import 'reporte_personal_screen.dart';
 import 'advertencias_screen.dart';
 
@@ -84,8 +85,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
     final db = await DB.instance.database;
     await db.delete('usuarios', where: 'id=?', whereArgs: [p['id']]);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Personal eliminado'), backgroundColor: AppColors.verde));
+    TopToast.show(context, 'Personal eliminado');
     _load();
   }
 
@@ -128,8 +128,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
     if (ok == true && n.text.trim().isNotEmpty) {
       await AuthService.crearGuardia(nombre: n.text.trim(), cargo: c.text, rol: rol);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Guardia registrado'), backgroundColor: AppColors.verde));
+      TopToast.show(context, 'Guardia registrado');
       _load();
     }
   }

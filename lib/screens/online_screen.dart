@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
 import '../theme.dart';
@@ -66,6 +67,12 @@ class _OnlineScreenState extends State<OnlineScreen> {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<void> _abrirMapa(dynamic lat, dynamic lng) async {
+    if (lat == null || lng == null) return;
+    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
   }
 
   String _hace(String? iso) {
@@ -163,8 +170,21 @@ class _OnlineScreenState extends State<OnlineScreen> {
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text('${p['edificio'] ?? ''}'
                               '${p['en_turno'] == true ? ' · En turno' : ''}'),
-                          trailing: Text(_hace(p['last_seen']?.toString()),
-                              style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                          trailing: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(_hace(p['last_seen']?.toString()),
+                                  style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                              if (p['lat'] != null && p['lng'] != null)
+                                TextButton.icon(
+                                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 28)),
+                                  onPressed: () => _abrirMapa(p['lat'], p['lng']),
+                                  icon: const Icon(Icons.location_on, size: 16),
+                                  label: const Text('Ubicación', style: TextStyle(fontSize: 11)),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
                   if (!widget.soloEdificio) ...[

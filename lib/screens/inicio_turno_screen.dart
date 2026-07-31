@@ -146,8 +146,12 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     await Audit.log('INICIO_TURNO', 'ingreso_turno', '$id');
     await Cloud.evento('Ingreso de turno',
         guardia: _sel!['nombre'] as String?,
-        detalle: {'cargo': _sel!['cargo'], 'observaciones': _obs.text});
-    await Cloud.heartbeat();
+        detalle: {
+          'cargo': _sel!['cargo'],
+          'observaciones': _obs.text,
+          'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
+        });
+    await Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
     if (!mounted) return;
     Navigator.pop(context);
   }

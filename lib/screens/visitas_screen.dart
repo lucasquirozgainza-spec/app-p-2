@@ -12,6 +12,7 @@ import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
+import '../widgets/toast.dart';
 import 'camera_screen.dart';
 
 class VisitasScreen extends StatefulWidget {
@@ -313,8 +314,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       _tarjetaNum.text = (num != null && num.length == 10) ? num : '';
     });
     if (num != null && num.length == 10) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('N° de tarjeta detectado: $num'), backgroundColor: AppColors.verde));
+      TopToast.show(context, 'N° de tarjeta detectado: $num');
     } else {
       // La tarjeta SIEMPRE tiene 10 digitos: obligar a repetir la foto.
       showDialog(
@@ -352,9 +352,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       if (data.nombre != null) _nombre.text = data.nombre!;
     });
     if (data.ci != null || data.nombre != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim()),
-          backgroundColor: AppColors.verde));
+      TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
     }
   }
 
@@ -378,9 +376,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       if (data.nombre != null) _nombre.text = data.nombre!;
     });
     if (data.ci != null || data.nombre != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim()),
-          backgroundColor: AppColors.verde));
+      TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
     }
   }
 
@@ -548,7 +544,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       appBar: AppBar(title: const Text('Registrar Visita')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         // PASO 1: Depto y autorizacion
-        _paso('1', 'Escribe el depto y tócalo'),
+        _paso('1', 'Departamento'),
         TextField(controller: _depto,
             decoration: const InputDecoration(
               labelText: 'Depto (ej. 303)',
@@ -579,7 +575,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           child: FilledButton.icon(
             onPressed: _mostrarContactos,
             icon: const Icon(Icons.phone_in_talk),
-            label: const Text('Toca aquí para llamar y autorizar'),
+            label: const Text('Llamar para autorizar'),
           ),
         ),
         const SizedBox(height: 12),
@@ -591,14 +587,14 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         const SizedBox(height: 8),
         // PASO 2: Tarjeta (configurable por edificio)
         if (s.campoVisita('v_tarjeta')) ...[
-          _paso('2', 'Foto de la tarjeta (10 dígitos)'),
-          PhotoField(label: 'Toca para fotografiar la tarjeta', album: 'OSIRIS Tarjetas', onChanged: _ocrTarjeta),
+          _paso('2', 'Tarjeta'),
+          PhotoField(label: 'Foto de la tarjeta', album: 'OSIRIS Tarjetas', onChanged: _ocrTarjeta),
           TextField(controller: _tarjetaNum, keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'N° de tarjeta (se llena solo)')),
+              decoration: const InputDecoration(labelText: 'N° de tarjeta')),
           const SizedBox(height: 12),
         ],
         // PASO 3: Carnet -> llena nombre y CI solos
-        _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Foto del carnet (llena nombre y CI)'),
+        _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Carnet'),
         if (s.campoVisita('v_carnet')) ...[
           SizedBox(
             width: double.infinity,
@@ -606,9 +602,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
               onPressed: _capturarCarnet,
               icon: const Icon(Icons.camera_alt),
-              label: Text(_carnetAnverso == null
-                  ? 'Fotografiar carnet (los 2 lados seguidos)'
-                  : 'Repetir fotos del carnet'),
+              label: Text(_carnetAnverso == null ? 'Foto del carnet (2 lados)' : 'Repetir carnet'),
             ),
           ),
           const SizedBox(height: 8),
@@ -633,13 +627,13 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           const SizedBox(height: 8),
         ],
         TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Nombre completo del visitante *', prefixIcon: Icon(Icons.person))),
+            decoration: const InputDecoration(labelText: 'Nombre *', prefixIcon: Icon(Icons.person))),
         const SizedBox(height: 12),
         TextField(controller: _ci, keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Numero de documento', prefixIcon: Icon(Icons.badge))),
+            decoration: const InputDecoration(labelText: 'CI / documento', prefixIcon: Icon(Icons.badge))),
         const SizedBox(height: 12),
         // PASO 4: Vehiculo, motivo, observaciones
-        _paso('4', 'Detalles finales'),
+        _paso('4', 'Detalles'),
         if (s.campoVisita('v_vehiculo')) ...[
           SwitchListTile(
             value: _tieneVehiculo,
