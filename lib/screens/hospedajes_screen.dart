@@ -214,8 +214,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
 
   Future<void> _guardar() async {
     if (_huesped.text.trim().isEmpty || _fotoDoc == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Nombre y foto del documento son obligatorios'), backgroundColor: AppColors.rojo));
+      TopToast.show(context, 'Nombre y foto del documento son obligatorios', color: AppColors.rojo, icon: Icons.error_outline);
       return;
     }
     setState(() => _saving = true);

@@ -9,6 +9,7 @@ import '../services/notify_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/depto_field.dart';
+import '../widgets/toast.dart';
 
 const _tiposIncidente = ['Seguridad', 'Mantenimiento', 'Accidente', 'Mascotas', 'Ruido', 'Otro'];
 
@@ -143,8 +144,7 @@ class _IncidenteFormState extends State<IncidenteForm> {
 
   Future<void> _guardar() async {
     if (_desc.text.trim().isEmpty || _fotos.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Descripcion y al menos una foto son obligatorias'), backgroundColor: AppColors.rojo));
+      TopToast.show(context, 'Descripción y al menos una foto son obligatorias', color: AppColors.rojo, icon: Icons.error_outline);
       return;
     }
     setState(() => _saving = true);

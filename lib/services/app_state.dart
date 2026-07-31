@@ -41,6 +41,7 @@ class AppState {
   bool controlUniforme = true;  // revisar uniforme (camisa roja / chaleco negro) al iniciar turno
 
   // Operacion
+  int retencionDias = 90;       // borrado automatico de datos/fotos (3 meses)
   int rondaFotos = 10;          // fotos obligatorias por ronda (configurable)
   String turnoIngreso = '';     // horario de ingreso esperado (HH:mm) de ESTE dispositivo
   String turnoSalida = '';      // horario de salida esperado (HH:mm) de ESTE dispositivo
@@ -64,6 +65,7 @@ class AppState {
     alarmaCandados = prefs.getBool('alarma_candados') ?? true;
     controlUniforme = prefs.getBool('control_uniforme') ?? true;
     rondaFotos = prefs.getInt('ronda_fotos') ?? 10;
+    retencionDias = prefs.getInt('retencion_dias') ?? 90;
     turnoIngreso = prefs.getString('turno_ingreso') ?? '';
     turnoSalida = prefs.getString('turno_salida') ?? '';
     final db = await DB.instance.database;
@@ -142,11 +144,15 @@ class AppState {
     }
   }
 
-  Future<void> setOperacion({int? rondaFotos, String? turnoIngreso, String? turnoSalida}) async {
+  Future<void> setOperacion({int? rondaFotos, String? turnoIngreso, String? turnoSalida, int? retencionDias}) async {
     final prefs = await SharedPreferences.getInstance();
     if (rondaFotos != null) {
       this.rondaFotos = rondaFotos.clamp(1, 30);
       await prefs.setInt('ronda_fotos', this.rondaFotos);
+    }
+    if (retencionDias != null) {
+      this.retencionDias = retencionDias.clamp(30, 730);
+      await prefs.setInt('retencion_dias', this.retencionDias);
     }
     if (turnoIngreso != null) {
       this.turnoIngreso = turnoIngreso;

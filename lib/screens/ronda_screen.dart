@@ -8,6 +8,7 @@ import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import 'camera_screen.dart';
 
 class RondaScreen extends StatefulWidget {
@@ -25,8 +26,7 @@ class _RondaScreenState extends State<RondaScreen> {
   // Cantidad de fotos obligatorias por ronda (configurable por el admin).
   int get _min => AppState.instance.rondaFotos;
 
-  void _snack(String m) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
+  void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
   Future<void> _tomarFotos() async {
     final res = await Navigator.push<List<String>>(
@@ -65,8 +65,7 @@ class _RondaScreenState extends State<RondaScreen> {
     } catch (_) {}
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ronda guardada'), backgroundColor: AppColors.verde));
+    TopToast.show(context, 'Ronda guardada');
     Navigator.pop(context);
   }
 

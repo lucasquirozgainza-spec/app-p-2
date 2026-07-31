@@ -6,6 +6,7 @@ import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
 
@@ -43,8 +44,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     });
   }
 
-  void _snack(String m) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
+  void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
   Future<void> _finalizar() async {
     if (_sel == null) return _snack('Selecciona el guardia que sale');

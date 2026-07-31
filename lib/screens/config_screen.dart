@@ -545,6 +545,38 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ]),
           ),
           const SizedBox(height: 16),
+          const Text('Borrado automático de datos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text('Todo lo que registra la app (con sus fotos y videos) se borra al pasar este tiempo. '
+              'Los PDF descargados se conservan.', style: TextStyle(color: Colors.black54, fontSize: 12)),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.auto_delete, color: AppColors.rojo),
+              title: const Text('Conservar datos por'),
+              subtitle: Text('${(AppState.instance.retencionDias / 30).round()} mes(es)  ·  ${AppState.instance.retencionDias} días'),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline),
+                  onPressed: () async {
+                    final meses = (AppState.instance.retencionDias / 30).round();
+                    await AppState.instance.setOperacion(retencionDias: ((meses - 1).clamp(1, 24)) * 30);
+                    setState(() {});
+                  },
+                ),
+                Text('${(AppState.instance.retencionDias / 30).round()}m',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  onPressed: () async {
+                    final meses = (AppState.instance.retencionDias / 30).round();
+                    await AppState.instance.setOperacion(retencionDias: ((meses + 1).clamp(1, 24)) * 30);
+                    setState(() {});
+                  },
+                ),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 16),
           const Text('Avisos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Card(

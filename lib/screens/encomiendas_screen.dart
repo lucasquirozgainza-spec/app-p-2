@@ -11,6 +11,7 @@ import '../services/contactos_repo.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/depto_field.dart';
+import '../widgets/toast.dart';
 
 class EncomiendasScreen extends StatefulWidget {
   const EncomiendasScreen({super.key});
@@ -127,8 +128,7 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
 
   Future<void> _guardar() async {
     if (_foto == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('La foto del paquete es obligatoria'), backgroundColor: AppColors.rojo));
+      TopToast.show(context, 'La foto del paquete es obligatoria', color: AppColors.rojo, icon: Icons.error_outline);
       return;
     }
     setState(() => _saving = true);
@@ -262,8 +262,7 @@ class _EntregaEncomiendaState extends State<EntregaEncomienda> {
 
   Future<void> _confirmar() async {
     if (_foto == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Tome la foto del residente recibiendo'), backgroundColor: AppColors.rojo));
+      TopToast.show(context, 'Tome la foto del residente recibiendo', color: AppColors.rojo, icon: Icons.error_outline);
       return;
     }
     setState(() => _saving = true);

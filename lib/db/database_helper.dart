@@ -21,12 +21,13 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 7,
+      version: 8,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, v) async {
         await _createSchema(db);
+        await _crearIndices(db);
         await _seed(db);
       },
       onUpgrade: (db, oldV, newV) async {
@@ -70,8 +71,32 @@ class DB {
               marca TEXT DEFAULT 'dahua', created_at TEXT)''');
           } catch (_) {}
         }
+        if (oldV < 8) {
+          await _crearIndices(db);
+        }
       },
     );
+  }
+
+  /// Índices para que las consultas sean rápidas aunque haya muchos registros.
+  Future<void> _crearIndices(Database db) async {
+    const idx = {
+      'ix_visitas': 'visitas(edificio, created_at)',
+      'ix_rondas': 'rondas(edificio, created_at)',
+      'ix_encomiendas': 'encomiendas(edificio, created_at)',
+      'ix_incidentes': 'incidentes(edificio, created_at)',
+      'ix_mantenimiento': 'mantenimiento(edificio, created_at)',
+      'ix_hospedajes': 'hospedajes(edificio, created_at)',
+      'ix_ingreso': 'ingreso_turno(edificio, activo)',
+      'ix_advertencias': 'advertencias(edificio, created_at)',
+      'ix_props': 'propietarios(edificio, depto)',
+      'ix_resis': 'residentes(edificio, depto)',
+    };
+    for (final e in idx.entries) {
+      try {
+        await db.execute('CREATE INDEX IF NOT EXISTS ${e.key} ON ${e.value}');
+      } catch (_) {}
+    }
   }
 
   Future<void> _createSchema(Database db) async {

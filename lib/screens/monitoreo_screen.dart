@@ -7,6 +7,7 @@ import '../widgets/toast.dart';
 import 'camera_screen.dart';
 import 'camara_view_screen.dart';
 import 'camara_playback_screen.dart';
+import 'camara_multi_screen.dart';
 
 /// Monitoreo: lista de DVR/camaras del edificio. Se agregan por QR (Dahua) o
 /// manual, y se ven en vivo o en grabaciones (RTSP, sin depender de DMSS).
@@ -171,7 +172,16 @@ class _MonitoreoScreenState extends State<MonitoreoScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Monitoreo')),
+      appBar: AppBar(
+        title: const Text('Monitoreo'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.grid_view),
+            tooltip: 'Vista múltiple',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CamaraMultiScreen())),
+          ),
+        ],
+      ),
       floatingActionButton: AppState.instance.isAdmin
           ? Column(mainAxisSize: MainAxisSize.min, children: [
               FloatingActionButton.extended(
