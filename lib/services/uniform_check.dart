@@ -37,8 +37,9 @@ class UniformeCheck {
       }
       if (total == 0) return UniformeResultado(true, 0, 0);
       final fr = rojos / total, fn = negros / total;
-      // Umbral: al menos 15% del torso en rojo o negro.
-      final ok = fr >= 0.15 || fn >= 0.20;
+      // Regla: el pecho debe tener al menos 10% de ROJO (camisa). Como opcion,
+      // tambien vale un chaleco NEGRO bien marcado (>= 25%).
+      final ok = fr >= 0.10 || fn >= 0.25;
       return UniformeResultado(ok, fr, fn);
     } catch (_) {
       return UniformeResultado(true, 0, 0); // ante cualquier error, no bloquear

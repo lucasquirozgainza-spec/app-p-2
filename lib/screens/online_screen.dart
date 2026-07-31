@@ -1,14 +1,17 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/app_state.dart';
 import '../services/cloud.dart';
 import '../theme.dart';
 
-/// Panel del administrador: ve en tiempo real (al refrescar) los guardias
-/// en línea y los eventos de TODOS los celulares (ingresos, salidas, visitas,
-/// rondas, incidentes).
+/// Actividad en línea. Con [soloEdificio]=true (guardias) solo se ve la
+/// actividad del edificio actual, para que los guardias de los distintos
+/// bloques crucen información. El admin (soloEdificio=false) ve TODOS los
+/// edificios.
 class OnlineScreen extends StatefulWidget {
-  const OnlineScreen({super.key});
+  final bool soloEdificio;
+  const OnlineScreen({super.key, this.soloEdificio = false});
   @override
   State<OnlineScreen> createState() => _OnlineScreenState();
 }
@@ -20,7 +23,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
   String? _filtro; // null = todos
   bool _loading = true;
 
-  static const _tipos = ['Ingreso de turno', 'Salida de turno', 'Visita', 'Ronda', 'Incidente'];
+  static const _tipos = ['Ingreso de turno', 'Salida de turno', 'Visita', 'Ronda', 'Incidente', 'Encomienda', 'Hospedaje', 'Guardia sin uniforme'];
 
   @override
   void initState() {
@@ -28,11 +31,14 @@ class _OnlineScreenState extends State<OnlineScreen> {
     _cargar();
   }
 
+  String? get _edFiltro => widget.soloEdificio ? AppState.instance.edificioId : null;
+
   Future<void> _cargar() async {
     setState(() => _loading = true);
+    await Cloud.heartbeat();
     final pres = await Cloud.presencia();
-    final evs = await Cloud.eventos(tipo: _filtro);
-    final turnos = await Cloud.eventosTurnoMes();
+    final evs = await Cloud.eventos(tipo: _filtro, edificio: _edFiltro);
+    final turnos = widget.soloEdificio ? <Map<String, dynamic>>[] : await Cloud.eventosTurnoMes();
     if (!mounted) return;
     setState(() {
       _presencia = pres;
@@ -68,6 +74,9 @@ class _OnlineScreenState extends State<OnlineScreen> {
       case 'Incidente': return Icons.warning_amber;
       case 'Ingreso de turno': return Icons.login;
       case 'Salida de turno': return Icons.logout;
+      case 'Encomienda': return Icons.inventory_2;
+      case 'Hospedaje': return Icons.hotel;
+      case 'Guardia sin uniforme': return Icons.checkroom;
       default: return Icons.event_note;
     }
   }
@@ -87,10 +96,14 @@ class _OnlineScreenState extends State<OnlineScreen> {
         ),
       );
     }
-    final enLinea = _presencia.where(_online).toList();
+    final ed = AppState.instance.edificioId;
+    final enLinea = _presencia
+        .where(_online)
+        .where((p) => !widget.soloEdificio || (p['edificio']?.toString() ?? '') == ed)
+        .toList();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('En linea'),
+        title: Text(widget.soloEdificio ? 'Actividad del edificio' : 'En linea (todos)'),
         actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _cargar)],
       ),
       body: _loading
@@ -124,14 +137,16 @@ class _OnlineScreenState extends State<OnlineScreen> {
                               style: const TextStyle(fontSize: 11, color: Colors.black54)),
                         ),
                       ),
+                  if (!widget.soloEdificio) ...[
+                    const SizedBox(height: 18),
+                    const Text('Dias trabajados este mes (todos los edificios)',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    ..._diasTrabajados(),
+                  ],
                   const SizedBox(height: 18),
-                  const Text('Dias trabajados este mes (todos los edificios)',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 6),
-                  ..._diasTrabajados(),
-                  const SizedBox(height: 18),
-                  const Text('Eventos recientes',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text(widget.soloEdificio ? 'Actividad reciente del edificio' : 'Eventos recientes',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 6,

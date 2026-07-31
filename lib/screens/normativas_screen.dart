@@ -74,6 +74,35 @@ class _NormativasScreenState extends State<NormativasScreen> {
     _load();
   }
 
+  Future<void> _eliminar(Map<String, dynamic> n) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.delete_forever, color: AppColors.rojo, size: 36),
+        title: const Text('Eliminar documento'),
+        content: Text('¿Eliminar "${n['nombre'] ?? ''}"? Esta acción no se puede deshacer.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final db = await DB.instance.database;
+    await db.delete('normativas', where: 'id=?', whereArgs: [n['id']]);
+    // Borrar tambien el archivo del documento.
+    try {
+      final path = n['pdf_path']?.toString() ?? '';
+      if (path.isNotEmpty && File(path).existsSync()) await File(path).delete();
+    } catch (_) {}
+    await Audit.log('ELIMINAR', 'normativas', '${n['id']}');
+    _load();
+  }
+
   Future<void> _abrir(Map<String, dynamic> n) async {
     final path = n['pdf_path']?.toString() ?? '';
     if (path.isEmpty || !File(path).existsSync()) {
@@ -133,7 +162,18 @@ class _NormativasScreenState extends State<NormativasScreen> {
                     title: Text(n['nombre']?.toString() ?? '',
                         style: const TextStyle(fontWeight: FontWeight.w600)),
                     subtitle: Text(tieneArchivo ? (img ? 'Imagen' : 'PDF') : 'Sin archivo (documento de ejemplo)'),
-                    trailing: tieneArchivo ? const Icon(Icons.open_in_new) : null,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (AppState.instance.isAdmin)
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: AppColors.rojo),
+                            tooltip: 'Eliminar',
+                            onPressed: () => _eliminar(n),
+                          ),
+                        if (tieneArchivo) const Icon(Icons.open_in_new),
+                      ],
+                    ),
                     onTap: tieneArchivo ? () => _abrir(n) : null,
                   ),
                 );

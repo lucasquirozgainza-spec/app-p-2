@@ -10,8 +10,6 @@ import '../services/cloud.dart';
 import '../theme.dart';
 import 'camera_screen.dart';
 
-const int kFotosMinimas = 10;
-
 class RondaScreen extends StatefulWidget {
   const RondaScreen({super.key});
   @override
@@ -24,20 +22,23 @@ class _RondaScreenState extends State<RondaScreen> {
   bool _saving = false;
   final _inicio = DateTime.now();
 
+  // Cantidad de fotos obligatorias por ronda (configurable por el admin).
+  int get _min => AppState.instance.rondaFotos;
+
   void _snack(String m) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
 
   Future<void> _tomarFotos() async {
     final res = await Navigator.push<List<String>>(
       context,
-      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: kFotosMinimas, album: 'OSIRIS Rondas')),
+      MaterialPageRoute(builder: (_) => CameraScreen(multi: true, minFotos: _min, album: 'OSIRIS Rondas')),
     );
     if (res != null && res.isNotEmpty) setState(() => _fotos.addAll(res));
   }
 
   Future<void> _guardar() async {
-    if (_fotos.length < kFotosMinimas) {
-      return _snack('Debes tomar al menos $kFotosMinimas fotos (llevas ${_fotos.length})');
+    if (_fotos.length < _min) {
+      return _snack('Debes tomar al menos $_min fotos (llevas ${_fotos.length})');
     }
     setState(() => _saving = true);
     final s = AppState.instance;
@@ -71,7 +72,7 @@ class _RondaScreenState extends State<RondaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final faltan = (kFotosMinimas - _fotos.length).clamp(0, kFotosMinimas);
+    final faltan = (_min - _fotos.length).clamp(0, _min);
     final completo = faltan == 0;
     return Scaffold(
       appBar: AppBar(
@@ -108,7 +109,7 @@ class _RondaScreenState extends State<RondaScreen> {
                   child: Text(
                     completo
                         ? 'Fotos completas: ${_fotos.length}'
-                        : 'Toma $kFotosMinimas fotos de la ronda\nLlevas ${_fotos.length} (faltan $faltan)',
+                        : 'Toma $_min fotos de la ronda\nLlevas ${_fotos.length} (faltan $faltan)',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                 ),
@@ -119,7 +120,7 @@ class _RondaScreenState extends State<RondaScreen> {
           FilledButton.icon(
             onPressed: _tomarFotos,
             icon: const Icon(Icons.camera_alt),
-            label: Text('Abrir camara - tomar fotos (${_fotos.length}/$kFotosMinimas)'),
+            label: Text('Abrir camara - tomar fotos (${_fotos.length}/$_min)'),
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6),

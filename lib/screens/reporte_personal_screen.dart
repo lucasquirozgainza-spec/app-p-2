@@ -5,7 +5,7 @@ import '../services/app_state.dart';
 import '../theme.dart';
 
 /// Reporte de personal por mes: días trabajados, horas totales,
-/// turnos de 24h (doble turno) y horas extra (más de 8h por turno).
+/// turnos de 24h (doble turno) y horas extra (más de 12h por turno).
 class ReportePersonalScreen extends StatefulWidget {
   const ReportePersonalScreen({super.key});
   @override
@@ -71,7 +71,8 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
         if (horas > 0 && horas < 48) {
           r.horas += horas;
           if (horas >= 20) r.dobles++;
-          if (horas > 8) r.extra += (horas - 8);
+          // Turno normal = 12 h; lo que pase de 12 h es hora extra.
+          if (horas > AppState.horasTurno) r.extra += (horas - AppState.horasTurno);
         }
       } else {
         r.abiertos++;

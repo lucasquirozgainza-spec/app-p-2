@@ -76,27 +76,41 @@ class _PhotoFieldState extends State<PhotoField> {
                 color: has ? AppColors.verde : const Color(0xFFDDE3EA),
                 width: has ? 2 : 1,
               ),
-              image: has
-                  ? DecorationImage(
-                      image: ResizeImage(FileImage(File(_path!)), width: 900),
-                      fit: BoxFit.cover)
-                  : null,
             ),
             child: has
-                ? Align(
-                    alignment: Alignment.topRight,
-                    child: Container(
-                      margin: const EdgeInsets.all(8),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.refresh, color: Colors.white, size: 14),
-                        SizedBox(width: 4),
-                        Text('Repetir', style: TextStyle(color: Colors.white, fontSize: 12)),
-                      ]),
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(13),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // gaplessPlayback evita que la imagen "parpadee" o desaparezca al reconstruir.
+                        Image.file(
+                          File(_path!),
+                          key: ValueKey(_path),
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          cacheWidth: 1000,
+                          errorBuilder: (_, __, ___) => const Center(
+                            child: Icon(Icons.broken_image, color: Colors.grey, size: 36),
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.topRight,
+                          child: Container(
+                            margin: const EdgeInsets.all(8),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.refresh, color: Colors.white, size: 14),
+                              SizedBox(width: 4),
+                              Text('Repetir', style: TextStyle(color: Colors.white, fontSize: 12)),
+                            ]),
+                          ),
+                        ),
+                      ],
                     ),
                   )
                 : const Center(

@@ -65,6 +65,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _controller = c;
       _initFuture = c.initialize();
       await _initFuture;
+      // Enfoque y exposicion automaticos continuos: agiliza y enfoca numeros/letras.
+      try { await c.setFocusMode(FocusMode.auto); } catch (_) {}
+      try { await c.setExposureMode(ExposureMode.auto); } catch (_) {}
       if (mounted) setState(() {});
     } catch (_) {
       if (mounted) setState(() => _error = 'No se pudo abrir la camara');
@@ -158,7 +161,24 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           ? const Center(child: CircularProgressIndicator(color: Colors.white))
           : Column(
               children: [
-                Expanded(child: Center(child: CameraPreview(c))),
+                Expanded(
+                  child: Center(
+                    child: GestureDetector(
+                      // Tocar sobre el numero/letra para enfocar ahi.
+                      onTapDown: (d) async {
+                        try {
+                          final box = context.findRenderObject() as RenderBox?;
+                          if (box == null) return;
+                          final o = box.globalToLocal(d.globalPosition);
+                          final p = Offset(o.dx / box.size.width, o.dy / box.size.height);
+                          await c.setFocusPoint(p);
+                          await c.setExposurePoint(p);
+                        } catch (_) {}
+                      },
+                      child: CameraPreview(c),
+                    ),
+                  ),
+                ),
                 if (widget.multi && _fotos.isNotEmpty)
                   Container(
                     height: 76,

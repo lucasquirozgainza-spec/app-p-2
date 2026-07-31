@@ -57,12 +57,14 @@ class Cloud {
     } catch (_) {}
   }
 
-  /// Lee eventos recientes (para el panel del admin).
-  static Future<List<Map<String, dynamic>>> eventos({String? tipo, int limit = 60}) async {
+  /// Lee eventos recientes. Si se pasa [edificio], solo trae los de ese
+  /// edificio (para los guardias); sin edificio trae todos (para el admin).
+  static Future<List<Map<String, dynamic>>> eventos({String? tipo, String? edificio, int limit = 120}) async {
     if (!enabled) return [];
     try {
       var q = _c.from('eventos').select();
       if (tipo != null) q = q.eq('tipo', tipo);
+      if (edificio != null) q = q.eq('edificio', edificio);
       final rows = await q.order('created_at', ascending: false).limit(limit);
       return List<Map<String, dynamic>>.from(rows);
     } catch (_) {

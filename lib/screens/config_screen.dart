@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/auth_service.dart';
+import '../services/excel_import.dart';
 import '../services/notifications_service.dart';
 import '../theme.dart';
 
@@ -230,6 +232,53 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
   }
 
+  Future<void> _importarExcel() async {
+    final res = await FilePicker.platform.pickFiles(
+      type: FileType.custom, allowedExtensions: ['xlsx', 'xls'],
+    );
+    if (res == null || res.files.single.path == null) return;
+    if (!mounted) return;
+    showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()));
+    final r = await ExcelImport.importar(res.files.single.path!, _selId);
+    if (!mounted) return;
+    Navigator.pop(context); // cerrar spinner
+    if (r.error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('No se pudo leer el Excel: ${r.error}'), backgroundColor: AppColors.rojo));
+      return;
+    }
+    await Audit.log('IMPORTAR', 'propietarios', _selId, detalle: '${r.propietarios} prop, ${r.residentes} resi');
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.check_circle, color: AppColors.verde, size: 40),
+        title: const Text('Importación lista'),
+        content: Text('Se cargaron ${r.propietarios} propietarios'
+            '${r.residentes > 0 ? ' y ${r.residentes} residentes' : ''} al edificio.'),
+        actions: [FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Entendido'))],
+      ),
+    );
+  }
+
+  Future<void> _pickHora(bool ingreso) async {
+    final actual = ingreso ? AppState.instance.turnoIngreso : AppState.instance.turnoSalida;
+    TimeOfDay inicial = const TimeOfDay(hour: 8, minute: 0);
+    if (actual.contains(':')) {
+      final parts = actual.split(':');
+      inicial = TimeOfDay(hour: int.tryParse(parts[0]) ?? 8, minute: int.tryParse(parts[1]) ?? 0);
+    }
+    final t = await showTimePicker(context: context, initialTime: inicial);
+    if (t == null) return;
+    final hhmm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    await AppState.instance.setOperacion(
+        turnoIngreso: ingreso ? hhmm : null, turnoSalida: ingreso ? null : hhmm);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _configAvisos() async {
     final s = AppState.instance;
     String metodo = s.notifMetodo;
@@ -315,10 +364,28 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _nuevoEdificio,
-            icon: const Icon(Icons.add_business),
-            label: const Text('Agregar edificio'),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _nuevoEdificio,
+                icon: const Icon(Icons.add_business),
+                label: const Text('Agregar edificio'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _importarExcel,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Importar Excel'),
+              ),
+            ),
+          ]),
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('El Excel debe tener columnas como: Depto, Nombre/Propietario, Teléfono/Celular '
+                '(opcional: Inquilino, Parentesco). Se cargan al edificio seleccionado arriba.',
+                style: TextStyle(fontSize: 11, color: Colors.black54)),
           ),
           const SizedBox(height: 16),
           Text('Modulos de ${_edificios.firstWhere((e) => e['id'] == _selId, orElse: () => {'nombre': ''})['nombre']}',
@@ -421,6 +488,59 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   await AppState.instance.setRecordatorios(uniforme: v);
                   setState(() {});
                 },
+              ),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          const Text('Rondas y turnos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text('Fotos por ronda y horario de este dispositivo.',
+              style: TextStyle(color: Colors.black54, fontSize: 12)),
+          const SizedBox(height: 8),
+          Card(
+            child: Column(children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera, color: Color(0xFF6A1B9A)),
+                title: const Text('Fotos obligatorias por ronda'),
+                subtitle: Text('Actualmente: ${AppState.instance.rondaFotos} fotos'),
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline),
+                    onPressed: () async {
+                      await AppState.instance.setOperacion(rondaFotos: AppState.instance.rondaFotos - 1);
+                      setState(() {});
+                    },
+                  ),
+                  Text('${AppState.instance.rondaFotos}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline),
+                    onPressed: () async {
+                      await AppState.instance.setOperacion(rondaFotos: AppState.instance.rondaFotos + 1);
+                      setState(() {});
+                    },
+                  ),
+                ]),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.login, color: AppColors.verde),
+                title: const Text('Horario de ingreso (este dispositivo)'),
+                subtitle: Text(AppState.instance.turnoIngreso.isEmpty ? 'Sin definir' : AppState.instance.turnoIngreso),
+                trailing: const Icon(Icons.schedule),
+                onTap: () => _pickHora(true),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.logout, color: AppColors.rojo),
+                title: const Text('Horario de salida (este dispositivo)'),
+                subtitle: Text(AppState.instance.turnoSalida.isEmpty ? 'Sin definir' : AppState.instance.turnoSalida),
+                trailing: const Icon(Icons.schedule),
+                onTap: () => _pickHora(false),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text('Los turnos se calculan de 12 horas; lo que pase de 12 h cuenta como hora extra.',
+                    style: TextStyle(fontSize: 11, color: Colors.black54)),
               ),
             ]),
           ),

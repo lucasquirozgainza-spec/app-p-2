@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/cloud.dart';
 import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
@@ -237,6 +238,11 @@ class _HospedajeFormState extends State<HospedajeForm> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'hospedajes', '$id');
+    await Cloud.evento('Hospedaje', detalle: {
+      'huesped': _huesped.text.trim(),
+      'depto': _depto.text.trim(),
+      'plataforma': _plataforma,
+    });
     if (!mounted) return;
     Navigator.pop(context);
   }

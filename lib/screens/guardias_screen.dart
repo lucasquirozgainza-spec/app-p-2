@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/auth_service.dart';
+import '../services/cloud.dart';
 import '../theme.dart';
 import 'reporte_personal_screen.dart';
 import 'advertencias_screen.dart';
@@ -14,7 +15,8 @@ class GuardiasScreen extends StatefulWidget {
 }
 
 class _GuardiasScreenState extends State<GuardiasScreen> {
-  List<Map<String, dynamic>> _activos = [];
+  List<Map<String, dynamic>> _activosLocal = [];
+  List<Map<String, dynamic>> _presencia = []; // en linea desde la nube (todos los celulares)
   List<Map<String, dynamic>> _personal = [];
 
   @override
@@ -33,11 +35,32 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
             "AND (edificio=? OR edificio IS NULL OR edificio='')",
         whereArgs: [ed],
         orderBy: 'nombre');
+    // Presencia en linea de TODOS los celulares (Supabase).
+    await Cloud.heartbeat();
+    final pres = await Cloud.presencia();
     if (!mounted) return;
     setState(() {
-      _activos = activos;
+      _activosLocal = activos;
       _personal = personal;
+      _presencia = pres;
     });
+  }
+
+  bool _enLinea(Map<String, dynamic> p) {
+    try {
+      final ls = DateTime.parse(p['last_seen'].toString()).toUtc();
+      return DateTime.now().toUtc().difference(ls).inMinutes < 5;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Guardias en linea de este edificio segun la nube (todos los celulares).
+  List<Map<String, dynamic>> get _enTurnoNube {
+    final ed = AppState.instance.edificioId;
+    return _presencia
+        .where((p) => _enLinea(p) && p['en_turno'] == true && (p['edificio']?.toString() ?? '') == ed)
+        .toList();
   }
 
   Future<void> _nuevoGuardia() async {
@@ -87,18 +110,28 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final s = AppState.instance;
+    final admin = AppState.instance.isAdmin;
+    // "En linea" preferimos la nube (todos los celulares); si no hay, lo local.
+    final enTurnoNube = _enTurnoNube;
+    final usarNube = enTurnoNube.isNotEmpty || Cloud.enabled;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Guardias'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.warning_amber),
-            tooltip: 'Advertencias',
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const AdvertenciasScreen())),
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Actualizar',
+            onPressed: _load,
           ),
-          if (AppState.instance.isAdmin)
+          if (admin)
+            IconButton(
+              icon: const Icon(Icons.warning_amber),
+              tooltip: 'Advertencias',
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const AdvertenciasScreen())),
+            ),
+          if (admin)
             IconButton(
               icon: const Icon(Icons.assessment),
               tooltip: 'Reporte de personal (admin)',
@@ -107,7 +140,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
             ),
         ],
       ),
-      floatingActionButton: s.isSupervisor
+      floatingActionButton: admin
           ? FloatingActionButton.extended(
               backgroundColor: AppColors.azulMarino,
               foregroundColor: Colors.white,
@@ -122,16 +155,35 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
           padding: const EdgeInsets.all(12),
           children: [
             Row(children: [
-              const Icon(Icons.verified_user, color: AppColors.verde),
+              const Icon(Icons.wifi_tethering, color: AppColors.verde),
               const SizedBox(width: 8),
-              Text('En turno ahora (${_activos.length})',
+              Text('En línea ahora (${usarNube ? enTurnoNube.length : _activosLocal.length})',
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ]),
+            const Text('En todos los celulares con la app (se actualiza al refrescar).',
+                style: TextStyle(fontSize: 12, color: Colors.black54)),
             const SizedBox(height: 8),
-            if (_activos.isEmpty)
-              const Card(child: ListTile(title: Text('Ningun guardia con turno activo')))
+            if (usarNube)
+              ...(enTurnoNube.isEmpty
+                  ? [const Card(child: ListTile(title: Text('Ningún guardia en línea ahora')))]
+                  : [
+                      for (final p in enTurnoNube)
+                        Card(
+                          child: ListTile(
+                            leading: const CircleAvatar(
+                                backgroundColor: Color(0x1A2E7D32),
+                                child: Icon(Icons.shield, color: AppColors.verde)),
+                            title: Text(p['guardia']?.toString() ?? '—',
+                                style: const TextStyle(fontWeight: FontWeight.w600)),
+                            subtitle: Text('${p['edificio'] ?? ''} · En turno'),
+                            trailing: const Icon(Icons.circle, color: AppColors.verde, size: 12),
+                          ),
+                        ),
+                    ])
+            else if (_activosLocal.isEmpty)
+              const Card(child: ListTile(title: Text('Ningún guardia con turno activo')))
             else
-              for (final t in _activos)
+              for (final t in _activosLocal)
                 Card(
                   child: ListTile(
                     leading: const CircleAvatar(
@@ -145,25 +197,38 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                     trailing: const Icon(Icons.circle, color: AppColors.verde, size: 12),
                   ),
                 ),
-            const SizedBox(height: 20),
-            Row(children: [
-              const Icon(Icons.groups, color: AppColors.azulMarino),
-              const SizedBox(width: 8),
-              Text('Personal registrado (${_personal.length})',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ]),
-            const SizedBox(height: 8),
-            for (final p in _personal)
-              Card(
+
+            // El personal registrado (con usuarios) SOLO lo ve el administrador.
+            if (admin) ...[
+              const SizedBox(height: 20),
+              Row(children: [
+                const Icon(Icons.groups, color: AppColors.azulMarino),
+                const SizedBox(width: 8),
+                Text('Personal registrado (${_personal.length})',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ]),
+              const SizedBox(height: 8),
+              for (final p in _personal)
+                Card(
+                  child: ListTile(
+                    leading: const CircleAvatar(
+                        backgroundColor: Color(0x1A0A335D),
+                        child: Icon(Icons.person, color: AppColors.azulMarino)),
+                    title: Text(p['nombre']?.toString() ?? '—',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text('${p['cargo'] ?? ''} · Usuario: ${p['usuario']} · ${p['rol']}'),
+                  ),
+                ),
+            ] else ...[
+              const SizedBox(height: 24),
+              const Card(
                 child: ListTile(
-                  leading: const CircleAvatar(
-                      backgroundColor: Color(0x1A0A335D),
-                      child: Icon(Icons.person, color: AppColors.azulMarino)),
-                  title: Text(p['nombre']?.toString() ?? '—',
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text('${p['cargo'] ?? ''} · Usuario: ${p['usuario']} · ${p['rol']}'),
+                  leading: Icon(Icons.lock, color: Colors.blueGrey),
+                  title: Text('Personal y registro'),
+                  subtitle: Text('Solo el administrador puede ver el personal y registrar guardias.'),
                 ),
               ),
+            ],
           ],
         ),
       ),

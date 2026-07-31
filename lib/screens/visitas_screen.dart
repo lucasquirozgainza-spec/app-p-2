@@ -215,7 +215,10 @@ class VisitaDetalle extends StatelessWidget {
           onTap: () => showDialog(context: context, builder: (_) => Dialog(
               child: InteractiveViewer(child: Image.file(File(p))))),
           child: ClipRRect(borderRadius: BorderRadius.circular(10),
-              child: Image.file(File(p), height: 200, width: double.infinity, fit: BoxFit.cover, cacheWidth: 900)),
+              child: Image.file(File(p), height: 200, width: double.infinity, fit: BoxFit.cover,
+                  gaplessPlayback: true, cacheWidth: 1000,
+                  errorBuilder: (_, __, ___) => Container(height: 200, color: Colors.black12,
+                      child: const Center(child: Icon(Icons.broken_image, color: Colors.grey, size: 40))))),
         ),
       ]),
     );
@@ -409,9 +412,18 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
                         nombre: c['nombre']?.toString() ?? '',
                         rol: c['rol']?.toString() ?? '',
                         tel: c['tel']?.toString() ?? '',
-                        onLlamar: () => Contacto.llamar(context, c['tel'].toString()),
-                        onWhatsapp: () => Contacto.whatsapp(context, c['tel'].toString(),
-                            mensaje: 'Tiene una visita: ${_nombre.text}. ¿Autoriza el ingreso al depto $depto?'),
+                        // Al contactar, esa persona queda como quien autoriza (sin pasos extra).
+                        onLlamar: () {
+                          setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
+                          Navigator.pop(context);
+                          Contacto.llamar(context, c['tel'].toString());
+                        },
+                        onWhatsapp: () {
+                          setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
+                          Navigator.pop(context);
+                          Contacto.whatsapp(context, c['tel'].toString(),
+                              mensaje: 'Tiene una visita: ${_nombre.text}. ¿Autoriza el ingreso al depto $depto?');
+                        },
                         onElegir: () {
                           setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
                           Navigator.pop(context);
@@ -462,7 +474,15 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'visitas', '$id', detalle: _nombre.text);
-    await Cloud.evento('Visita', detalle: {'nombre': _nombre.text.trim(), 'depto': _depto.text, 'motivo': _motivo.text});
+    await Cloud.evento('Visita', detalle: {
+      'nombre': _nombre.text.trim(),
+      'ci': _ci.text.trim(),
+      'depto': _depto.text.trim(),
+      'autoriza': _autoriza.text.trim(),
+      'placa': _tieneVehiculo ? _placa.text.trim() : '',
+      'tarjeta': _tarjetaNum.text.trim(),
+      'motivo': _motivo.text.trim(),
+    });
     if (!mounted) return;
     Navigator.pop(context);
   }

@@ -326,6 +326,7 @@ class _HomeScreenState extends State<HomeScreen> {
             item(Icons.play_arrow, 'Iniciar turno', const InicioTurnoScreen())
           else
             item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen()),
+          item(Icons.wifi_tethering, 'Actividad del edificio', const OnlineScreen(soloEdificio: true)),
           item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen()),
           item(Icons.shield, 'Guardias', const GuardiasScreen()),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), show: s.modulo('normativas')),
@@ -341,7 +342,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ListTile(
             leading: const Icon(Icons.cloud, color: Color(0xFF0277BD)),
-            title: const Text('En linea (admin)'),
+            title: const Text('En linea - todos los edificios (admin)'),
             onTap: () {
               Navigator.pop(context);
               _openOnline();

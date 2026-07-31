@@ -40,6 +40,12 @@ class AppState {
   bool alarmaCandados = true;   // alarma a las 00:00 para cerrar candados
   bool controlUniforme = true;  // revisar uniforme (camisa roja / chaleco negro) al iniciar turno
 
+  // Operacion
+  int rondaFotos = 10;          // fotos obligatorias por ronda (configurable)
+  String turnoIngreso = '';     // horario de ingreso esperado (HH:mm) de ESTE dispositivo
+  String turnoSalida = '';      // horario de salida esperado (HH:mm) de ESTE dispositivo
+  static const int horasTurno = 12; // los turnos son de 12 horas
+
   bool get hayOperador => userId != null;
   bool modulo(String key) => modulos[key] == true;
 
@@ -57,6 +63,9 @@ class AppState {
     notifRondas = prefs.getBool('notif_rondas') ?? true;
     alarmaCandados = prefs.getBool('alarma_candados') ?? true;
     controlUniforme = prefs.getBool('control_uniforme') ?? true;
+    rondaFotos = prefs.getInt('ronda_fotos') ?? 10;
+    turnoIngreso = prefs.getString('turno_ingreso') ?? '';
+    turnoSalida = prefs.getString('turno_salida') ?? '';
     final db = await DB.instance.database;
     final rows = await db.query('edificios', where: 'id = ?', whereArgs: [edificioId]);
     if (rows.isEmpty) {
@@ -130,6 +139,22 @@ class AppState {
     if (uniforme != null) {
       controlUniforme = uniforme;
       await prefs.setBool('control_uniforme', uniforme);
+    }
+  }
+
+  Future<void> setOperacion({int? rondaFotos, String? turnoIngreso, String? turnoSalida}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (rondaFotos != null) {
+      this.rondaFotos = rondaFotos.clamp(1, 30);
+      await prefs.setInt('ronda_fotos', this.rondaFotos);
+    }
+    if (turnoIngreso != null) {
+      this.turnoIngreso = turnoIngreso;
+      await prefs.setString('turno_ingreso', turnoIngreso);
+    }
+    if (turnoSalida != null) {
+      this.turnoSalida = turnoSalida;
+      await prefs.setString('turno_salida', turnoSalida);
     }
   }
 

@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
+import '../services/cloud.dart';
 import '../services/contact_launch.dart';
 import '../services/contactos_repo.dart';
 import '../theme.dart';
@@ -144,6 +145,11 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'encomiendas', '$id');
+    await Cloud.evento('Encomienda', detalle: {
+      'depto': _depto.text.trim(),
+      'destinatario': _dest.text.trim(),
+      'empresa': _empresa.text.trim(),
+    });
     if (!mounted) return;
     await _avisarDepto();
     if (!mounted) return;
@@ -181,24 +187,25 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
                         width: double.infinity,
                         child: FilledButton.icon(
                           style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(44)),
-                          onPressed: () => Contacto.whatsapp(context, c.tel, mensaje: msg),
+                          onPressed: () {
+                            // Enviar por WhatsApp CON la foto del paquete.
+                            if (_foto != null && File(_foto!).existsSync()) {
+                              Share.shareXFiles([XFile(_foto!)], text: '$msg\n📱 ${c.nombre}: ${c.tel}');
+                            } else {
+                              Contacto.whatsapp(context, c.tel, mensaje: msg);
+                            }
+                          },
                           icon: const Icon(Icons.chat, size: 18),
-                          label: const Text('WhatsApp (mensaje)'),
+                          label: const Text('WhatsApp con foto'),
                         ),
                       ),
                       const SizedBox(height: 6),
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: () {
-                            if (_foto != null && File(_foto!).existsSync()) {
-                              Share.shareXFiles([XFile(_foto!)], text: msg);
-                            } else {
-                              Share.share(msg);
-                            }
-                          },
-                          icon: const Icon(Icons.photo, size: 18),
-                          label: const Text('Enviar con foto'),
+                          onPressed: () => Contacto.whatsapp(context, c.tel, mensaje: msg),
+                          icon: const Icon(Icons.message, size: 18),
+                          label: const Text('Solo mensaje al número'),
                         ),
                       ),
                     ]),

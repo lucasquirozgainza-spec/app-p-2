@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import '../services/contactos_repo.dart';
+import '../theme.dart';
 
-/// Campo de departamento con ayuda de escritura rapida: al escribir sugiere
-/// los deptos registrados del edificio. Escribe sobre el [controller] dado.
+/// Campo de departamento con ayuda de escritura rapida en BLOQUES (chips):
+/// al escribir muestra los deptos registrados como botoncitos para tocar.
 class DeptoField extends StatefulWidget {
   final TextEditingController controller;
   final String label;
@@ -20,6 +21,7 @@ class DeptoField extends StatefulWidget {
 
 class _DeptoFieldState extends State<DeptoField> {
   List<String> _todos = [];
+  List<String> _sug = [];
 
   @override
   void initState() {
@@ -29,31 +31,48 @@ class _DeptoFieldState extends State<DeptoField> {
     });
   }
 
+  void _filtrar(String t) {
+    final q = t.trim().toLowerCase();
+    setState(() {
+      _sug = q.isEmpty
+          ? []
+          : _todos.where((d) => d.toLowerCase().startsWith(q) && d.toLowerCase() != q).take(8).toList();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Autocomplete<String>(
-      initialValue: TextEditingValue(text: widget.controller.text),
-      optionsBuilder: (t) {
-        final q = t.text.trim().toLowerCase();
-        if (q.isEmpty) return const Iterable<String>.empty();
-        return _todos.where((d) => d.toLowerCase().startsWith(q)).take(8);
-      },
-      onSelected: (v) {
-        widget.controller.text = v;
-        widget.onSelected?.call(v);
-      },
-      fieldViewBuilder: (context, textController, focusNode, onSubmit) {
-        return TextField(
-          controller: textController,
-          focusNode: focusNode,
-          // Reflejar lo escrito en el controller externo (fuente de datos).
-          onChanged: (v) => widget.controller.text = v,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: widget.controller,
+          onChanged: _filtrar,
           decoration: InputDecoration(
             labelText: widget.label,
             prefixIcon: const Icon(Icons.meeting_room),
           ),
-        );
-      },
+        ),
+        if (_sug.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final d in _sug)
+                ActionChip(
+                  label: Text(d),
+                  backgroundColor: AppColors.grisClaro,
+                  onPressed: () {
+                    widget.controller.text = d;
+                    setState(() => _sug = []);
+                    widget.onSelected?.call(d);
+                  },
+                ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
