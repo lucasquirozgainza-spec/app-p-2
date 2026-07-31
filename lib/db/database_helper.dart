@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -59,6 +59,15 @@ class DB {
         if (oldV < 6) {
           try {
             await db.execute('ALTER TABLE advertencias ADD COLUMN foto TEXT');
+          } catch (_) {}
+        }
+        if (oldV < 7) {
+          try {
+            await db.execute('''CREATE TABLE IF NOT EXISTS camaras (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              edificio TEXT, nombre TEXT, host TEXT, puerto INTEGER DEFAULT 554,
+              usuario TEXT, clave TEXT, canales INTEGER DEFAULT 1, serial TEXT,
+              marca TEXT DEFAULT 'dahua', created_at TEXT)''');
           } catch (_) {}
         }
       },
@@ -272,6 +281,14 @@ class DB {
         foto TEXT,
         edificio TEXT,
         created_at TEXT NOT NULL
+      )''');
+
+    await db.execute('''
+      CREATE TABLE camaras (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        edificio TEXT, nombre TEXT, host TEXT, puerto INTEGER DEFAULT 554,
+        usuario TEXT, clave TEXT, canales INTEGER DEFAULT 1, serial TEXT,
+        marca TEXT DEFAULT 'dahua', created_at TEXT
       )''');
 
     await db.execute('''

@@ -64,7 +64,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     });
     await db.update('ingreso_turno', {'activo': 0}, where: 'id=?', whereArgs: [_sel!['id']]);
     await Audit.log('FIN_TURNO', 'salida_turno', '$id');
-    await Cloud.evento('Salida de turno',
+    Cloud.evento('Salida de turno',
         guardia: _sel!['guardia_nombre'] as String?,
         detalle: {
           'observaciones': _obs.text,
@@ -100,7 +100,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
 
     // Si el que sale es el operador actual, se limpia.
     if (s.turnoActivoId == _sel!['id']) s.clearOperador();
-    await Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+    Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
     if (!mounted) return;
     Navigator.pop(context);
   }

@@ -8,6 +8,7 @@ import '../services/device_context.dart';
 import '../services/uniform_check.dart';
 import '../services/notifications_service.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
 
@@ -48,8 +49,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     setState(() => _guardias = rows);
   }
 
-  void _snack(String m) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
+  void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
   /// Al tomar la foto del guardia, revisa si lleva uniforme (camisa roja o
   /// chaleco negro). Si no lo detecta, avisa y ofrece repetir o continuar.
@@ -144,14 +144,15 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
       await Cloud.evento('Guardia sin uniforme', guardia: _sel!['nombre'] as String?);
     }
     await Audit.log('INICIO_TURNO', 'ingreso_turno', '$id');
-    await Cloud.evento('Ingreso de turno',
+    // La nube en segundo plano: no demora el inicio del turno.
+    Cloud.evento('Ingreso de turno',
         guardia: _sel!['nombre'] as String?,
         detalle: {
           'cargo': _sel!['cargo'],
           'observaciones': _obs.text,
           'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
         });
-    await Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+    Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
     if (!mounted) return;
     Navigator.pop(context);
   }

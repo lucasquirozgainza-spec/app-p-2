@@ -300,8 +300,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   bool _saving = false;
   final _ahora = DateTime.now();
 
-  void _snack(String m) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(m), backgroundColor: AppColors.rojo));
+  void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
   Future<void> _ocrTarjeta(String? path) async {
     _fotoTarjeta = path;

@@ -20,9 +20,15 @@ class DeviceContext {
           perm == LocationPermission.deniedForever) {
         return null;
       }
+      // Primero intentamos la ultima ubicacion conocida (instantanea).
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) {
+        // En segundo plano se refresca; devolvemos ya para no demorar el turno.
+        return {'lat': last.latitude, 'lng': last.longitude};
+      }
       final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: const Duration(seconds: 10),
+        desiredAccuracy: LocationAccuracy.low,
+        timeLimit: const Duration(seconds: 4),
       );
       return {'lat': pos.latitude, 'lng': pos.longitude};
     } catch (_) {

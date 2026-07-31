@@ -30,7 +30,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   int _idx = 0;
   final List<String> _fotos = [];
   bool _capturando = false;
+  bool _flash = false;
   String? _error;
+
+  Future<void> _toggleFlash() async {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    _flash = !_flash;
+    try {
+      await c.setFlashMode(_flash ? FlashMode.torch : FlashMode.off);
+    } catch (_) {
+      _flash = false;
+    }
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
@@ -60,15 +73,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // Rondas (multi): resolucion media = abre y dispara mas rapido.
-      // Tarjeta/carnet (single): alta, para que el OCR lea bien.
-      final preset = widget.multi ? ResolutionPreset.medium : ResolutionPreset.high;
+      // Rondas (multi): alta = buen balance calidad/velocidad.
+      // Tarjeta/carnet (single): muy alta, para que el OCR lea y se vea nitido.
+      final preset = widget.multi ? ResolutionPreset.high : ResolutionPreset.veryHigh;
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
       _initFuture = c.initialize();
       await _initFuture;
       if (mounted) setState(() {});
+      try { await c.setFlashMode(_flash ? FlashMode.torch : FlashMode.off); } catch (_) {}
       // Enfoque/exposicion automaticos en segundo plano (no bloquea la apertura).
       c.setFocusMode(FocusMode.auto).catchError((_) {});
       c.setExposureMode(ExposureMode.auto).catchError((_) {});
@@ -158,6 +172,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         backgroundColor: Colors.black,
         title: Text(widget.multi ? 'Fotos: ${_fotos.length}${widget.minFotos > 0 ? '/${widget.minFotos}' : ''}' : 'Tomar foto'),
         actions: [
+          IconButton(
+            icon: Icon(_flash ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+            tooltip: 'Linterna',
+            onPressed: _toggleFlash,
+          ),
           if (_cams.length > 1)
             IconButton(
               icon: const Icon(Icons.cameraswitch, color: Colors.white),

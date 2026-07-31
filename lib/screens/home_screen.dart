@@ -21,6 +21,7 @@ import 'encomiendas_screen.dart';
 import 'incidentes_screen.dart';
 import 'mantenimiento_screen.dart';
 import 'hospedajes_screen.dart';
+import 'monitoreo_screen.dart';
 import 'guardias_screen.dart';
 import 'normativas_screen.dart';
 import 'online_screen.dart';
@@ -278,6 +279,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // Operacion
       _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
       _Mod('mantenimiento', Icons.build, 'Mantenimiento', const Color(0xFF5D4037), () => const MantenimientoScreen()),
+      _Mod('camaras', Icons.videocam, 'Monitoreo', const Color(0xFF00695C), () => const MonitoreoScreen(), always: true),
       // Gestion (Panel incluye reportes por periodo + PDF)
       _Mod('panel', Icons.dashboard, 'Panel y Reportes', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
     ];

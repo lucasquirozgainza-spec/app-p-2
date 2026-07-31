@@ -29,6 +29,10 @@ if "xmlns:tools=" not in txt:
 # Nombre visible de la app (bajo el icono)
 txt = re.sub(r'android:label="[^"]*"', 'android:label="OSIRIS"', txt, count=1)
 
+# Permitir trafico RTSP/HTTP en claro (necesario para ver el DVR por RTSP)
+if "usesCleartextTraffic" not in txt:
+    txt = txt.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+
 # Icono redondo
 if "roundIcon" not in txt:
     txt = txt.replace('android:icon="@mipmap/ic_launcher"',
