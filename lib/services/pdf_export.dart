@@ -234,7 +234,7 @@ class PdfExport {
         if (horas > 0 && horas < 48) {
           m['horas'] = (m['horas'] as double) + horas;
           if (horas >= 20) m['dobles'] = (m['dobles'] as int) + 1;
-          if (horas > AppState.horasTurno) m['extra'] = (m['extra'] as double) + (horas - AppState.horasTurno);
+          m['extra'] = (m['extra'] as double) + AppState.instance.horasExtra(inicio, DateTime.parse(salStr));
         }
       }
     }
@@ -279,6 +279,99 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Reporte de guardias OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
   }
 
+  /// Reporte detallado de INGRESOS y SALIDAS del mes: cada turno con su hora de
+  /// entrada, salida, horas trabajadas y horas extra. Las horas extra solo
+  /// cuentan el tiempo que el guardia se quedó pasada su hora de relevo (llegar
+  /// temprano NO da extra).
+  static Future<void> reporteIngresoSalida({required DateTime mes}) async {
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final desde = DateTime(mes.year, mes.month, 1);
+    final hasta = DateTime(mes.year, mes.month + 1, 1);
+    final di = desde.toIso8601String(), ha = hasta.toIso8601String();
+
+    final ingresos = await db.query('ingreso_turno',
+        where: 'edificio=? AND created_at>=? AND created_at<?', whereArgs: [ed, di, ha], orderBy: 'created_at');
+    final salidas = await db.query('salida_turno', where: 'edificio=?', whereArgs: [ed]);
+    final salMap = <int, String>{};
+    for (final s in salidas) {
+      if (s['turno_id'] != null) salMap[s['turno_id'] as int] = s['created_at'] as String;
+    }
+
+    final hm = DateFormat('dd/MM HH:mm');
+    final s = AppState.instance;
+    final filas = <List<String>>[];
+    final resumen = <String, Map<String, double>>{}; // nombre -> {horas, extra, turnos}
+    for (final ing in ingresos) {
+      final nombre = ing['guardia_nombre']?.toString() ?? 'Sin nombre';
+      final inicio = DateTime.parse(ing['created_at'] as String);
+      final salStr = salMap[ing['id']];
+      String salTxt = 'En turno';
+      String trabTxt = '—';
+      String extraTxt = '—';
+      double horas = 0, extra = 0;
+      if (salStr != null) {
+        final fin = DateTime.parse(salStr);
+        horas = fin.difference(inicio).inMinutes / 60.0;
+        if (horas > 0 && horas < 48) {
+          extra = s.horasExtra(inicio, fin);
+          salTxt = hm.format(fin.toLocal());
+          trabTxt = horas.toStringAsFixed(1);
+          extraTxt = extra > 0 ? extra.toStringAsFixed(1) : '0';
+        }
+      }
+      filas.add([nombre, hm.format(inicio.toLocal()), salTxt, trabTxt, extraTxt]);
+      final r = resumen.putIfAbsent(nombre, () => {'horas': 0.0, 'extra': 0.0, 'turnos': 0.0});
+      r['horas'] = r['horas']! + (horas > 0 && horas < 48 ? horas : 0);
+      r['extra'] = r['extra']! + extra;
+      r['turnos'] = r['turnos']! + 1;
+    }
+
+    final doc = pw.Document();
+    final periodo = DateFormat('MMMM yyyy', 'es').format(mes);
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    final horario = (s.turnoIngreso.isNotEmpty || s.turnoSalida.isNotEmpty)
+        ? 'Relevos configurados: ${s.turnoIngreso.isEmpty ? "?" : s.turnoIngreso} y ${s.turnoSalida.isEmpty ? "?" : s.turnoSalida}. '
+            'Las horas extra cuentan solo el tiempo pasado la hora de relevo.'
+        : 'Sin horario de relevo configurado: se toma cada turno como 12 h.';
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(28),
+      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
+      footer: (ctx) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        margin: const pw.EdgeInsets.only(top: 8),
+        child: pw.Text('OSIRIS Seguridad  ·  Pagina ${ctx.pageNumber}/${ctx.pagesCount}',
+            style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+      ),
+      build: (ctx) => [
+        _portada('Ingresos y salidas · $periodo', fecha),
+        pw.SizedBox(height: 8),
+        pw.Text(horario, style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+        pw.SizedBox(height: 12),
+        _tabla('Resumen por guardia', ['Guardia', 'Turnos', 'Horas', 'H. extra'],
+            (resumen.entries.toList()
+                  ..sort((a, b) => b.value['horas']!.compareTo(a.value['horas']!)))
+                .map((e) => [
+                      e.key,
+                      '${e.value['turnos']!.toInt()}',
+                      e.value['horas']!.toStringAsFixed(1),
+                      e.value['extra']!.toStringAsFixed(1),
+                    ])
+                .toList()),
+        pw.SizedBox(height: 14),
+        _tabla('Detalle de turnos', ['Guardia', 'Ingreso', 'Salida', 'Trabajado', 'Extra'], filas),
+        if (filas.isEmpty)
+          pw.Padding(padding: const pw.EdgeInsets.only(top: 20), child: pw.Text('Sin turnos registrados este mes.')),
+      ],
+    ));
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Ingresos_Salidas_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'Ingresos y salidas OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
+  }
+
   /// PDF con toda la actividad en la nube (eventos de todos los celulares).
   static Future<void> actividadNube(List<Map<String, dynamic>> eventos, String titulo) async {
     String detalleStr(dynamic d) {
@@ -290,6 +383,13 @@ class PdfExport {
       }
       return '${d ?? ''}';
     }
+
+    // Límite de seguridad: una tabla con miles de filas puede congelar el
+    // teléfono al armar el PDF. Se muestran las más recientes (vienen ordenadas
+    // desc) y se avisa cuántas quedaron fuera.
+    const maxFilas = 1200;
+    final recortado = eventos.length > maxFilas;
+    final filas = recortado ? eventos.sublist(0, maxFilas) : eventos;
 
     final doc = pw.Document();
     final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
@@ -306,8 +406,14 @@ class PdfExport {
       build: (ctx) => [
         _portada(titulo, fecha),
         pw.SizedBox(height: 14),
+        if (recortado)
+          pw.Padding(
+            padding: const pw.EdgeInsets.only(bottom: 8),
+            child: pw.Text('Mostrando los $maxFilas registros más recientes de ${eventos.length}.',
+                style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+          ),
         _tabla('Actividad (${eventos.length})', ['Fecha', 'Tipo', 'Guardia', 'Edificio', 'Detalle'],
-            eventos.map((e) => [
+            filas.map((e) => [
               _h(e['created_at']), _s(e['tipo']), _s(e['guardia']), _s(e['edificio']), detalleStr(e['detalle']),
             ]).toList()),
         if (eventos.isEmpty)

@@ -98,7 +98,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
     List<Map<String, dynamic>> todos = [];
     try {
-      todos = await Cloud.eventos(edificio: ed, limit: 5000);
+      todos = await Cloud.eventos(edificio: ed, limit: 2000);
     } catch (_) {}
     if (!mounted) return;
     Navigator.pop(context); // cerrar spinner ANTES de compartir (evita que se congele)

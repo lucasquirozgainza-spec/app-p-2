@@ -72,8 +72,9 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
         if (horas > 0 && horas < 48) {
           r.horas += horas;
           if (horas >= 20) r.dobles++;
-          // Turno normal = 12 h; lo que pase de 12 h es hora extra.
-          if (horas > AppState.horasTurno) r.extra += (horas - AppState.horasTurno);
+          // Hora extra = tiempo que se quedó pasada su hora de relevo (llegar
+          // temprano no da extra). Ver AppState.horasExtra.
+          r.extra += AppState.instance.horasExtra(inicio, fin);
         }
       } else {
         r.abiertos++;
@@ -94,8 +95,22 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
         title: const Text('Reporte de personal'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.schedule),
+            tooltip: 'Ingresos y salidas (PDF)',
+            onPressed: () async {
+              try {
+                await PdfExport.reporteIngresoSalida(mes: _mes);
+              } catch (_) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('No se pudo generar el PDF')));
+                }
+              }
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.picture_as_pdf),
-            tooltip: 'Descargar PDF del mes',
+            tooltip: 'Resumen del mes (PDF)',
             onPressed: () async {
               try {
                 await PdfExport.reporteGuardias(mes: _mes);

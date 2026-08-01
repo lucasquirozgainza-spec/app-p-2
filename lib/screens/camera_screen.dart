@@ -32,6 +32,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _capturando = false;
   bool _flash = false;
   String? _error;
+  final GlobalKey _previewKey = GlobalKey();
+  Offset? _focusRing;        // posición del anillo de enfoque (coords locales)
+  Offset _focusNorm = const Offset(0.5, 0.5); // último punto de enfoque (0..1)
 
   Future<void> _toggleFlash() async {
     final c = _controller;
@@ -73,9 +76,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // Rondas (multi): muy alta calidad. Fotos sueltas (tarjeta/carnet): 720p
-      // rapido, sin demora ni boton de aceptar.
-      final preset = widget.multi ? ResolutionPreset.veryHigh : ResolutionPreset.high;
+      // Alta resolución en ambos modos: los documentos (tarjeta/carnet) se leen
+      // mucho mejor con más nitidez. veryHigh ≈ 1080p, buen balance.
+      final preset = ResolutionPreset.veryHigh;
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
@@ -123,8 +126,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // Enfoque continuo activo (sin espera): captura inmediata.
+      // Para documentos (foto única: tarjeta/carnet/placa) forzamos el enfoque
+      // en el punto elegido y le damos un instante para que la lente enfoque
+      // el texto de cerca antes de disparar. En modo ronda no se espera.
+      if (!widget.multi) {
+        try {
+          await c.setFocusMode(FocusMode.auto);
+          await c.setFocusPoint(_focusNorm);
+          await c.setExposurePoint(_focusNorm);
+          await Future.delayed(const Duration(milliseconds: 550));
+          await c.setFocusMode(FocusMode.locked); // fija el enfoque logrado
+        } catch (_) {}
+      }
       final XFile shot = await c.takePicture();
+      if (!widget.multi) {
+        try { await c.setFocusMode(FocusMode.auto); } catch (_) {}
+      }
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));
       if (!await fotosDir.exists()) await fotosDir.create(recursive: true);
@@ -193,10 +210,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       // Tocar sobre el numero/letra para enfocar ahi.
                       onTapDown: (d) async {
                         try {
-                          final box = context.findRenderObject() as RenderBox?;
+                          final box = _previewKey.currentContext?.findRenderObject() as RenderBox?;
                           if (box == null) return;
                           final o = box.globalToLocal(d.globalPosition);
-                          final p = Offset(o.dx / box.size.width, o.dy / box.size.height);
+                          final nx = (o.dx / box.size.width).clamp(0.0, 1.0);
+                          final ny = (o.dy / box.size.height).clamp(0.0, 1.0);
+                          final p = Offset(nx, ny);
+                          _focusNorm = p;
+                          setState(() => _focusRing = o);
+                          await c.setFocusMode(FocusMode.auto);
                           await c.setFocusPoint(p);
                           await c.setExposurePoint(p);
                         } catch (_) {}
@@ -204,7 +226,21 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       child: Stack(
                         alignment: Alignment.bottomCenter,
                         children: [
-                          CameraPreview(c),
+                          CameraPreview(c, key: _previewKey),
+                          if (_focusRing != null)
+                            Positioned(
+                              left: _focusRing!.dx - 26,
+                              top: _focusRing!.dy - 26,
+                              child: IgnorePointer(
+                                child: Container(
+                                  width: 52, height: 52,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.yellowAccent, width: 2),
+                                  ),
+                                ),
+                              ),
+                            ),
                           Container(
                             margin: const EdgeInsets.only(bottom: 10),
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

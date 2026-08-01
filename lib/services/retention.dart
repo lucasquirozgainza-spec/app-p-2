@@ -3,6 +3,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../db/database_helper.dart';
 import 'app_state.dart';
+import 'cloud.dart';
 
 /// Retención de datos: todo lo que genera la app (registros y sus fotos/videos)
 /// se borra automáticamente después del periodo configurado (por defecto 3
@@ -25,6 +26,52 @@ class Retention {
       } catch (_) {}
     }
     await _borrarArchivos(dias);
+  }
+
+  /// Tablas que se vacían por completo con "Eliminar todo ahora".
+  /// NO incluye: usuarios (guardias), edificios (config) ni camaras (config DVR).
+  static const _tablasWipe = [
+    'ingreso_turno', 'salida_turno', 'visitas', 'rondas', 'encomiendas',
+    'incidentes', 'mantenimiento', 'hospedajes', 'advertencias',
+    'propietarios', 'residentes', 'vehiculos', 'contactos', 'normativas',
+    'encargados', 'auditoria',
+  ];
+
+  /// Borra AHORA todos los datos registrados y de prueba (con sus fotos/videos),
+  /// dejando SOLO los guardias, los edificios y las cámaras configuradas.
+  /// Devuelve cuántas filas se borraron en total. También limpia la nube.
+  static Future<int> borrarTodoAhora() async {
+    final db = await DB.instance.database;
+    int total = 0;
+    for (final t in _tablasWipe) {
+      try {
+        total += await db.delete(t);
+      } catch (_) {}
+    }
+    // Borrar TODAS las fotos/grabaciones (sin importar la fecha), menos PDF.
+    await _borrarTodosArchivos();
+    // Limpiar los eventos de la nube de este edificio (no bloquea si no hay red).
+    try {
+      await Cloud.borrarEventos(edificio: AppState.instance.edificioId);
+    } catch (_) {}
+    return total;
+  }
+
+  /// Borra TODAS las fotos y videos (cualquier fecha). NUNCA borra .pdf.
+  static Future<void> _borrarTodosArchivos() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      for (final sub in ['fotos', 'grabaciones']) {
+        final d = Directory(p.join(dir.path, sub));
+        if (!await d.exists()) continue;
+        for (final f in d.listSync().whereType<File>()) {
+          try {
+            if (f.path.toLowerCase().endsWith('.pdf')) continue;
+            await f.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
   }
 
   /// Borra fotos y videos con más de [dias] días. NUNCA borra archivos .pdf.

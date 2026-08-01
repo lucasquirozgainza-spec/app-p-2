@@ -492,12 +492,16 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
                     label: const Text('Llamar'),
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 SizedBox(
                   width: double.infinity,
-                  child: TextButton(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                        minimumSize: const Size.fromHeight(44)),
                     onPressed: () => _elegir(pred!['nombre'].toString()),
-                    child: const Text('Solo poner como quien autoriza'),
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Poner como quien autoriza'),
                   ),
                 ),
               ],
@@ -516,7 +520,15 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
                             tooltip: 'Anunciar visita',
                             onPressed: () => _anunciar(c['nombre'].toString(), c['tel'].toString(), depto),
                           )
-                        : TextButton(onPressed: () => _elegir(c['nombre'].toString()), child: const Text('Elegir')),
+                        : FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFF1565C0),
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4)),
+                            onPressed: () => _elegir(c['nombre'].toString()),
+                            icon: const Icon(Icons.check, size: 16),
+                            label: const Text('Elegir'),
+                          ),
                   ),
               ],
               if (pred == null && otros.isEmpty)
@@ -648,7 +660,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           width: double.infinity,
           child: FilledButton.icon(
             onPressed: _mostrarContactos,
-            style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF66BB6A)),
             icon: const Icon(Icons.phone_in_talk),
             label: const Text('Llamar para autorizar'),
           ),

@@ -53,6 +53,39 @@ class AppState {
   bool get hayOperador => userId != null;
   bool modulo(String key) => modulos[key] == true;
 
+  /// Fin de turno ESPERADO para un ingreso dado, según los horarios de relevo
+  /// configurados (ingreso y salida). Los dos horarios (ej. 08:30 y 20:30) son
+  /// las horas de cambio de turno; se toma el próximo relevo que caiga al menos
+  /// ~11 h después del ingreso (el turno dura 12 h). Sin horario => ingreso+12h.
+  DateTime finEsperado(DateTime inicio) {
+    final horas = <String>[turnoIngreso, turnoSalida].where((h) => h.contains(':')).toList();
+    if (horas.isEmpty) return inicio.add(const Duration(hours: horasTurno));
+    final minFin = inicio.add(const Duration(hours: 11));
+    DateTime? mejor;
+    for (final h in horas) {
+      final pz = h.split(':');
+      final hh = int.tryParse(pz[0]) ?? 0;
+      final mm = pz.length > 1 ? (int.tryParse(pz[1]) ?? 0) : 0;
+      for (int addDay = 0; addDay <= 2; addDay++) {
+        final c = DateTime(inicio.year, inicio.month, inicio.day, hh, mm).add(Duration(days: addDay));
+        if (!c.isBefore(minFin)) {
+          if (mejor == null || c.isBefore(mejor!)) mejor = c;
+          break;
+        }
+      }
+    }
+    return mejor ?? inicio.add(const Duration(hours: horasTurno));
+  }
+
+  /// Horas extra de un turno: SOLO cuenta el tiempo que el guardia se quedó
+  /// DESPUÉS de su hora de relevo (porque el otro guardia llegó tarde). Llegar
+  /// temprano NO da horas extra (fue su decisión).
+  double horasExtra(DateTime inicio, DateTime fin) {
+    final esperado = finEsperado(inicio);
+    final min = fin.difference(esperado).inMinutes;
+    return min > 0 ? min / 60.0 : 0.0;
+  }
+
   /// Campo de visita habilitado (por defecto SI, salvo que el admin lo apague).
   bool campoVisita(String key) => modulos[key] != false;
 

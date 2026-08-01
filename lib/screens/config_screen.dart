@@ -7,6 +7,7 @@ import '../services/audit.dart';
 import '../services/auth_service.dart';
 import '../services/excel_import.dart';
 import '../services/notifications_service.dart';
+import '../services/retention.dart';
 import '../theme.dart';
 import 'puntos_control_screen.dart';
 
@@ -92,6 +93,48 @@ class _ConfigScreenState extends State<ConfigScreen> {
     if (_selId == AppState.instance.edificioId) {
       await AppState.instance.loadEdificio();
     }
+  }
+
+  /// Borra AHORA todos los datos/registros y de prueba (menos guardias y cámaras).
+  Future<void> _eliminarTodoAhora() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.delete_forever, color: AppColors.rojo, size: 40),
+        title: const Text('¿Eliminar todo ahora?'),
+        content: const Text('Se borrarán TODOS los registros y datos de prueba de la app '
+            '(visitas, rondas, turnos, incidentes, encomiendas, propietarios, residentes, '
+            'contactos, fotos y videos) y se limpiará la nube.\n\n'
+            'NO se borran los guardias ni las cámaras. Esta acción no se puede deshacer.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sí, eliminar todo'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    int total = 0;
+    try {
+      total = await Retention.borrarTodoAhora();
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.pop(context); // cerrar spinner
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.check_circle, color: AppColors.verde, size: 38),
+        title: const Text('Datos eliminados'),
+        content: Text('Se borraron $total registros y sus fotos/videos. '
+            'Los guardias y las cámaras se mantienen.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Listo'))],
+      ),
+    );
   }
 
   Future<void> _activar(String id) async {
@@ -652,6 +695,20 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   },
                 ),
               ]),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            color: const Color(0x0FC62828),
+            child: ListTile(
+              leading: const Icon(Icons.delete_forever, color: AppColors.rojo),
+              title: const Text('Eliminar todo ahora'),
+              subtitle: const Text('Borra YA todos los registros y datos de prueba '
+                  '(visitas, rondas, turnos, propietarios, residentes, encomiendas, '
+                  'fotos y videos). NO borra los guardias ni las cámaras. Los guardias '
+                  'se eliminan en su apartado.'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _eliminarTodoAhora,
             ),
           ),
           const SizedBox(height: 16),
