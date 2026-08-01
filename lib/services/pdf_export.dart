@@ -279,6 +279,47 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Reporte de guardias OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
   }
 
+  /// PDF con toda la actividad en la nube (eventos de todos los celulares).
+  static Future<void> actividadNube(List<Map<String, dynamic>> eventos, String titulo) async {
+    String detalleStr(dynamic d) {
+      if (d is Map) {
+        return d.entries
+            .where((e) => '${e.value}'.trim().isNotEmpty && e.key != 'ubicacion')
+            .map((e) => '${e.key}: ${e.value}')
+            .join(', ');
+      }
+      return '${d ?? ''}';
+    }
+
+    final doc = pw.Document();
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(24),
+      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
+      footer: (ctx) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        margin: const pw.EdgeInsets.only(top: 8),
+        child: pw.Text('OSIRIS Seguridad  ·  Pagina ${ctx.pageNumber}/${ctx.pagesCount}',
+            style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+      ),
+      build: (ctx) => [
+        _portada(titulo, fecha),
+        pw.SizedBox(height: 14),
+        _tabla('Actividad (${eventos.length})', ['Fecha', 'Tipo', 'Guardia', 'Edificio', 'Detalle'],
+            eventos.map((e) => [
+              _h(e['created_at']), _s(e['tipo']), _s(e['guardia']), _s(e['edificio']), detalleStr(e['detalle']),
+            ]).toList()),
+        if (eventos.isEmpty)
+          pw.Padding(padding: const pw.EdgeInsets.only(top: 20), child: pw.Text('No hay actividad en la nube.')),
+      ],
+    ));
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Actividad_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'Actividad OSIRIS - $titulo');
+  }
+
   /// PDF con los QR de los puntos de control, para imprimir y pegar en cada punto.
   static Future<void> puntosControl(List<Map<String, dynamic>> puntos) async {
     final doc = pw.Document();

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
+import '../services/pdf_export.dart';
 import '../theme.dart';
 
 /// Actividad en línea. Con [soloEdificio]=true (guardias) solo se ve la
@@ -69,6 +70,55 @@ class _OnlineScreenState extends State<OnlineScreen> {
     }
   }
 
+  Future<void> _descargarYLimpiar() async {
+    final alcance = widget.soloEdificio ? 'de este edificio' : 'de TODOS los edificios';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.cleaning_services, color: Color(0xFFEF6C00), size: 38),
+        title: const Text('Descargar PDF y limpiar'),
+        content: Text('Se descargará un PDF con toda la actividad $alcance y luego se '
+            'BORRARÁ esa información de la nube para liberar espacio. '
+            'Los registros locales de cada celular no se tocan. ¿Continuar?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF6C00)),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Descargar y limpiar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    try {
+      final ed = _edFiltro;
+      final todos = await Cloud.eventos(edificio: ed, limit: 5000);
+      final titulo = widget.soloEdificio ? AppState.instance.edificioNombre : 'Todos los edificios';
+      await PdfExport.actividadNube(todos, titulo);
+      final borrado = await Cloud.borrarEventos(edificio: ed);
+      if (!mounted) return;
+      Navigator.pop(context); // cerrar spinner
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          icon: Icon(borrado ? Icons.check_circle : Icons.error_outline, color: borrado ? AppColors.verde : AppColors.rojo, size: 38),
+          title: Text(borrado ? 'Listo' : 'PDF generado, pero...'),
+          content: Text(borrado
+              ? 'Se descargó el PDF y se limpió la nube (${todos.length} registros).'
+              : 'El PDF se generó, pero no se pudo limpiar la nube. Detalle: ${Cloud.lastError ?? ''}'),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+        ),
+      );
+      _cargar();
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar: $e')));
+    }
+  }
+
   Future<void> _abrirMapa(dynamic lat, dynamic lng) async {
     if (lat == null || lng == null) return;
     final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
@@ -124,6 +174,11 @@ class _OnlineScreenState extends State<OnlineScreen> {
       appBar: AppBar(
         title: Text(widget.soloEdificio ? 'Actividad del edificio' : 'En linea (todos)'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.download_for_offline),
+            tooltip: 'Descargar PDF y limpiar nube',
+            onPressed: _descargarYLimpiar,
+          ),
           IconButton(
             icon: const Icon(Icons.wifi_find),
             tooltip: 'Probar conexión',

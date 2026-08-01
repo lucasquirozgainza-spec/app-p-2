@@ -274,6 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _Mod('rondas', Icons.history, 'Rondas', const Color(0xFF512DA8), () => const RondasHistorialScreen()),
       _Mod('propietarios', Icons.people, 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
       _Mod('vehiculos', Icons.directions_car, 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
+      _Mod('encomiendas', Icons.inventory_2, 'Encomiendas', const Color(0xFFEF6C00), () => const EncomiendasScreen()),
       _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
       _Mod('mantenimiento', Icons.build, 'Mantenim.', const Color(0xFF5D4037), () => const MantenimientoScreen()),
     ];

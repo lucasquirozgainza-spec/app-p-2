@@ -3,7 +3,9 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/contact_launch.dart';
+import '../services/contactos_repo.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 
 class PropietariosScreen extends StatefulWidget {
   final bool soloVehiculos;
@@ -238,6 +240,11 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
     }
   }
 
+  Future<void> _marcarEncargado(String nombre, String tel) async {
+    await ContactosRepo.setEncargado(p['depto']?.toString() ?? '', nombre, tel);
+    if (mounted) TopToast.show(context, '$nombre es el encargado del depto ${p['depto']}');
+  }
+
   Widget _row(String label, String? value, {String? tel}) {
     if (value == null || value.isEmpty) return const SizedBox.shrink();
     return ListTile(
@@ -246,6 +253,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
       subtitle: Text(value, style: const TextStyle(fontSize: 15, color: Colors.black87)),
       trailing: (tel != null && tel.isNotEmpty)
           ? Row(mainAxisSize: MainAxisSize.min, children: [
+              IconButton(icon: const Icon(Icons.star_border, color: Color(0xFFEF6C00)), tooltip: 'Marcar como encargado', onPressed: () => _marcarEncargado(value, tel)),
               IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino), tooltip: 'Llamar', onPressed: () => Contacto.llamar(context, tel)),
               IconButton(icon: const Icon(Icons.chat, color: AppColors.verde), tooltip: 'WhatsApp', onPressed: () => Contacto.whatsapp(context, tel)),
             ])
@@ -310,6 +318,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
                           : null,
                       trailing: (r['celular']?.toString().isNotEmpty ?? false)
                           ? Row(mainAxisSize: MainAxisSize.min, children: [
+                              IconButton(icon: const Icon(Icons.star_border, color: Color(0xFFEF6C00)), tooltip: 'Encargado', onPressed: () => _marcarEncargado(r['nombre']?.toString() ?? '', r['celular'].toString())),
                               IconButton(icon: const Icon(Icons.call, color: AppColors.azulMarino), onPressed: () => Contacto.llamar(context, r['celular'].toString())),
                               IconButton(icon: const Icon(Icons.chat, color: AppColors.verde), onPressed: () => Contacto.whatsapp(context, r['celular'].toString())),
                             ])

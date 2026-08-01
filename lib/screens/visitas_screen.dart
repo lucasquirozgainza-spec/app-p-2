@@ -7,6 +7,7 @@ import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../services/contact_launch.dart';
+import '../services/contactos_repo.dart';
 import '../services/ocr_service.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
@@ -307,8 +308,15 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
+  Future<void> _capturarTarjeta() async {
+    final res = await Navigator.push<List<String>>(
+        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Tarjetas')));
+    if (res == null || res.isEmpty) return;
+    await _ocrTarjeta(res.first);
+  }
+
   Future<void> _ocrTarjeta(String? path) async {
-    _fotoTarjeta = path;
+    setState(() => _fotoTarjeta = path);
     if (path == null) return;
     setState(() => _ocrLeyendo = true);
     final num = await OcrService.leerNumero(path);
@@ -420,46 +428,102 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     return out;
   }
 
+  // Anuncia la visita a esa persona por WhatsApp y la deja como quien autoriza.
+  void _anunciar(String nombre, String tel, String depto) {
+    setState(() => _autoriza.text = nombre);
+    Navigator.pop(context);
+    Contacto.whatsapp(context, tel,
+        mensaje: 'Tiene una visita: ${_nombre.text}. ¿Autoriza el ingreso al depto $depto?');
+  }
+
+  void _elegir(String nombre) {
+    setState(() => _autoriza.text = nombre);
+    Navigator.pop(context);
+  }
+
   Future<void> _mostrarContactos() async {
     final depto = _depto.text.trim();
     if (depto.isEmpty) return _snack('Primero escribe el departamento');
     final contactos = await _consultarContactos(depto);
+    final enc = await ContactosRepo.encargado(depto);
     if (!mounted) return;
+
+    // Predeterminado: el encargado si existe; si no, el primero con telefono.
+    Map<String, dynamic>? pred;
+    if (enc != null && enc.tel.trim().isNotEmpty) {
+      pred = {'nombre': enc.nombre, 'tel': enc.tel, 'rol': 'Encargado'};
+    } else {
+      pred = contactos.firstWhere((c) => (c['tel']?.toString() ?? '').trim().isNotEmpty,
+          orElse: () => <String, dynamic>{});
+      if (pred.isEmpty) pred = null;
+    }
+    final otros = contactos.where((c) =>
+        !(pred != null && c['nombre'] == pred['nombre'] && c['tel'] == pred['tel'])).toList();
+
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
+        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         title: Text('Depto $depto'),
         content: SizedBox(
           width: double.maxFinite,
-          child: contactos.isEmpty
-              ? const Padding(padding: EdgeInsets.all(8), child: Text('No hay personas registradas para ese departamento.'))
-              : ListView(
-                  shrinkWrap: true,
-                  children: [
-                    for (final c in contactos)
-                      _ContactoCard(
-                        nombre: c['nombre']?.toString() ?? '',
-                        rol: c['rol']?.toString() ?? '',
-                        tel: c['tel']?.toString() ?? '',
-                        // Al contactar, esa persona queda como quien autoriza (sin pasos extra).
-                        onLlamar: () {
-                          setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
-                          Navigator.pop(context);
-                          Contacto.llamar(context, c['tel'].toString());
-                        },
-                        onWhatsapp: () {
-                          setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
-                          Navigator.pop(context);
-                          Contacto.whatsapp(context, c['tel'].toString(),
-                              mensaje: 'Tiene una visita: ${_nombre.text}. ¿Autoriza el ingreso al depto $depto?');
-                        },
-                        onElegir: () {
-                          setState(() => _autoriza.text = c['nombre']?.toString() ?? '');
-                          Navigator.pop(context);
-                        },
-                      ),
-                  ],
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              if (pred != null) ...[
+                Text('${pred['nombre']}  ·  ${pred['rol']}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(46)),
+                    onPressed: () => _anunciar(pred!['nombre'].toString(), pred!['tel'].toString(), depto),
+                    icon: const Icon(Icons.chat, size: 18),
+                    label: const Text('Anunciar visita'),
+                  ),
                 ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () { Navigator.pop(context); Contacto.llamar(context, pred!['tel'].toString()); },
+                    icon: const Icon(Icons.call, size: 18),
+                    label: const Text('Llamar'),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () => _elegir(pred!['nombre'].toString()),
+                    child: const Text('Solo poner como quien autoriza'),
+                  ),
+                ),
+              ],
+              if (otros.isNotEmpty) ...[
+                const Divider(),
+                const Text('Otros del depto', style: TextStyle(color: Colors.black54, fontSize: 12)),
+                for (final c in otros)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text('${c['nombre']}  ·  ${c['rol']}',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    trailing: (c['tel']?.toString() ?? '').trim().isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.chat, color: AppColors.verde),
+                            tooltip: 'Anunciar visita',
+                            onPressed: () => _anunciar(c['nombre'].toString(), c['tel'].toString(), depto),
+                          )
+                        : TextButton(onPressed: () => _elegir(c['nombre'].toString()), child: const Text('Elegir')),
+                  ),
+              ],
+              if (pred == null && otros.isEmpty)
+                const Padding(padding: EdgeInsets.all(8), child: Text('No hay personas registradas para ese departamento.')),
+            ],
+          ),
         ),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
       ),
@@ -589,17 +653,26 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
             label: const Text('Llamar para autorizar'),
           ),
         ),
-        const SizedBox(height: 12),
-        TextField(controller: _autoriza,
-            decoration: const InputDecoration(
-              labelText: '¿Quién autoriza?',
-              prefixIcon: Icon(Icons.how_to_reg),
-            )),
+        if (_autoriza.text.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          LockedField(label: 'Autoriza', value: _autoriza.text, icon: Icons.how_to_reg),
+        ],
         const SizedBox(height: 8),
         // PASO 2: Tarjeta (configurable por edificio)
         if (s.campoVisita('v_tarjeta')) ...[
           _paso('2', 'Tarjeta', const Color(0xFFEF6C00)),
-          PhotoField(label: 'Foto de la tarjeta', album: 'OSIRIS Tarjetas', onChanged: _ocrTarjeta),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: const Color(0xFFEF6C00)),
+              onPressed: _capturarTarjeta,
+              icon: const Icon(Icons.camera_alt),
+              label: Text(_fotoTarjeta == null ? 'Foto de la tarjeta' : 'Repetir tarjeta'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_fotoTarjeta != null)
+            Row(children: [_miniCarnet(_fotoTarjeta!, 'Tarjeta')]),
           TextField(controller: _tarjetaNum, keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'N° de tarjeta')),
           const SizedBox(height: 12),
@@ -684,81 +757,3 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   }
 }
 
-// ---------------------------------------------------------------------------
-
-class _ContactoCard extends StatelessWidget {
-  final String nombre;
-  final String rol;
-  final String tel;
-  final VoidCallback onLlamar;
-  final VoidCallback onWhatsapp;
-  final VoidCallback onElegir;
-  const _ContactoCard({
-    required this.nombre,
-    required this.rol,
-    required this.tel,
-    required this.onLlamar,
-    required this.onWhatsapp,
-    required this.onElegir,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final tieneTel = tel.trim().isNotEmpty;
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 5),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              const CircleAvatar(
-                  radius: 16,
-                  backgroundColor: Color(0x1A0A335D),
-                  child: Icon(Icons.person, color: AppColors.azulMarino, size: 18)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text('$nombre${rol.isNotEmpty ? '  ·  $rol' : ''}',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              ),
-            ]),
-            const SizedBox(height: 8),
-            Row(children: [
-              if (tieneTel)
-                Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(44)),
-                    onPressed: onWhatsapp,
-                    icon: const Icon(Icons.chat, size: 18),
-                    label: const Text('Anunciar visita'),
-                  ),
-                ),
-              if (tieneTel) const SizedBox(width: 6),
-              if (tieneTel)
-                SizedBox(
-                  width: 52,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44), padding: EdgeInsets.zero),
-                    onPressed: onLlamar,
-                    child: const Icon(Icons.call, size: 20),
-                  ),
-                ),
-              if (tieneTel) const SizedBox(width: 6),
-              // Elegir como quien autoriza (boton, sin contactar).
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
-                  onPressed: onElegir,
-                  icon: const Icon(Icons.check_circle, size: 18),
-                  label: const Text('Elegir'),
-                ),
-              ),
-            ]),
-          ],
-        ),
-      ),
-    );
-  }
-}

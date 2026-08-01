@@ -165,6 +165,12 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
     final depto = _depto.text.trim();
     if (depto.isEmpty) return;
     final contactos = await ContactosRepo.delDepto(depto);
+    // El encargado (si se marcó) va primero como contacto predeterminado.
+    final enc = await ContactosRepo.encargado(depto);
+    if (enc != null && enc.tel.trim().isNotEmpty) {
+      contactos.removeWhere((c) => c.nombre == enc.nombre && c.tel == enc.tel);
+      contactos.insert(0, enc);
+    }
     if (!mounted || contactos.isEmpty) return;
     final msg = '📦 Encomienda para el depto $depto'
         '${_dest.text.trim().isNotEmpty ? ' (${_dest.text.trim()})' : ''}. '

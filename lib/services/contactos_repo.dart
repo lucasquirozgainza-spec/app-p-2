@@ -31,6 +31,25 @@ class ContactosRepo {
     return out;
   }
 
+  /// Encargado (contacto predeterminado) del departamento, si se marcó uno.
+  static Future<ContactoDepto?> encargado(String depto) async {
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final rows = await db.query('encargados',
+        where: 'edificio=? AND depto=?', whereArgs: [ed, depto.trim()], limit: 1);
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return ContactoDepto(r['nombre']?.toString() ?? '', r['telefono']?.toString() ?? '', 'Encargado');
+  }
+
+  /// Marca a una persona como encargada del departamento (contacto predeterminado).
+  static Future<void> setEncargado(String depto, String nombre, String tel) async {
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    await db.delete('encargados', where: 'edificio=? AND depto=?', whereArgs: [ed, depto.trim()]);
+    await db.insert('encargados', {'edificio': ed, 'depto': depto.trim(), 'nombre': nombre, 'telefono': tel});
+  }
+
   /// Lista de deptos distintos para autocompletar (propietarios + residentes).
   static Future<List<String>> deptos([String filtro = '']) async {
     final db = await DB.instance.database;

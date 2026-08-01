@@ -148,6 +148,25 @@ class Cloud {
     }
   }
 
+  /// Borra eventos de la nube (para liberar espacio en Supabase). Si se pasa
+  /// [edificio], solo borra los de ese edificio; sin edificio, borra todos.
+  static Future<bool> borrarEventos({String? edificio}) async {
+    try {
+      final filtro = edificio != null
+          ? 'edificio=eq.${Uri.encodeComponent(edificio)}'
+          : 'id=gte.0'; // PostgREST exige un filtro; este abarca todos.
+      final r = await http.delete(Uri.parse('$_rest/eventos?$filtro'), headers: _h);
+      if (r.statusCode >= 300) {
+        lastError = 'borrar ${r.statusCode}: ${r.body}';
+        return false;
+      }
+      return true;
+    } catch (e) {
+      lastError = 'borrar: $e';
+      return false;
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> presencia() async {
     try {
       final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc'), headers: _h);
