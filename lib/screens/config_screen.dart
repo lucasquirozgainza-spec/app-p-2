@@ -489,6 +489,29 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   setState(() {});
                 },
               ),
+              const Divider(height: 1),
+              SwitchListTile(
+                value: AppState.instance.camaraNativa,
+                activeColor: AppColors.verde,
+                secondary: const Icon(Icons.camera, color: Color(0xFF37474F)),
+                title: const Text('Máxima calidad de foto'),
+                subtitle: const Text('Usa la cámara del teléfono (más nítida) en fotos sueltas. '
+                    'Pide confirmar cada foto; rondas y carnet siguen en modo rápido.'),
+                onChanged: (v) async {
+                  await AppState.instance.setRecordatorios(camaraNativa: v);
+                  setState(() {});
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.notifications_active, color: Color(0xFFEF6C00)),
+                title: const Text('Probar alarma ahora'),
+                subtitle: const Text('Envía una notificación de prueba para verificar que suenan.'),
+                onTap: () async {
+                  await Notificaciones.mostrarAviso('Prueba de alarma OSIRIS',
+                      'Si ves esto, las notificaciones funcionan. Recuerda desactivar el ahorro de batería para OSIRIS.');
+                },
+              ),
             ]),
           ),
           const SizedBox(height: 16),

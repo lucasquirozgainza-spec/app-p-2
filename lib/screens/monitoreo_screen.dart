@@ -57,6 +57,7 @@ class _MonitoreoScreenState extends State<MonitoreoScreen> {
   Future<void> _formulario({DvrConfig? prefill, Map<String, dynamic>? existente}) async {
     final nombre = TextEditingController(text: existente?['nombre']?.toString() ?? prefill?.nombre ?? '');
     final host = TextEditingController(text: existente?['host']?.toString() ?? '');
+    final hostRemoto = TextEditingController(text: existente?['host_remoto']?.toString() ?? '');
     final puerto = TextEditingController(text: '${existente?['puerto'] ?? prefill?.puerto ?? 554}');
     final usuario = TextEditingController(text: existente?['usuario']?.toString() ?? prefill?.usuario ?? 'admin');
     final clave = TextEditingController(text: existente?['clave']?.toString() ?? prefill?.clave ?? '');
@@ -77,7 +78,9 @@ class _MonitoreoScreenState extends State<MonitoreoScreen> {
               ),
             TextField(controller: nombre, decoration: const InputDecoration(labelText: 'Nombre')),
             const SizedBox(height: 6),
-            TextField(controller: host, decoration: const InputDecoration(labelText: 'IP o DDNS (ej. 192.168.1.108)')),
+            TextField(controller: host, decoration: const InputDecoration(labelText: 'IP local (WiFi del edificio, ej. 192.168.1.108)')),
+            const SizedBox(height: 6),
+            TextField(controller: hostRemoto, decoration: const InputDecoration(labelText: 'DDNS/IP pública (datos móviles, opcional)')),
             const SizedBox(height: 6),
             Row(children: [
               Expanded(child: TextField(controller: puerto, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Puerto RTSP'))),
@@ -102,6 +105,7 @@ class _MonitoreoScreenState extends State<MonitoreoScreen> {
       'edificio': AppState.instance.edificioId,
       'nombre': nombre.text.trim().isEmpty ? 'DVR' : nombre.text.trim(),
       'host': host.text.trim(),
+      'host_remoto': hostRemoto.text.trim(),
       'puerto': int.tryParse(puerto.text) ?? 554,
       'usuario': usuario.text.trim(),
       'clave': clave.text,
@@ -175,6 +179,11 @@ class _MonitoreoScreenState extends State<MonitoreoScreen> {
       appBar: AppBar(
         title: const Text('Monitoreo'),
         actions: [
+          IconButton(
+            icon: Icon(AppState.instance.camaraRemota ? Icons.signal_cellular_alt : Icons.wifi),
+            tooltip: AppState.instance.camaraRemota ? 'Modo: Datos (DDNS)' : 'Modo: WiFi local',
+            onPressed: () => setState(() => AppState.instance.camaraRemota = !AppState.instance.camaraRemota),
+          ),
           IconButton(
             icon: const Icon(Icons.grid_view),
             tooltip: 'Vista múltiple',

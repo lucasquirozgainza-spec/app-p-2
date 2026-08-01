@@ -31,7 +31,7 @@ class _CamaraViewScreenState extends State<CamaraViewScreen> {
   }
 
   String get _url => Dvr.rtspVivo(
-        host: widget.cam['host']?.toString() ?? '',
+        host: Dvr.host(widget.cam),
         puerto: (widget.cam['puerto'] as int?) ?? 554,
         usuario: widget.cam['usuario']?.toString() ?? 'admin',
         clave: widget.cam['clave']?.toString() ?? '',

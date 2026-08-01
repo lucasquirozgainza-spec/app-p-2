@@ -73,9 +73,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // Rondas (multi): alta = buen balance calidad/velocidad.
-      // Tarjeta/carnet (single): muy alta, para que el OCR lea y se vea nitido.
-      final preset = widget.multi ? ResolutionPreset.high : ResolutionPreset.veryHigh;
+      // 720p (high): buen balance nitidez/velocidad y captura rapida.
+      const preset = ResolutionPreset.high;
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
@@ -123,14 +122,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // En fotos sueltas (tarjeta/carnet) damos un instante al enfoque; en
-      // modo ronda no, para pasar rapido de una foto a la siguiente.
-      if (!widget.multi) {
-        try {
-          await c.setFocusMode(FocusMode.auto);
-          await Future.delayed(const Duration(milliseconds: 200));
-        } catch (_) {}
-      }
+      // Enfoque continuo activo (sin espera): captura inmediata.
       final XFile shot = await c.takePicture();
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));

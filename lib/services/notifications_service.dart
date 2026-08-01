@@ -26,13 +26,17 @@ class Notificaciones {
       'rondas_channel',
       'Recordatorio de rondas',
       description: 'Avisa a los guardias cada 2 horas para hacer la ronda',
-      importance: Importance.high,
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
     ));
     await androidImpl?.createNotificationChannel(const AndroidNotificationChannel(
       'candados_channel',
       'Cierre de candados',
       description: 'Alarma a las 00:00 para cerrar los candados',
       importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
     ));
     await androidImpl?.createNotificationChannel(const AndroidNotificationChannel(
       'avisos_channel',
@@ -41,6 +45,8 @@ class Notificaciones {
       importance: Importance.high,
     ));
     await androidImpl?.requestNotificationsPermission();
+    // Permiso de ALARMA EXACTA (Android 12+): sin esto las alarmas no suenan a tiempo.
+    try { await androidImpl?.requestExactAlarmsPermission(); } catch (_) {}
     _init = true;
   }
 
@@ -66,7 +72,7 @@ class Notificaciones {
             'Es hora de realizar la ronda de seguridad.',
             _proximaHora(h, 0),
             detalles,
-            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
             uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
             matchDateTimeComponents: DateTimeComponents.time,
           );
@@ -89,7 +95,7 @@ class Notificaciones {
           'Son las 00:00. Recuerda cerrar todos los candados del edificio.',
           _proximaHora(0, 0),
           detalles,
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
           uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
           matchDateTimeComponents: DateTimeComponents.time,
         );

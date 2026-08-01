@@ -42,7 +42,7 @@ class _CamaraPlaybackScreenState extends State<CamaraPlaybackScreen> {
   }
 
   String get _url => Dvr.rtspPlayback(
-        host: widget.cam['host']?.toString() ?? '',
+        host: Dvr.host(widget.cam),
         puerto: (widget.cam['puerto'] as int?) ?? 554,
         usuario: widget.cam['usuario']?.toString() ?? 'admin',
         clave: widget.cam['clave']?.toString() ?? '',

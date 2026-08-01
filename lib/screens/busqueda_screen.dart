@@ -3,6 +3,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../theme.dart';
 import 'propietarios_screen.dart';
+import 'vehiculos_screen.dart';
 
 /// Busqueda global: persona, CI, depto, vehiculo, placa, propietario,
 /// residente, visitante.
@@ -47,6 +48,21 @@ class _BusquedaScreenState extends State<BusquedaScreen> {
           'Depto ${p['depto']} · ${p['telefono'] ?? ''}', Icons.people,
           onTap: () => Navigator.push(context,
               MaterialPageRoute(builder: (_) => PropietarioDetalle(prop: p, onChanged: () {})))));
+    }
+
+    // Vehiculos: por placa, nro de parqueo, depto, marca/modelo, dueño.
+    final vehs = await db.query('vehiculos',
+        where: 'edificio=? AND (placa LIKE ? OR nro_parqueo LIKE ? OR depto LIKE ? OR marca LIKE ? OR modelo LIKE ? OR propietario LIKE ?)',
+        whereArgs: [ed, like, like, like, like, like, like], limit: 30);
+    for (final v in vehs) {
+      final parq = (v['nro_parqueo']?.toString() ?? '').trim();
+      out.add(_Resultado(
+          'Vehiculo',
+          '${v['placa'] ?? 's/placa'}${parq.isNotEmpty ? '  ·  Parqueo $parq' : ''}',
+          'Depto ${v['depto'] ?? '-'} · ${v['marca'] ?? ''} ${v['modelo'] ?? ''}'.trim(),
+          Icons.directions_car,
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => VehiculoDetalle(veh: v)))));
     }
 
     final resis = await db.query('residentes',

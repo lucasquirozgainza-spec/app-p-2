@@ -1,6 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../screens/camera_screen.dart';
+import '../services/app_state.dart';
+import '../services/gallery.dart';
 import '../theme.dart';
 
 /// Campo de foto con vista previa. Captura rápida (sin pasos extra).
@@ -36,6 +41,27 @@ class _PhotoFieldState extends State<PhotoField> {
   }
 
   Future<void> _capturar() async {
+    // Modo "máxima calidad": usa la cámara nativa del teléfono (rápida y HD).
+    if (AppState.instance.camaraNativa) {
+      try {
+        final x = await ImagePicker().pickImage(
+          source: ImageSource.camera,
+          imageQuality: 100,
+          preferredCameraDevice: widget.frontal ? CameraDevice.front : CameraDevice.rear,
+        );
+        if (x == null) return;
+        final dir = await getApplicationDocumentsDirectory();
+        final fotos = Directory(p.join(dir.path, 'fotos'));
+        if (!await fotos.exists()) await fotos.create(recursive: true);
+        final dest = p.join(fotos.path, 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg');
+        await File(x.path).copy(dest);
+        Gallery.guardar(dest, album: widget.album);
+        if (!mounted) return;
+        setState(() => _path = dest);
+        widget.onChanged(dest);
+      } catch (_) {}
+      return;
+    }
     final res = await Navigator.push<List<String>>(
       context,
       MaterialPageRoute(builder: (_) => CameraScreen(multi: false, frontal: widget.frontal, album: widget.album)),

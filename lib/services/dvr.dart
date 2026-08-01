@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'app_state.dart';
 
 /// Configuracion de un DVR/camara leida de un QR (formato Dahua DMSS/gDMSS).
 class DvrConfig {
@@ -68,6 +69,14 @@ class Dvr {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Host activo según el modo: datos móviles (DDNS) o WiFi local.
+  static String host(Map<String, dynamic> cam) {
+    final local = (cam['host']?.toString() ?? '').trim();
+    final remoto = (cam['host_remoto']?.toString() ?? '').trim();
+    if (AppState.instance.camaraRemota) return remoto.isNotEmpty ? remoto : local;
+    return local.isNotEmpty ? local : remoto;
   }
 
   /// URL RTSP en vivo (formato Dahua). subtype 0 = principal, 1 = secundaria.
