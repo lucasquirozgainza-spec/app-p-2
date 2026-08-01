@@ -526,13 +526,19 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     );
   }
 
-  Widget _paso(String n, String t) => Padding(
-        padding: const EdgeInsets.only(top: 10, bottom: 8),
+  Widget _paso(String n, String t, Color c) => Container(
+        margin: const EdgeInsets.only(top: 14, bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: c.withOpacity(.10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border(left: BorderSide(color: c, width: 4)),
+        ),
         child: Row(children: [
-          CircleAvatar(radius: 12, backgroundColor: AppColors.azulMarino,
+          CircleAvatar(radius: 13, backgroundColor: c,
               child: Text(n, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
-          const SizedBox(width: 8),
-          Expanded(child: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+          const SizedBox(width: 10),
+          Expanded(child: Text(t, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: c))),
         ]),
       );
 
@@ -543,7 +549,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       appBar: AppBar(title: const Text('Registrar Visita')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         // PASO 1: Depto y autorizacion
-        _paso('1', 'Departamento'),
+        _paso('1', 'Departamento', const Color(0xFF1565C0)),
         TextField(controller: _depto,
             decoration: const InputDecoration(
               labelText: 'Depto (ej. 303)',
@@ -573,6 +579,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           width: double.infinity,
           child: FilledButton.icon(
             onPressed: _mostrarContactos,
+            style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
             icon: const Icon(Icons.phone_in_talk),
             label: const Text('Llamar para autorizar'),
           ),
@@ -586,19 +593,19 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         const SizedBox(height: 8),
         // PASO 2: Tarjeta (configurable por edificio)
         if (s.campoVisita('v_tarjeta')) ...[
-          _paso('2', 'Tarjeta'),
+          _paso('2', 'Tarjeta', const Color(0xFFEF6C00)),
           PhotoField(label: 'Foto de la tarjeta', album: 'OSIRIS Tarjetas', onChanged: _ocrTarjeta),
           TextField(controller: _tarjetaNum, keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'N° de tarjeta')),
           const SizedBox(height: 12),
         ],
         // PASO 3: Carnet -> llena nombre y CI solos
-        _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Carnet'),
+        _paso(s.campoVisita('v_tarjeta') ? '3' : '2', 'Carnet', const Color(0xFF00838F)),
         if (s.campoVisita('v_carnet')) ...[
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: const Color(0xFF00838F)),
               onPressed: _capturarCarnet,
               icon: const Icon(Icons.camera_alt),
               label: Text(_carnetAnverso == null ? 'Foto del carnet (2 lados)' : 'Repetir carnet'),
@@ -632,7 +639,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
             decoration: const InputDecoration(labelText: 'CI / documento', prefixIcon: Icon(Icons.badge))),
         const SizedBox(height: 12),
         // PASO 4: Vehiculo, motivo, observaciones
-        _paso('4', 'Detalles'),
+        _paso('4', 'Detalles', const Color(0xFF6A1B9A)),
         if (s.campoVisita('v_vehiculo')) ...[
           SwitchListTile(
             value: _tieneVehiculo,
@@ -660,6 +667,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         ]),
         const SizedBox(height: 8),
         FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(52)),
           onPressed: _saving ? null : _guardar,
           icon: _saving
               ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))

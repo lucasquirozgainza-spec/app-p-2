@@ -4,10 +4,8 @@ import 'package:intl/intl.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
 import '../services/device_context.dart';
-import '../services/sos.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
-import '../widgets/toast.dart';
 import 'login_screen.dart';
 import 'inicio_turno_screen.dart';
 import 'visitas_screen.dart';
@@ -39,7 +37,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   Timer? _hb;
-  int _tab = 0;
 
   @override
   void initState() {
@@ -119,35 +116,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: _cuerpo(),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Inicio'),
-          NavigationDestination(icon: Icon(Icons.search), label: 'Buscar'),
-          NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Panel'),
-          NavigationDestination(icon: Icon(Icons.menu), label: 'Menú'),
-        ],
-      ),
-    );
-  }
-
-  Widget _cuerpo() {
-    switch (_tab) {
-      case 1:
-        return const BusquedaScreen();
-      case 2:
-        return const PanelScreen();
-      case 3:
-        return _menuPage();
-      default:
-        return _inicioPage();
-    }
-  }
-
-  Widget _inicioPage() {
     final s = AppState.instance;
     final ahora = DateTime.now();
     final saludo = ahora.hour < 12
@@ -158,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       key: _scaffoldKey,
+      drawer: _buildDrawer(),
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -181,11 +150,9 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.all(16),
             children: [
               _greeting(saludo, s, ahora),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               _turnoButton(s),
-              const SizedBox(height: 8),
-              _sosButton(),
-              const SizedBox(height: 18),
+              const SizedBox(height: 20),
               const _SectionTitle('Acciones rapidas'),
               const SizedBox(height: 8),
               _acciones(s),
@@ -198,42 +165,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-  }
-
-  Widget _sosButton() {
-    return SizedBox(
-      width: double.infinity,
-      height: 48,
-      child: OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.rojo,
-          side: const BorderSide(color: AppColors.rojo, width: 1.5),
-        ),
-        onPressed: _enviarSos,
-        icon: const Icon(Icons.sos),
-        label: const Text('BOTÓN DE PÁNICO (SOS)', style: TextStyle(fontWeight: FontWeight.bold)),
-      ),
-    );
-  }
-
-  Future<void> _enviarSos() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: const Icon(Icons.sos, color: AppColors.rojo, size: 40),
-        title: const Text('Enviar alerta SOS'),
-        content: const Text('Se avisará al administrador con tu ubicación. ¿Confirmar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
-              onPressed: () => Navigator.pop(context, true), child: const Text('Enviar SOS')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    await Sos.enviar();
-    if (!mounted) return;
-    TopToast.show(context, 'Alerta SOS enviada al administrador');
   }
 
   Widget _greeting(String saludo, AppState s, DateTime ahora) {
@@ -341,15 +272,10 @@ class _HomeScreenState extends State<HomeScreen> {
       // Historiales
       _Mod('visitas', Icons.manage_search, 'Visitas', const Color(0xFF00897B), () => const VisitasScreen()),
       _Mod('rondas', Icons.history, 'Rondas', const Color(0xFF512DA8), () => const RondasHistorialScreen()),
-      // Personas y bienes
       _Mod('propietarios', Icons.people, 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
       _Mod('vehiculos', Icons.directions_car, 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
-      _Mod('contactos', Icons.contact_phone, 'Contactos', const Color(0xFF00695C), () => const ContactosScreen()),
-      // Operacion
       _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
       _Mod('mantenimiento', Icons.build, 'Mantenim.', const Color(0xFF5D4037), () => const MantenimientoScreen()),
-      _Mod('camaras', Icons.videocam, 'Monitoreo', const Color(0xFF00695C), () => const MonitoreoScreen(), always: true),
-      _Mod('panel', Icons.dashboard, 'Panel', const Color(0xFF1565C0), () => const PanelScreen(), always: true),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();
     return GridView.extent(
@@ -363,66 +289,79 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _menuPage() {
+  Drawer _buildDrawer() {
     final s = AppState.instance;
-    Widget item(IconData i, String t, Widget screen, {bool show = true}) {
+    Widget item(IconData i, String t, Widget screen, {bool show = true, Color? color}) {
       if (!show) return const SizedBox.shrink();
       return ListTile(
-        leading: Icon(i, color: AppColors.azulMarino),
+        leading: Icon(i, color: color ?? AppColors.azulMarino),
         title: Text(t),
-        trailing: const Icon(Icons.chevron_right, color: Colors.black26),
-        onTap: () => _open(screen),
+        onTap: () {
+          Navigator.pop(context);
+          _open(screen);
+        },
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Menú'),
-        automaticallyImplyLeading: false,
-      ),
-      body: ListView(
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            color: AppColors.azulMarino,
+          DrawerHeader(
+            decoration: const BoxDecoration(color: AppColors.azulMarino),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                const CircleAvatar(radius: 26, backgroundColor: Colors.white, child: Icon(Icons.apartment, color: AppColors.azulMarino, size: 30)),
+                const SizedBox(height: 10),
                 Text(s.turnoActivoId != null ? (s.userNombre ?? 'OSIRIS') : 'OSIRIS',
                     maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 Text(s.edificioNombre,
                     maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12)),
               ],
             ),
           ),
           if (s.turnoActivoId == null)
-            item(Icons.play_arrow, 'Iniciar turno', const InicioTurnoScreen())
+            item(Icons.play_arrow, 'Iniciar turno', const InicioTurnoScreen(), color: AppColors.verde)
           else
-            item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen()),
-          item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), show: s.modulo('normativas')),
+            item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen(), color: const Color(0xFF455A64)),
           const Divider(height: 1),
-          item(Icons.wifi_tethering, 'Actividad del edificio', const OnlineScreen(soloEdificio: true), show: s.isAdmin),
-          item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen(), show: s.isAdmin),
-          item(Icons.shield, 'Guardias', const GuardiasScreen(), show: s.isAdmin),
+          item(Icons.dashboard, 'Panel y Reportes', const PanelScreen(), color: const Color(0xFF1565C0)),
+          item(Icons.videocam, 'Monitoreo (cámaras)', const MonitoreoScreen(), color: const Color(0xFF00695C)),
+          item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
+          item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
+          const Divider(height: 1),
+          item(Icons.wifi_tethering, 'Actividad del edificio', const OnlineScreen(soloEdificio: true), color: const Color(0xFF0277BD), show: s.isAdmin),
+          item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen(), color: const Color(0xFFEF6C00), show: s.isAdmin),
+          item(Icons.shield, 'Guardias', const GuardiasScreen(), color: AppColors.verde, show: s.isAdmin),
           const Divider(height: 1),
           if (!s.isAdmin)
             ListTile(
               leading: const Icon(Icons.admin_panel_settings, color: Color(0xFF546E7A)),
               title: const Text('Entrar como admin'),
-              onTap: _entrarAdmin,
+              onTap: () {
+                Navigator.pop(context);
+                _entrarAdmin();
+              },
             ),
           ListTile(
             leading: const Icon(Icons.cloud, color: Color(0xFF0277BD)),
             title: const Text('En línea - todos (admin)'),
-            onTap: _openOnline,
+            onTap: () {
+              Navigator.pop(context);
+              _openOnline();
+            },
           ),
           ListTile(
             leading: const Icon(Icons.settings, color: AppColors.azulMarino),
             title: const Text('Configuración (admin)'),
-            onTap: _openConfig,
+            onTap: () {
+              Navigator.pop(context);
+              _openConfig();
+            },
           ),
           if (s.isAdmin)
             ListTile(
@@ -430,6 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Salir de admin'),
               onTap: () {
                 s.isAdmin = false;
+                Navigator.pop(context);
                 setState(() {});
               },
             ),
