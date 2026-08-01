@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/depto_field.dart';
 import '../widgets/toast.dart';
+import '../widgets/eventos_remotos.dart';
 
 class EncomiendasScreen extends StatefulWidget {
   const EncomiendasScreen({super.key});
@@ -79,12 +80,14 @@ class _EncomiendasScreenState extends State<EncomiendasScreen> {
           _load();
         },
       ),
-      body: _rows.isEmpty
-          ? const Center(child: Text('Sin encomiendas'))
-          : ListView.builder(
+      body: ListView.builder(
               padding: const EdgeInsets.all(12),
-              itemCount: _rows.length,
+              itemCount: _rows.length + 1,
               itemBuilder: (_, i) {
+                if (i == _rows.length) {
+                  return const EventosRemotos(tipo: 'Encomienda', icon: Icons.inventory_2,
+                      color: Color(0xFFEF6C00), tituloKeys: ['depto', 'destinatario']);
+                }
                 final e = _rows[i];
                 final pend = e['estado'] == 'pendiente';
                 final hora = DateFormat('dd/MM HH:mm').format(DateTime.parse(e['created_at'] as String));

@@ -64,7 +64,8 @@ class Notificaciones {
           importance: Importance.high, priority: Priority.high, icon: '@mipmap/ic_launcher',
         ),
       );
-      for (int h = 0; h < 24; h += 2) {
+      final cada = s.rondaHoras.clamp(1, 12);
+      for (int h = 0; h < 24; h += cada) {
         try {
           await _plugin.zonedSchedule(
             2000 + h,

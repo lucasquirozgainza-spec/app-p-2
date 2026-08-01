@@ -36,7 +36,8 @@ class AppState {
   String senderPass = '';  // clave de aplicación de esa cuenta
 
   // Alarmas y recordatorios
-  bool notifRondas = true;      // recordatorio de ronda cada 2 horas
+  bool notifRondas = true;      // recordatorio de ronda
+  int rondaHoras = 2;           // cada cuantas horas recordar la ronda
   bool alarmaCandados = true;   // alarma a las 00:00 para cerrar candados
   bool controlUniforme = true;  // revisar uniforme (camisa roja / chaleco negro) al iniciar turno
   bool camaraNativa = false;    // usar la camara del telefono (maxima calidad) en fotos sueltas
@@ -64,6 +65,7 @@ class AppState {
     senderEmail = prefs.getString('sender_email') ?? '';
     senderPass = prefs.getString('sender_pass') ?? '';
     notifRondas = prefs.getBool('notif_rondas') ?? true;
+    rondaHoras = prefs.getInt('ronda_horas') ?? 2;
     alarmaCandados = prefs.getBool('alarma_candados') ?? true;
     controlUniforme = prefs.getBool('control_uniforme') ?? true;
     camaraNativa = prefs.getBool('camara_nativa') ?? false;
@@ -131,11 +133,15 @@ class AppState {
     }
   }
 
-  Future<void> setRecordatorios({bool? rondas, bool? candados, bool? uniforme, bool? camaraNativa}) async {
+  Future<void> setRecordatorios({bool? rondas, bool? candados, bool? uniforme, bool? camaraNativa, int? rondaHoras}) async {
     final prefs = await SharedPreferences.getInstance();
     if (rondas != null) {
       notifRondas = rondas;
       await prefs.setBool('notif_rondas', rondas);
+    }
+    if (rondaHoras != null) {
+      this.rondaHoras = rondaHoras.clamp(1, 12);
+      await prefs.setInt('ronda_horas', this.rondaHoras);
     }
     if (candados != null) {
       alarmaCandados = candados;

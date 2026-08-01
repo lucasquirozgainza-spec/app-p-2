@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../theme.dart';
+import '../widgets/eventos_remotos.dart';
 
 /// Historial de rondas: lista de rondas guardadas; al tocar una se ven las fotos.
 class RondasHistorialScreen extends StatefulWidget {
@@ -43,12 +44,14 @@ class _RondasHistorialScreenState extends State<RondasHistorialScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Historial de Rondas')),
-      body: _rows.isEmpty
-          ? const Center(child: Text('Sin rondas registradas'))
-          : ListView.builder(
+      body: ListView.builder(
               padding: const EdgeInsets.all(12),
-              itemCount: _rows.length,
+              itemCount: _rows.length + 1,
               itemBuilder: (_, i) {
+                if (i == _rows.length) {
+                  return const EventosRemotos(tipo: 'Ronda', icon: Icons.directions_walk,
+                      color: Color(0xFF6A1B9A), tituloKeys: ['fotos', 'puntos']);
+                }
                 final r = _rows[i];
                 final fotos = _fotosDe(r);
                 final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(r['created_at'] as String));

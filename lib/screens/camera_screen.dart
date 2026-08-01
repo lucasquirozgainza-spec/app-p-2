@@ -73,8 +73,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // 720p (high): buen balance nitidez/velocidad y captura rapida.
-      const preset = ResolutionPreset.high;
+      // Rondas (multi): muy alta calidad. Fotos sueltas (tarjeta/carnet): 720p
+      // rapido, sin demora ni boton de aceptar.
+      final preset = widget.multi ? ResolutionPreset.veryHigh : ResolutionPreset.high;
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;

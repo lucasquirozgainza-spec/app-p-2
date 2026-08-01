@@ -13,6 +13,7 @@ import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
 import '../widgets/toast.dart';
+import '../widgets/eventos_remotos.dart';
 import 'camera_screen.dart';
 
 class VisitasScreen extends StatefulWidget {
@@ -143,12 +144,16 @@ class _VisitasScreenState extends State<VisitasScreen> {
             ),
           ),
           Expanded(
-            child: _visitas.isEmpty
-          ? const Center(child: Text('Sin visitas registradas'))
-          : ListView.builder(
+            child: ListView.builder(
               padding: const EdgeInsets.all(12),
-              itemCount: _visitas.length,
+              itemCount: _visitas.length + 1,
               itemBuilder: (_, i) {
+                if (i == _visitas.length) {
+                  return Column(children: const [
+                    EventosRemotos(tipo: 'Visita', icon: Icons.badge, color: Color(0xFF00897B),
+                        tituloKeys: ['nombre', 'depto']),
+                  ]);
+                }
                 final v = _visitas[i];
                 final dentro = v['estado'] == 'dentro';
                 final hora = DateFormat('dd/MM HH:mm')
@@ -701,65 +706,56 @@ class _ContactoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final tieneTel = tel.trim().isNotEmpty;
     return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
               const CircleAvatar(
-                  radius: 18,
+                  radius: 16,
                   backgroundColor: Color(0x1A0A335D),
-                  child: Icon(Icons.person, color: AppColors.azulMarino, size: 20)),
-              const SizedBox(width: 10),
+                  child: Icon(Icons.person, color: AppColors.azulMarino, size: 18)),
+              const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(nombre,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                    Text('$rol${tieneTel ? '  ·  $tel' : ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.black54, fontSize: 12)),
-                  ],
+                child: Text('$nombre${rol.isNotEmpty ? '  ·  $rol' : ''}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              if (tieneTel)
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(44)),
+                    onPressed: onWhatsapp,
+                    icon: const Icon(Icons.chat, size: 18),
+                    label: const Text('Anunciar visita'),
+                  ),
+                ),
+              if (tieneTel) const SizedBox(width: 6),
+              if (tieneTel)
+                SizedBox(
+                  width: 52,
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44), padding: EdgeInsets.zero),
+                    onPressed: onLlamar,
+                    child: const Icon(Icons.call, size: 20),
+                  ),
+                ),
+              if (tieneTel) const SizedBox(width: 6),
+              // Elegir como quien autoriza (boton, sin contactar).
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+                  onPressed: onElegir,
+                  icon: const Icon(Icons.check_circle, size: 18),
+                  label: const Text('Elegir'),
                 ),
               ),
             ]),
-            if (tieneTel) ...[
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(46)),
-                  onPressed: onWhatsapp,
-                  icon: const Icon(Icons.chat, size: 18),
-                  label: const Text('Llamar por WhatsApp'),
-                ),
-              ),
-              const SizedBox(height: 6),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(46)),
-                  onPressed: onLlamar,
-                  icon: const Icon(Icons.call, size: 18),
-                  label: const Text('Llamada normal'),
-                ),
-              ),
-            ],
-            const SizedBox(height: 6),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton.icon(
-                onPressed: onElegir,
-                icon: const Icon(Icons.check_circle, size: 18),
-                label: const Text('Elegir como quien autoriza'),
-              ),
-            ),
           ],
         ),
       ),

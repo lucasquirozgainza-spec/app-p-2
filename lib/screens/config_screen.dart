@@ -457,14 +457,38 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 value: AppState.instance.notifRondas,
                 activeColor: AppColors.verde,
                 secondary: const Icon(Icons.directions_walk, color: Color(0xFF6A1B9A)),
-                title: const Text('Recordatorio de ronda cada 2 horas'),
-                subtitle: const Text('Avisa a las 00, 02, 04 ... 22 hs'),
+                title: const Text('Recordatorio de ronda'),
+                subtitle: Text('Cada ${AppState.instance.rondaHoras} hora(s)'),
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(rondas: v);
                   await Notificaciones.programarRecordatorios();
                   setState(() {});
                 },
               ),
+              if (AppState.instance.notifRondas)
+                ListTile(
+                  contentPadding: const EdgeInsets.only(left: 72, right: 12),
+                  title: const Text('Cada cuántas horas'),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline),
+                      onPressed: () async {
+                        await AppState.instance.setRecordatorios(rondaHoras: AppState.instance.rondaHoras - 1);
+                        await Notificaciones.programarRecordatorios();
+                        setState(() {});
+                      },
+                    ),
+                    Text('${AppState.instance.rondaHoras} h', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline),
+                      onPressed: () async {
+                        await AppState.instance.setRecordatorios(rondaHoras: AppState.instance.rondaHoras + 1);
+                        await Notificaciones.programarRecordatorios();
+                        setState(() {});
+                      },
+                    ),
+                  ]),
+                ),
               const Divider(height: 1),
               SwitchListTile(
                 value: AppState.instance.alarmaCandados,
@@ -487,19 +511,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 subtitle: const Text('Detecta camisa roja / chaleco negro en la foto'),
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(uniforme: v);
-                  setState(() {});
-                },
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                value: AppState.instance.camaraNativa,
-                activeColor: AppColors.verde,
-                secondary: const Icon(Icons.camera, color: Color(0xFF37474F)),
-                title: const Text('Máxima calidad de foto'),
-                subtitle: const Text('Usa la cámara del teléfono (más nítida) en fotos sueltas. '
-                    'Pide confirmar cada foto; rondas y carnet siguen en modo rápido.'),
-                onChanged: (v) async {
-                  await AppState.instance.setRecordatorios(camaraNativa: v);
                   setState(() {});
                 },
               ),
