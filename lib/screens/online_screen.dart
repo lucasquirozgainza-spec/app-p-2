@@ -91,32 +91,41 @@ class _OnlineScreenState extends State<OnlineScreen> {
       ),
     );
     if (ok != true) return;
+    final ed = _edFiltro;
+    final titulo = widget.soloEdificio ? AppState.instance.edificioNombre : 'Todos los edificios';
+
+    // 1) Traer los datos (con spinner que se cierra antes de compartir).
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    List<Map<String, dynamic>> todos = [];
     try {
-      final ed = _edFiltro;
-      final todos = await Cloud.eventos(edificio: ed, limit: 5000);
-      final titulo = widget.soloEdificio ? AppState.instance.edificioNombre : 'Todos los edificios';
+      todos = await Cloud.eventos(edificio: ed, limit: 5000);
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.pop(context); // cerrar spinner ANTES de compartir (evita que se congele)
+
+    // 2) Generar y compartir el PDF (la hoja de compartir queda al frente).
+    try {
       await PdfExport.actividadNube(todos, titulo);
-      final borrado = await Cloud.borrarEventos(edificio: ed);
-      if (!mounted) return;
-      Navigator.pop(context); // cerrar spinner
-      await showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          icon: Icon(borrado ? Icons.check_circle : Icons.error_outline, color: borrado ? AppColors.verde : AppColors.rojo, size: 38),
-          title: Text(borrado ? 'Listo' : 'PDF generado, pero...'),
-          content: Text(borrado
-              ? 'Se descargó el PDF y se limpió la nube (${todos.length} registros).'
-              : 'El PDF se generó, pero no se pudo limpiar la nube. Detalle: ${Cloud.lastError ?? ''}'),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
-        ),
-      );
-      _cargar();
     } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: $e')));
+      return;
     }
+
+    // 3) Limpiar la nube y avisar el resultado.
+    final borrado = await Cloud.borrarEventos(edificio: ed);
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: Icon(borrado ? Icons.check_circle : Icons.error_outline, color: borrado ? AppColors.verde : AppColors.rojo, size: 38),
+        title: Text(borrado ? 'Listo' : 'PDF generado, pero...'),
+        content: Text(borrado
+            ? 'Se descargó el PDF y se limpió la nube (${todos.length} registros).'
+            : 'El PDF se generó, pero no se pudo limpiar la nube. Detalle: ${Cloud.lastError ?? ''}'),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+      ),
+    );
+    _cargar();
   }
 
   Future<void> _abrirMapa(dynamic lat, dynamic lng) async {

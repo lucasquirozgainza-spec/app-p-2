@@ -30,6 +30,19 @@ if "android.permission.CAMERA" not in txt:
 if "xmlns:tools=" not in txt:
     txt = re.sub(r"(<manifest\b)", r'\1 xmlns:tools="http://schemas.android.com/tools"', txt, count=1)
 
+# Visibilidad de paquetes (Android 11+) para abrir WhatsApp, tel, https rapido
+if "<queries>" not in txt:
+    queries = (
+        "    <queries>\n"
+        '        <package android:name="com.whatsapp"/>\n'
+        '        <package android:name="com.whatsapp.w4b"/>\n'
+        '        <intent><action android:name="android.intent.action.VIEW"/>'
+        '<data android:scheme="https"/></intent>\n'
+        '        <intent><action android:name="android.intent.action.DIAL"/></intent>\n'
+        "    </queries>\n"
+    )
+    txt = txt.replace("<application", queries + "\n    <application", 1)
+
 # Nombre visible de la app (bajo el icono)
 txt = re.sub(r'android:label="[^"]*"', 'android:label="OSIRIS"', txt, count=1)
 

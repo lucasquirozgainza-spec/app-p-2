@@ -71,7 +71,7 @@ class Cloud {
           'detalle': detalle ?? {},
           'device_id': deviceId,
         }),
-      );
+      ).timeout(const Duration(seconds: 12));
       if (r.statusCode >= 300) lastError = 'evento ${r.statusCode}: ${r.body}';
     } catch (e) {
       lastError = 'evento: $e';
@@ -94,11 +94,16 @@ class Cloud {
         body['lat'] = lat;
         body['lng'] = lng;
       }
-      final r = await http.post(
-        Uri.parse('$_rest/presencia?on_conflict=device_id'),
-        headers: {..._h, 'Prefer': 'resolution=merge-duplicates,return=minimal'},
-        body: jsonEncode(body),
-      );
+      final uri = Uri.parse('$_rest/presencia?on_conflict=device_id');
+      final headers = {..._h, 'Prefer': 'resolution=merge-duplicates,return=minimal'};
+      var r = await http.post(uri, headers: headers, body: jsonEncode(body)).timeout(const Duration(seconds: 12));
+      // Si la tabla no tiene columnas lat/lng (no se corrió esa migración en
+      // Supabase), reintenta sin ubicacion para no cortar la presencia.
+      if (r.statusCode >= 300 && body.containsKey('lat')) {
+        body.remove('lat');
+        body.remove('lng');
+        r = await http.post(uri, headers: headers, body: jsonEncode(body)).timeout(const Duration(seconds: 12));
+      }
       if (r.statusCode >= 300) lastError = 'heartbeat ${r.statusCode}: ${r.body}';
     } catch (e) {
       lastError = 'heartbeat: $e';
@@ -111,7 +116,8 @@ class Cloud {
       final params = <String>['select=*', 'order=created_at.desc', 'limit=$limit'];
       if (tipo != null) params.add('tipo=eq.${Uri.encodeComponent(tipo)}');
       if (edificio != null) params.add('edificio=eq.${Uri.encodeComponent(edificio)}');
-      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h);
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+          .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) {
         lastError = 'eventos ${r.statusCode}: ${r.body}';
         return [];
@@ -155,7 +161,8 @@ class Cloud {
       final filtro = edificio != null
           ? 'edificio=eq.${Uri.encodeComponent(edificio)}'
           : 'id=gte.0'; // PostgREST exige un filtro; este abarca todos.
-      final r = await http.delete(Uri.parse('$_rest/eventos?$filtro'), headers: _h);
+      final r = await http.delete(Uri.parse('$_rest/eventos?$filtro'), headers: _h)
+          .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) {
         lastError = 'borrar ${r.statusCode}: ${r.body}';
         return false;
@@ -169,7 +176,8 @@ class Cloud {
 
   static Future<List<Map<String, dynamic>>> presencia() async {
     try {
-      final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc'), headers: _h);
+      final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc'), headers: _h)
+          .timeout(const Duration(seconds: 15));
       if (r.statusCode >= 300) {
         lastError = 'presencia ${r.statusCode}: ${r.body}';
         return [];

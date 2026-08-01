@@ -65,6 +65,23 @@ class _ConfigScreenState extends State<ConfigScreen> {
     });
   }
 
+  Future<void> _setMod(String key, dynamic val) async {
+    setState(() => _modulos[key] = val);
+    final db = await DB.instance.database;
+    await db.update('edificios', {'modulos': jsonEncode(_modulos)},
+        where: 'id=?', whereArgs: [_selId]);
+    await Audit.log('EDITAR', 'edificios', _selId, detalle: '$key=$val');
+    if (_selId == AppState.instance.edificioId) {
+      await AppState.instance.loadEdificio();
+    }
+  }
+
+  int get _tarjetaDigitos {
+    final v = _modulos['tarjeta_digitos'];
+    if (v is int) return v;
+    return int.tryParse('$v') ?? 10;
+  }
+
   Future<void> _toggle(String key, bool val) async {
     setState(() => _modulos[key] = val);
     final db = await DB.instance.database;
@@ -425,6 +442,23 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   onChanged: (v) => _toggle(e.key, v),
                   title: Text(e.value),
                   activeColor: AppColors.verde,
+                ),
+              if (_modulos['v_tarjeta'] != false)
+                ListTile(
+                  leading: const Icon(Icons.pin, color: Color(0xFFEF6C00)),
+                  title: const Text('Dígitos de la tarjeta'),
+                  subtitle: Text('La tarjeta de este edificio tiene $_tarjetaDigitos dígitos'),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline),
+                      onPressed: () => _setMod('tarjeta_digitos', (_tarjetaDigitos - 1).clamp(3, 16)),
+                    ),
+                    Text('$_tarjetaDigitos', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline),
+                      onPressed: () => _setMod('tarjeta_digitos', (_tarjetaDigitos + 1).clamp(3, 16)),
+                    ),
+                  ]),
                 ),
             ]),
           ),

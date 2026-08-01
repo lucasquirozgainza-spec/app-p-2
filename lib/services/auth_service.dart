@@ -1,6 +1,7 @@
 import '../db/database_helper.dart';
 import 'app_state.dart';
 import 'audit.dart';
+import 'cloud.dart';
 import 'crypto_util.dart';
 
 class AuthService {
@@ -41,6 +42,14 @@ class AuthService {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'usuarios', '$id', detalle: 'guardia=$nombre');
+    // Publicar el guardia en la nube para que aparezca en los OTROS
+    // dispositivos del mismo edificio al iniciar turno (sin importar donde
+    // se registro). No bloquea si no hay internet.
+    Cloud.evento('Guardia', detalle: {
+      'nombre': nombre,
+      'cargo': cargo,
+      'rol': rol,
+    });
   }
 
   /// Cambia la contraseña de un administrador. Devuelve null si ok o el error.

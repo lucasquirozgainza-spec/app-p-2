@@ -45,8 +45,44 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
             "AND (edificio=? OR edificio IS NULL OR edificio='')",
         whereArgs: [ed],
         orderBy: 'nombre');
+    // Lista combinada: guardias locales + guardias registrados en OTROS
+    // dispositivos (llegan por la nube). Asi los 4 guardias que registra el
+    // administrador aparecen en todos los equipos para iniciar turno.
+    final merged = <Map<String, dynamic>>[
+      for (final r in rows) Map<String, dynamic>.from(r)
+    ];
     if (!mounted) return;
-    setState(() => _guardias = rows);
+    setState(() => _guardias = merged);
+    // La nube en segundo plano (no bloquea si no hay internet).
+    try {
+      final nube = await Cloud.eventos(tipo: 'Guardia', edificio: ed, limit: 200);
+      if (!mounted) return;
+      final vistos = merged
+          .map((g) => (g['nombre'] ?? '').toString().trim().toLowerCase())
+          .toSet();
+      int fake = -1;
+      for (final e in nube) {
+        final det = e['detalle'];
+        final d = det is Map ? Map<String, dynamic>.from(det) : <String, dynamic>{};
+        final nombre = (d['nombre'] ?? e['guardia'] ?? '').toString().trim();
+        if (nombre.isEmpty) continue;
+        final key = nombre.toLowerCase();
+        if (vistos.contains(key)) continue; // ya esta (evita duplicados)
+        vistos.add(key);
+        merged.add({
+          'id': fake--, // id sintetico (no existe localmente)
+          'nombre': nombre,
+          'cargo': (d['cargo'] ?? '').toString(),
+          'rol': (d['rol'] ?? 'guardia').toString(),
+        });
+      }
+      merged.sort((a, b) => (a['nombre'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['nombre'] ?? '').toString().toLowerCase()));
+      if (!mounted) return;
+      setState(() => _guardias = merged);
+    } catch (_) {}
   }
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
@@ -187,7 +223,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
                 for (final g in _guardias)
                   DropdownMenuItem<int>(
                     value: g['id'] as int,
-                    child: Text('${g['nombre']}  ·  ${g['cargo'] ?? ''}',
+                    child: Text('${g['nombre']}',
                         overflow: TextOverflow.ellipsis),
                   ),
               ],

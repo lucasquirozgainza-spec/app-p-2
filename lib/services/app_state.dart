@@ -56,6 +56,13 @@ class AppState {
   /// Campo de visita habilitado (por defecto SI, salvo que el admin lo apague).
   bool campoVisita(String key) => modulos[key] != false;
 
+  /// Cantidad de digitos de la tarjeta de acceso (por edificio, def. 10).
+  int get tarjetaDigitos {
+    final v = modulos['tarjeta_digitos'];
+    if (v is int) return v;
+    return int.tryParse('$v') ?? 10;
+  }
+
   Future<void> loadEdificio() async {
     final prefs = await SharedPreferences.getInstance();
     edificioId = prefs.getString('edificio_id') ?? 'LIMCO II';

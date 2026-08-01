@@ -297,6 +297,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   final _obs = TextEditingController();
   final _tarjetaNum = TextEditingController();
   String? _fotoTarjeta;
+  String? _motivoSel; // motivo elegido por boton (o 'Otro' = manual)
   bool _ocrLeyendo = false;
   List<String> _deptoSug = [];
   String? _carnetAnverso;
@@ -308,37 +309,35 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
+  /// Captura la tarjeta y la re-lee automaticamente: si el OCR no obtiene los
+  /// digitos configurados (LIMCO=10, otros edificios distinto), vuelve a abrir
+  /// la camara sola hasta leerla bien. El guardia puede salir con "atras".
   Future<void> _capturarTarjeta() async {
-    final res = await Navigator.push<List<String>>(
-        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Tarjetas')));
-    if (res == null || res.isEmpty) return;
-    await _ocrTarjeta(res.first);
-  }
-
-  Future<void> _ocrTarjeta(String? path) async {
-    setState(() => _fotoTarjeta = path);
-    if (path == null) return;
-    setState(() => _ocrLeyendo = true);
-    final num = await OcrService.leerNumero(path);
-    if (!mounted) return;
-    setState(() {
-      _ocrLeyendo = false;
-      _tarjetaNum.text = (num != null && num.length == 10) ? num : '';
-    });
-    if (num != null && num.length == 10) {
-      TopToast.show(context, 'N° de tarjeta detectado: $num');
-    } else {
-      // La tarjeta SIEMPRE tiene 10 digitos: obligar a repetir la foto.
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          icon: const Icon(Icons.error_outline, color: AppColors.rojo, size: 38),
-          title: const Text('Repite la foto'),
-          content: const Text('No se leyeron los 10 dígitos de la tarjeta. '
-              'Toma la foto de nuevo, más cerca y sin reflejos.'),
-          actions: [FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Entendido'))],
-        ),
-      );
+    final dig = AppState.instance.tarjetaDigitos;
+    while (mounted) {
+      final res = await Navigator.push<List<String>>(
+          context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Tarjetas')));
+      if (res == null || res.isEmpty) return; // el guardia cancelo
+      final path = res.first;
+      if (!mounted) return;
+      setState(() {
+        _fotoTarjeta = path;
+        _ocrLeyendo = true;
+      });
+      final num = await OcrService.leerNumero(path, digitos: dig);
+      if (!mounted) return;
+      setState(() {
+        _ocrLeyendo = false;
+        _tarjetaNum.text = (num != null && num.length == dig) ? num : '';
+      });
+      if (num != null && num.length == dig) {
+        TopToast.show(context, 'N° de tarjeta detectado: $num');
+        return; // leida OK
+      }
+      // No se leyeron los digitos: avisar y volver a la camara automaticamente.
+      TopToast.show(context, 'No se leyeron los $dig dígitos, repite la foto',
+          color: AppColors.rojo, icon: Icons.error_outline);
+      await Future.delayed(const Duration(milliseconds: 700));
     }
   }
 
@@ -534,8 +533,9 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     final pideCarnet = AppState.instance.campoVisita('v_carnet');
     final pideTarjeta = AppState.instance.campoVisita('v_tarjeta');
     if (_nombre.text.trim().isEmpty) return _snack('Ingrese el nombre del visitante');
-    if (pideTarjeta && _fotoTarjeta != null && _tarjetaNum.text.trim().length != 10) {
-      return _snack('La tarjeta debe tener 10 dígitos. Repite la foto de la tarjeta.');
+    final dig = AppState.instance.tarjetaDigitos;
+    if (pideTarjeta && _fotoTarjeta != null && _tarjetaNum.text.trim().length != dig) {
+      return _snack('La tarjeta debe tener $dig dígitos. Repite la foto de la tarjeta.');
     }
     if (pideCarnet && _carnetAnverso == null) return _snack('La foto del carnet (anverso) es obligatoria');
     if (pideCarnet && _carnetReverso == null) return _snack('La foto del carnet (reverso) es obligatoria');
@@ -732,7 +732,45 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           const SizedBox(height: 12),
         ],
         if (s.campoVisita('v_motivo')) ...[
-          TextField(controller: _motivo, decoration: const InputDecoration(labelText: 'Motivo')),
+          const Padding(
+            padding: EdgeInsets.only(bottom: 6),
+            child: Text('Motivo', style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          Wrap(spacing: 8, runSpacing: 6, children: [
+            for (final m in const ['Técnico', 'Limpieza', 'Visita'])
+              ChoiceChip(
+                label: Text(m),
+                selected: _motivoSel == m,
+                selectedColor: AppColors.verde,
+                labelStyle: TextStyle(
+                    color: _motivoSel == m ? Colors.white : null,
+                    fontWeight: FontWeight.w600),
+                onSelected: (_) => setState(() {
+                  _motivoSel = m;
+                  _motivo.text = m;
+                }),
+              ),
+            ChoiceChip(
+              label: const Text('Otro'),
+              selected: _motivoSel == 'Otro',
+              selectedColor: const Color(0xFF6A1B9A),
+              labelStyle: TextStyle(
+                  color: _motivoSel == 'Otro' ? Colors.white : null,
+                  fontWeight: FontWeight.w600),
+              onSelected: (_) => setState(() {
+                _motivoSel = 'Otro';
+                _motivo.clear();
+              }),
+            ),
+          ]),
+          if (_motivoSel == 'Otro')
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: TextField(
+                  controller: _motivo,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Especifica el motivo')),
+            ),
           const SizedBox(height: 12),
         ],
         TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),

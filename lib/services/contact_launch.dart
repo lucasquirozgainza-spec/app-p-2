@@ -23,6 +23,14 @@ class Contacto {
       {String mensaje = ''}) async {
     final d = _normalize(tel);
     if (d.isEmpty) return _aviso(context, 'Sin numero de WhatsApp');
+    final txt = mensaje.isNotEmpty ? '&text=${Uri.encodeComponent(mensaje)}' : '';
+    // Esquema directo de la app: abre WhatsApp al instante (sin pasar por el
+    // navegador como hace wa.me, que es mas lento).
+    final appUri = Uri.parse('whatsapp://send?phone=$d$txt');
+    try {
+      if (await launchUrl(appUri, mode: LaunchMode.externalApplication)) return;
+    } catch (_) {}
+    // Respaldo: wa.me (por si WhatsApp Business u otra variante).
     final url = 'https://wa.me/$d${mensaje.isNotEmpty ? '?text=${Uri.encodeComponent(mensaje)}' : ''}';
     if (!await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)) {
       _aviso(context, 'No se pudo abrir WhatsApp');

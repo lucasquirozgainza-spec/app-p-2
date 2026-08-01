@@ -21,19 +21,19 @@ class OcrService {
     }
   }
 
-  /// Numero de la tarjeta de acceso. Las tarjetas tienen EXACTAMENTE 10 digitos.
-  /// Devuelve la secuencia de 10 digitos; si no encuentra 10, devuelve null
-  /// para que la pantalla obligue a repetir la foto.
-  static Future<String?> leerNumero(String path) async {
+  /// Numero de la tarjeta de acceso. Por defecto busca [digitos]=10 digitos
+  /// (configurable por edificio). Devuelve la secuencia de esa longitud; si no
+  /// la encuentra, devuelve null para que se repita la foto.
+  static Future<String?> leerNumero(String path, {int digitos = 10}) async {
     final texto = await leerTexto(path);
     // Unir digitos separados por espacios (a veces el OCR los parte).
     final limpio = texto.replaceAll(RegExp(r'(?<=\d)[ \-](?=\d)'), '');
-    // Buscar una secuencia de 10 digitos aislada (sin mas digitos pegados).
-    final exacto = RegExp(r'(?<!\d)(\d{10})(?!\d)').firstMatch(limpio);
+    // Secuencia de exactamente [digitos] digitos aislada.
+    final exacto = RegExp(r'(?<!\d)(\d{' + '$digitos' + r'})(?!\d)').firstMatch(limpio);
     if (exacto != null) return exacto.group(1);
-    // Si aparece una corrida mas larga, tomar sus primeros 10 digitos.
-    final larga = RegExp(r'\d{10,}').firstMatch(limpio);
-    if (larga != null) return larga.group(0)!.substring(0, 10);
+    // Si aparece una corrida mas larga, tomar sus primeros [digitos].
+    final larga = RegExp(r'\d{' + '$digitos' + r',}').firstMatch(limpio);
+    if (larga != null) return larga.group(0)!.substring(0, digitos);
     return null;
   }
 
