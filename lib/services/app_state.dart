@@ -40,8 +40,6 @@ class AppState {
   int rondaHoras = 2;           // cada cuantas horas recordar la ronda
   bool alarmaCandados = true;   // alarma a las 00:00 para cerrar candados
   bool controlUniforme = true;  // revisar uniforme (camisa roja / chaleco negro) al iniciar turno
-  bool camaraNativa = false;    // usar la camara del telefono (maxima calidad) en fotos sueltas
-  bool camaraRemota = false;    // ver DVR por DDNS/datos (true) o por IP local/WiFi (false)
 
   // Operacion
   int retencionDias = 90;       // borrado automatico de datos/fotos (3 meses)
@@ -108,7 +106,6 @@ class AppState {
     rondaHoras = prefs.getInt('ronda_horas') ?? 2;
     alarmaCandados = prefs.getBool('alarma_candados') ?? true;
     controlUniforme = prefs.getBool('control_uniforme') ?? true;
-    camaraNativa = prefs.getBool('camara_nativa') ?? false;
     rondaFotos = prefs.getInt('ronda_fotos') ?? 10;
     retencionDias = prefs.getInt('retencion_dias') ?? 90;
     turnoIngreso = prefs.getString('turno_ingreso') ?? '';
@@ -173,7 +170,7 @@ class AppState {
     }
   }
 
-  Future<void> setRecordatorios({bool? rondas, bool? candados, bool? uniforme, bool? camaraNativa, int? rondaHoras}) async {
+  Future<void> setRecordatorios({bool? rondas, bool? candados, bool? uniforme, int? rondaHoras}) async {
     final prefs = await SharedPreferences.getInstance();
     if (rondas != null) {
       notifRondas = rondas;
@@ -190,10 +187,6 @@ class AppState {
     if (uniforme != null) {
       controlUniforme = uniforme;
       await prefs.setBool('control_uniforme', uniforme);
-    }
-    if (camaraNativa != null) {
-      this.camaraNativa = camaraNativa;
-      await prefs.setBool('camara_nativa', camaraNativa);
     }
   }
 

@@ -21,7 +21,6 @@ import 'encomiendas_screen.dart';
 import 'incidentes_screen.dart';
 import 'mantenimiento_screen.dart';
 import 'hospedajes_screen.dart';
-import 'monitoreo_screen.dart';
 import 'guardias_screen.dart';
 import 'normativas_screen.dart';
 import 'online_screen.dart';
@@ -331,7 +330,6 @@ class _HomeScreenState extends State<HomeScreen> {
             item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen(), color: const Color(0xFF455A64)),
           const Divider(height: 1),
           item(Icons.dashboard, 'Panel y Reportes', const PanelScreen(), color: const Color(0xFF1565C0)),
-          item(Icons.videocam, 'Monitoreo (cámaras)', const MonitoreoScreen(), color: const Color(0xFF00695C)),
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
           const Divider(height: 1),

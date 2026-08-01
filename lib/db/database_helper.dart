@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 11,
+      version: 12,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -91,6 +91,12 @@ class DB {
             await db.execute('''CREATE TABLE IF NOT EXISTS encargados (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               edificio TEXT, depto TEXT, nombre TEXT, telefono TEXT)''');
+          } catch (_) {}
+        }
+        if (oldV < 12) {
+          // Monitoreo de cámaras retirado: borrar cualquier dato de cámaras.
+          try {
+            await db.execute('DROP TABLE IF EXISTS camaras');
           } catch (_) {}
         }
       },
@@ -337,14 +343,6 @@ class DB {
       CREATE TABLE encargados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         edificio TEXT, depto TEXT, nombre TEXT, telefono TEXT
-      )''');
-
-    await db.execute('''
-      CREATE TABLE camaras (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        edificio TEXT, nombre TEXT, host TEXT, host_remoto TEXT, puerto INTEGER DEFAULT 554,
-        usuario TEXT, clave TEXT, canales INTEGER DEFAULT 1, serial TEXT,
-        marca TEXT DEFAULT 'dahua', created_at TEXT
       )''');
 
     await db.execute('''

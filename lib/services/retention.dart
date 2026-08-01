@@ -29,7 +29,7 @@ class Retention {
   }
 
   /// Tablas que se vacían por completo con "Eliminar todo ahora".
-  /// NO incluye: usuarios (guardias), edificios (config) ni camaras (config DVR).
+  /// NO incluye: usuarios (guardias) ni edificios (configuración).
   static const _tablasWipe = [
     'ingreso_turno', 'salida_turno', 'visitas', 'rondas', 'encomiendas',
     'incidentes', 'mantenimiento', 'hospedajes', 'advertencias',

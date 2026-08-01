@@ -76,9 +76,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // Alta resolución en ambos modos: los documentos (tarjeta/carnet) se leen
-      // mucho mejor con más nitidez. veryHigh ≈ 1080p, buen balance.
-      final preset = ResolutionPreset.veryHigh;
+      // Rondas (multi): MÁXIMA resolución de la cámara (de ahí se sacan los
+      // detalles de los sucesos). Documentos (tarjeta/carnet): veryHigh ≈ 1080p,
+      // nítido y rápido para el OCR.
+      final preset = widget.multi ? ResolutionPreset.max : ResolutionPreset.veryHigh;
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;

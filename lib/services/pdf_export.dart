@@ -279,6 +279,37 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Reporte de guardias OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
   }
 
+  /// Comparte las fotos de una ronda SIN perder calidad. WhatsApp recomprime
+  /// las imágenes que se envían como "foto", pero NO toca los documentos: por
+  /// eso se arma un PDF con cada foto a resolución completa (una por página) y
+  /// se comparte como documento. Así se conservan todos los detalles.
+  static Future<void> fotosRondaAltaCalidad(List<String> fotos, String titulo, String mensaje) async {
+    final doc = pw.Document();
+    for (int i = 0; i < fotos.length; i++) {
+      try {
+        final bytes = await File(fotos[i]).readAsBytes();
+        final imagen = pw.MemoryImage(bytes); // conserva el JPEG original
+        doc.addPage(pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(16),
+          build: (ctx) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text('$titulo  ·  Foto ${i + 1}/${fotos.length}',
+                  style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: _navy)),
+              pw.SizedBox(height: 8),
+              pw.Expanded(child: pw.Center(child: pw.Image(imagen, fit: pw.BoxFit.contain))),
+            ],
+          ),
+        ));
+      } catch (_) {}
+    }
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Ronda_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: mensaje);
+  }
+
   /// Reporte detallado de INGRESOS y SALIDAS del mes: cada turno con su hora de
   /// entrada, salida, horas trabajadas y horas extra. Las horas extra solo
   /// cuentan el tiempo que el guardia se quedó pasada su hora de relevo (llegar
