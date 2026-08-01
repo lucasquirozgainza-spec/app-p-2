@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
@@ -43,6 +44,61 @@ class _IncidentesScreenState extends State<IncidentesScreen> {
     _load();
   }
 
+  void _detalle(Map<String, dynamic> x) {
+    List<String> fotos = [];
+    try {
+      final f = jsonDecode(x['fotos']?.toString() ?? '[]');
+      if (f is List) fotos = f.map((e) => e.toString()).toList();
+    } catch (_) {}
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(x['created_at'] as String));
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('${x['tipo']} · ${x['lugar'] ?? ''}'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (fotos.isNotEmpty)
+              SizedBox(
+                height: 160,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    for (final f in fotos)
+                      if (File(f).existsSync())
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(f))))),
+                            child: ClipRRect(borderRadius: BorderRadius.circular(8),
+                                child: Image.file(File(f), width: 160, height: 160, fit: BoxFit.cover)),
+                          ),
+                        ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 10),
+            Text(x['descripcion']?.toString() ?? '', style: const TextStyle(fontSize: 15)),
+            const SizedBox(height: 10),
+            if ((x['involucrados']?.toString() ?? '').isNotEmpty)
+              Text('Involucrados: ${x['involucrados']}', style: const TextStyle(fontSize: 13)),
+            Text('Guardia: ${x['guardia_nombre'] ?? ''}', style: const TextStyle(color: Colors.black54, fontSize: 12)),
+            Text('Estado: ${x['estado']}', style: const TextStyle(color: Colors.black54, fontSize: 12)),
+            Text('Fecha: $fecha', style: const TextStyle(color: Colors.black54, fontSize: 12)),
+          ]),
+        ),
+        actions: [
+          if (x['estado'] == 'pendiente')
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
+              onPressed: () { Navigator.pop(context); _resolver(x); },
+              child: const Text('Marcar resuelto'),
+            ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -68,6 +124,7 @@ class _IncidentesScreenState extends State<IncidentesScreen> {
                 final hora = DateFormat('dd/MM HH:mm').format(DateTime.parse(x['created_at'] as String));
                 return Card(
                   child: ListTile(
+                    onTap: () => _detalle(x),
                     leading: CircleAvatar(
                       backgroundColor: (pend ? AppColors.rojo : AppColors.verde).withOpacity(.15),
                       child: Icon(pend ? Icons.warning_amber : Icons.check_circle,

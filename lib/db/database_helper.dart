@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 9,
+      version: 10,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -77,6 +77,13 @@ class DB {
         if (oldV < 9) {
           try {
             await db.execute('ALTER TABLE camaras ADD COLUMN host_remoto TEXT');
+          } catch (_) {}
+        }
+        if (oldV < 10) {
+          try {
+            await db.execute('''CREATE TABLE IF NOT EXISTS puntos_control (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              edificio TEXT, nombre TEXT, codigo TEXT, created_at TEXT)''');
           } catch (_) {}
         }
       },
@@ -311,6 +318,12 @@ class DB {
         foto TEXT,
         edificio TEXT,
         created_at TEXT NOT NULL
+      )''');
+
+    await db.execute('''
+      CREATE TABLE puntos_control (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        edificio TEXT, nombre TEXT, codigo TEXT, created_at TEXT
       )''');
 
     await db.execute('''

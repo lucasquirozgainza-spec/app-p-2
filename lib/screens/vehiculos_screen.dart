@@ -4,8 +4,11 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/contact_launch.dart';
+import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
+import '../widgets/toast.dart';
+import 'camera_screen.dart';
 
 class VehiculosScreen extends StatefulWidget {
   const VehiculosScreen({super.key});
@@ -157,6 +160,20 @@ class _VehiculoFormState extends State<VehiculoForm> {
     }
   }
 
+  Future<void> _escanearPlaca() async {
+    final res = await Navigator.push<List<String>>(
+        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Placas')));
+    if (res == null || res.isEmpty) return;
+    final placa = await OcrService.leerPlaca(res.first);
+    if (!mounted) return;
+    if (placa != null) {
+      setState(() => _placa.text = placa);
+      TopToast.show(context, 'Placa detectada: $placa');
+    } else {
+      TopToast.show(context, 'No se leyó la placa. Escríbela a mano.', color: AppColors.rojo, icon: Icons.error_outline);
+    }
+  }
+
   Future<void> _guardar() async {
     if (_placa.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -197,7 +214,17 @@ class _VehiculoFormState extends State<VehiculoForm> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(controller: _placa, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'Placa *')),
+          Row(children: [
+            Expanded(
+              child: TextField(controller: _placa, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'Placa *')),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              tooltip: 'Escanear placa',
+              icon: const Icon(Icons.document_scanner),
+              onPressed: _escanearPlaca,
+            ),
+          ]),
           const SizedBox(height: 12),
           Row(children: [
             Expanded(child: TextField(controller: _marca, decoration: const InputDecoration(labelText: 'Marca'))),

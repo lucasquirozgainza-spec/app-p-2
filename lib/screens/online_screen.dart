@@ -25,7 +25,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
   String? _filtro; // null = todos
   bool _loading = true;
 
-  static const _tipos = ['Ingreso de turno', 'Salida de turno', 'Visita', 'Ronda', 'Incidente', 'Encomienda', 'Hospedaje', 'Guardia sin uniforme'];
+  static const _tipos = ['SOS', 'Ingreso de turno', 'Salida de turno', 'Visita', 'Ronda', 'Incidente', 'Encomienda', 'Hospedaje', 'Guardia sin uniforme'];
 
   Timer? _auto;
 
@@ -95,6 +95,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
       case 'Encomienda': return Icons.inventory_2;
       case 'Hospedaje': return Icons.hotel;
       case 'Guardia sin uniforme': return Icons.checkroom;
+      case 'SOS': return Icons.sos;
       default: return Icons.event_note;
     }
   }

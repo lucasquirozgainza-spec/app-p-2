@@ -7,6 +7,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
+import '../services/dvr.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
 import 'camera_screen.dart';
@@ -23,8 +24,45 @@ class _RondaScreenState extends State<RondaScreen> {
   bool _saving = false;
   final _inicio = DateTime.now();
 
+  // Puntos de control (opcional). Si el edificio no tiene, la ronda es normal.
+  List<Map<String, dynamic>> _puntos = [];
+  final Set<String> _escaneados = {};
+
   // Cantidad de fotos obligatorias por ronda (configurable por el admin).
   int get _min => AppState.instance.rondaFotos;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarPuntos();
+  }
+
+  Future<void> _cargarPuntos() async {
+    final db = await DB.instance.database;
+    final rows = await db.query('puntos_control',
+        where: 'edificio=?', whereArgs: [AppState.instance.edificioId], orderBy: 'id');
+    if (!mounted) return;
+    setState(() => _puntos = rows);
+  }
+
+  Future<void> _escanearPunto() async {
+    final res = await Navigator.push<List<String>>(
+        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false)));
+    if (res == null || res.isEmpty) return;
+    final raw = await Dvr.leerQr(res.first);
+    if (!mounted) return;
+    if (raw == null) {
+      TopToast.show(context, 'No se leyó el QR. Acércate al punto.', color: AppColors.rojo, icon: Icons.error_outline);
+      return;
+    }
+    final punto = _puntos.where((p) => p['codigo']?.toString() == raw.trim()).toList();
+    if (punto.isEmpty) {
+      TopToast.show(context, 'Ese QR no es un punto de este edificio.', color: AppColors.rojo, icon: Icons.error_outline);
+      return;
+    }
+    setState(() => _escaneados.add(raw.trim()));
+    TopToast.show(context, 'Punto: ${punto.first['nombre']} ✓');
+  }
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
@@ -40,20 +78,43 @@ class _RondaScreenState extends State<RondaScreen> {
     if (_fotos.length < _min) {
       return _snack('Debes tomar al menos $_min fotos (llevas ${_fotos.length})');
     }
+    // Si el edificio tiene puntos y faltan por escanear, pedir confirmacion.
+    if (_puntos.isNotEmpty && _escaneados.length < _puntos.length) {
+      final seguir = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          icon: const Icon(Icons.qr_code_scanner, color: Color(0xFFEF6C00), size: 36),
+          title: const Text('Faltan puntos'),
+          content: Text('Escaneaste ${_escaneados.length} de ${_puntos.length} puntos. ¿Guardar la ronda igual?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Seguir escaneando')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Guardar igual')),
+          ],
+        ),
+      );
+      if (seguir != true) return;
+    }
     setState(() => _saving = true);
     final s = AppState.instance;
     final db = await DB.instance.database;
+    final escaneadosDetalle = _puntos
+        .where((p) => _escaneados.contains(p['codigo']?.toString()))
+        .map((p) => {'nombre': p['nombre'], 'codigo': p['codigo']})
+        .toList();
     final id = await db.insert('rondas', {
       'guardia_id': s.userId,
       'guardia_nombre': s.userNombre,
-      'puntos': jsonEncode({'fotos_ronda': _fotos}),
+      'puntos': jsonEncode({'fotos_ronda': _fotos, 'puntos_escaneados': escaneadosDetalle}),
       'observaciones': _obs.text,
       'con_novedad': 0,
       'edificio': s.edificioId,
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'rondas', '$id');
-    await Cloud.evento('Ronda', detalle: {'fotos': _fotos.length});
+    await Cloud.evento('Ronda', detalle: {
+      'fotos': _fotos.length,
+      if (_puntos.isNotEmpty) 'puntos': '${_escaneados.length}/${_puntos.length}',
+    });
 
     // Compartir las fotos por WhatsApp con el mensaje de la ronda.
     final guardia = s.userNombre ?? 'Guardia';
@@ -152,6 +213,39 @@ class _RondaScreenState extends State<RondaScreen> {
                 ),
             ],
           ),
+          // Puntos de control (solo si el edificio los tiene configurados).
+          if (_puntos.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Row(children: [
+              const Icon(Icons.qr_code_scanner, color: Color(0xFF6A1B9A)),
+              const SizedBox(width: 8),
+              Text('Puntos: ${_escaneados.length}/${_puntos.length}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            ]),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6A1B9A), minimumSize: const Size.fromHeight(48)),
+              onPressed: _escanearPunto,
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('Escanear punto de control'),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final pt in _puntos)
+                  Chip(
+                    avatar: Icon(
+                      _escaneados.contains(pt['codigo']?.toString()) ? Icons.check_circle : Icons.radio_button_unchecked,
+                      color: _escaneados.contains(pt['codigo']?.toString()) ? AppColors.verde : Colors.grey,
+                      size: 18,
+                    ),
+                    label: Text(pt['nombre']?.toString() ?? ''),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 16),
           TextField(controller: _obs, maxLines: 3,
               decoration: const InputDecoration(labelText: 'Observaciones / novedades', alignLabelWithHint: true)),

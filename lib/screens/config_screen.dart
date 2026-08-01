@@ -8,6 +8,7 @@ import '../services/auth_service.dart';
 import '../services/excel_import.dart';
 import '../services/notifications_service.dart';
 import '../theme.dart';
+import 'puntos_control_screen.dart';
 
 class ConfigScreen extends StatefulWidget {
   const ConfigScreen({super.key});
@@ -566,6 +567,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     style: TextStyle(fontSize: 11, color: Colors.black54)),
               ),
             ]),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.qr_code_2, color: Color(0xFF6A1B9A)),
+              title: const Text('Puntos de ronda (QR) — opcional'),
+              subtitle: const Text('Define puntos e imprime sus QR. Solo aparece en la ronda si hay puntos.'),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PuntosControlScreen())),
+            ),
           ),
           const SizedBox(height: 16),
           const Text('Borrado automático de datos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),

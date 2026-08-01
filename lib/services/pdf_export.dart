@@ -279,6 +279,49 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Reporte de guardias OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
   }
 
+  /// PDF con los QR de los puntos de control, para imprimir y pegar en cada punto.
+  static Future<void> puntosControl(List<Map<String, dynamic>> puntos) async {
+    final doc = pw.Document();
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(24),
+      build: (ctx) => [
+        pw.Text('OSIRIS · Puntos de control de ronda',
+            style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold, color: _navy)),
+        pw.Text('Edificio: ${AppState.instance.edificioNombre}. Pega cada QR en su punto; el guardia lo escanea al pasar.',
+            style: const pw.TextStyle(fontSize: 10)),
+        pw.SizedBox(height: 14),
+        pw.Wrap(
+          spacing: 18,
+          runSpacing: 18,
+          children: [
+            for (final p in puntos)
+              pw.Container(
+                width: 150,
+                padding: const pw.EdgeInsets.all(10),
+                decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey400)),
+                child: pw.Column(children: [
+                  pw.BarcodeWidget(
+                    barcode: pw.Barcode.qrCode(),
+                    data: p['codigo']?.toString() ?? '',
+                    width: 120, height: 120,
+                  ),
+                  pw.SizedBox(height: 8),
+                  pw.Text(p['nombre']?.toString() ?? '',
+                      textAlign: pw.TextAlign.center,
+                      style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+                ]),
+              ),
+          ],
+        ),
+      ],
+    ));
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Puntos_Ronda_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'Puntos de control OSIRIS - ${AppState.instance.edificioNombre}');
+  }
+
   static pw.Widget _portada(String periodo, String fecha) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(16),

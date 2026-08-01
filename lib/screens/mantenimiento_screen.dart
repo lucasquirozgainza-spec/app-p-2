@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
@@ -38,6 +39,36 @@ class _MantenimientoScreenState extends State<MantenimientoScreen> {
     _load();
   }
 
+  void _detalle(Map<String, dynamic> x) {
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(x['created_at'] as String));
+    final foto = x['foto_antes']?.toString() ?? '';
+    final tieneFoto = foto.isNotEmpty && File(foto).existsSync();
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('${x['tipo']} · ${x['lugar'] ?? ''}'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (tieneFoto)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: GestureDetector(
+                  onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto))))),
+                  child: ClipRRect(borderRadius: BorderRadius.circular(10),
+                      child: Image.file(File(foto), height: 180, width: double.infinity, fit: BoxFit.cover)),
+                ),
+              ),
+            Text(x['observaciones']?.toString() ?? 'Sin observaciones', style: const TextStyle(fontSize: 15)),
+            const SizedBox(height: 10),
+            Text('Estado: ${x['estado']}', style: const TextStyle(color: Colors.black54, fontSize: 12)),
+            Text('Fecha: $fecha', style: const TextStyle(color: Colors.black54, fontSize: 12)),
+          ]),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+      ),
+    );
+  }
+
   Color _colorEstado(String? e) {
     switch (e) {
       case 'finalizado':
@@ -73,6 +104,7 @@ class _MantenimientoScreenState extends State<MantenimientoScreen> {
                 final hora = DateFormat('dd/MM HH:mm').format(DateTime.parse(x['created_at'] as String));
                 return Card(
                   child: ListTile(
+                    onTap: () => _detalle(x),
                     leading: CircleAvatar(
                       backgroundColor: _colorEstado(x['estado'] as String?).withOpacity(.15),
                       child: Icon(Icons.build, color: _colorEstado(x['estado'] as String?)),

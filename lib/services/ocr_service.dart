@@ -37,6 +37,17 @@ class OcrService {
     return null;
   }
 
+  /// Lee la placa de un vehiculo (Bolivia): 3-4 digitos + 3 letras, o al reves.
+  static Future<String?> leerPlaca(String path) async {
+    final texto = (await leerTexto(path)).toUpperCase();
+    final limpio = texto.replaceAll(RegExp(r'[^A-Z0-9\n ]'), ' ');
+    final p1 = RegExp(r'(\d{3,4})\s*-?\s*([A-Z]{3})').firstMatch(limpio);
+    if (p1 != null) return '${p1.group(1)}${p1.group(2)}';
+    final p2 = RegExp(r'([A-Z]{3})\s*-?\s*(\d{3,4})').firstMatch(limpio);
+    if (p2 != null) return '${p2.group(1)}${p2.group(2)}';
+    return null;
+  }
+
   /// Analiza el texto de un carnet boliviano (nuevo o antiguo) y devuelve CI y nombre.
   static CarnetData parseCarnet(String texto) {
     final up = texto.toUpperCase();
