@@ -459,10 +459,38 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     final otros = contactos.where((c) =>
         !(pred != null && c['nombre'] == pred['nombre'] && c['tel'] == pred['tel'])).toList();
 
+    // Fila compacta para cada residente: nombre + iconos pequeños (contactar /
+    // autorizó). Sin doble fila, directo y minimalista.
+    Widget filaResidente(Map<String, dynamic> c) {
+      final tel = (c['tel']?.toString() ?? '').trim();
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(children: [
+          Expanded(
+            child: Text('${c['nombre']}  ·  ${c['rol']}',
+                maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
+          ),
+          if (tel.isNotEmpty)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.sms, color: AppColors.verde, size: 22),
+              tooltip: 'Anunciar visita',
+              onPressed: () => _anunciar(c['nombre'].toString(), tel, depto),
+            ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.check_circle, color: Color(0xFF1565C0), size: 24),
+            tooltip: 'Autorizó',
+            onPressed: () => _elegir(c['nombre'].toString()),
+          ),
+        ]),
+      );
+    }
+
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         title: Text('Depto $depto'),
         content: SizedBox(
           width: double.maxFinite,
@@ -479,57 +507,33 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
                   child: FilledButton.icon(
                     style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(46)),
                     onPressed: () => _anunciar(pred!['nombre'].toString(), pred!['tel'].toString(), depto),
-                    icon: const Icon(Icons.chat, size: 18),
+                    icon: const Icon(Icons.sms, size: 18),
                     label: const Text('Anunciar visita'),
                   ),
                 ),
                 const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () { Navigator.pop(context); Contacto.llamar(context, pred!['tel'].toString()); },
-                    icon: const Icon(Icons.call, size: 18),
-                    label: const Text('Llamar'),
+                Row(children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () { Navigator.pop(context); Contacto.llamar(context, pred!['tel'].toString()); },
+                      icon: const Icon(Icons.call, size: 18),
+                      label: const Text('Llamar'),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
-                        minimumSize: const Size.fromHeight(44)),
-                    onPressed: () => _elegir(pred!['nombre'].toString()),
-                    icon: const Icon(Icons.check, size: 18),
-                    label: const Text('Poner como quien autoriza'),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1565C0)),
+                      onPressed: () => _elegir(pred!['nombre'].toString()),
+                      icon: const Icon(Icons.check, size: 18),
+                      label: const Text('Autorizó'),
+                    ),
                   ),
-                ),
+                ]),
               ],
               if (otros.isNotEmpty) ...[
-                const Divider(),
-                const Text('Otros del depto', style: TextStyle(color: Colors.black54, fontSize: 12)),
-                for (final c in otros)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text('${c['nombre']}  ·  ${c['rol']}',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    trailing: (c['tel']?.toString() ?? '').trim().isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.chat, color: AppColors.verde),
-                            tooltip: 'Anunciar visita',
-                            onPressed: () => _anunciar(c['nombre'].toString(), c['tel'].toString(), depto),
-                          )
-                        : FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                                backgroundColor: const Color(0xFF1565C0),
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4)),
-                            onPressed: () => _elegir(c['nombre'].toString()),
-                            icon: const Icon(Icons.check, size: 16),
-                            label: const Text('Elegir'),
-                          ),
-                  ),
+                const Divider(height: 18),
+                for (final c in otros) filaResidente(c),
               ],
               if (pred == null && otros.isEmpty)
                 const Padding(padding: EdgeInsets.all(8), child: Text('No hay personas registradas para ese departamento.')),
@@ -579,6 +583,9 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'visitas', '$id', detalle: _nombre.text);
+    // Subir una foto comprimida a la nube para verla desde otros equipos.
+    final fotoNube = _carnetAnverso ?? _fotoTarjeta ?? _carnetReverso;
+    final fotoUrl = fotoNube != null ? await Cloud.subirFoto(fotoNube) : null;
     await Cloud.evento('Visita', detalle: {
       'nombre': _nombre.text.trim(),
       'ci': _ci.text.trim(),
@@ -587,6 +594,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'placa': _tieneVehiculo ? _placa.text.trim() : '',
       'tarjeta': _tarjetaNum.text.trim(),
       'motivo': _motivo.text.trim(),
+      if (fotoUrl != null) 'foto_url': fotoUrl,
     });
     if (!mounted) return;
     Navigator.pop(context);

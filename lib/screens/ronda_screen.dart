@@ -8,7 +8,6 @@ import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../services/dvr.dart';
-import '../services/pdf_export.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
 import 'camera_screen.dart';
@@ -112,46 +111,27 @@ class _RondaScreenState extends State<RondaScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'rondas', '$id');
-    await Cloud.evento('Ronda', detalle: {
-      'fotos': _fotos.length,
-      if (_puntos.isNotEmpty) 'puntos': '${_escaneados.length}/${_puntos.length}',
-    });
 
-    // Compartir las fotos por WhatsApp con el mensaje de la ronda.
+    // Subida a la nube en SEGUNDO PLANO (no demora el WhatsApp): sube hasta 6
+    // fotos comprimidas para verlas desde otros equipos y publica el evento.
+    final fotosCopia = List<String>.from(_fotos);
+    final puntosTxt = _puntos.isNotEmpty ? '${_escaneados.length}/${_puntos.length}' : null;
+    () async {
+      final fotosUrl = await Cloud.subirFotos(fotosCopia, max: 6);
+      await Cloud.evento('Ronda', detalle: {
+        'fotos': fotosCopia.length,
+        if (puntosTxt != null) 'puntos': puntosTxt,
+        if (fotosUrl.isNotEmpty) 'fotos_url': fotosUrl,
+      });
+    }();
+
+    // Compartir las fotos por WhatsApp en 1 clic, a la resolución máxima.
     final guardia = s.userNombre ?? 'Guardia';
     final msg = _obs.text.trim().isEmpty
         ? 'Ronda sin novedad - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}'
         : 'Ronda: ${_obs.text.trim()} - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}';
-    if (!mounted) return;
-    setState(() => _saving = false);
-    // El guardia elige cómo compartir. El PDF va como documento y conserva TODA
-    // la calidad (WhatsApp no recomprime documentos); las imágenes sueltas
-    // WhatsApp las recomprime salvo que se envíen como "documento".
-    final modo = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: const Icon(Icons.share, color: AppColors.verde, size: 36),
-        title: const Text('Compartir fotos de la ronda'),
-        content: const Text('Para que las fotos lleguen con TODA la calidad por '
-            'WhatsApp, envíalas como PDF (se manda como documento y no se '
-            'recomprime). También puedes enviarlas como imágenes.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, 'img'), child: const Text('Imágenes')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
-            onPressed: () => Navigator.pop(context, 'pdf'),
-            child: const Text('PDF alta calidad'),
-          ),
-        ],
-      ),
-    );
     try {
-      if (modo == 'img') {
-        await Share.shareXFiles(_fotos.map((f) => XFile(f)).toList(), text: msg);
-      } else if (modo == 'pdf') {
-        final titulo = 'Ronda $guardia ${DateFormat('dd/MM HH:mm').format(DateTime.now())}';
-        await PdfExport.fotosRondaAltaCalidad(_fotos, titulo, msg);
-      }
+      await Share.shareXFiles(_fotos.map((f) => XFile(f)).toList(), text: msg);
     } catch (_) {}
 
     if (!mounted) return;

@@ -148,10 +148,12 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'encomiendas', '$id');
+    final fotoUrl = _foto != null ? await Cloud.subirFoto(_foto!) : null;
     await Cloud.evento('Encomienda', detalle: {
       'depto': _depto.text.trim(),
       'destinatario': _dest.text.trim(),
       'empresa': _empresa.text.trim(),
+      if (fotoUrl != null) 'foto_url': fotoUrl,
     });
     if (!mounted) return;
     await _avisarDepto();

@@ -56,11 +56,13 @@ class _BootState extends State<_Boot> {
 
   void _tareasEnSegundoPlano() async {
     try {
-      await Retention.purgar();
-    } catch (_) {}
-    try {
       await Cloud.init();
       await Cloud.heartbeat();
+    } catch (_) {}
+    // La purga (local + nube) corre DESPUÉS de iniciar la nube, así el borrado
+    // de fotos viejas en Supabase Storage se ejecuta cada vez que se abre la app.
+    try {
+      await Retention.purgar();
     } catch (_) {}
     try {
       await Notificaciones.programarRondas();

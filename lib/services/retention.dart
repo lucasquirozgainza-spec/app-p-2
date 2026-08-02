@@ -26,6 +26,8 @@ class Retention {
       } catch (_) {}
     }
     await _borrarArchivos(dias);
+    // Limpiar tambien las fotos viejas en la nube (Storage).
+    try { await Cloud.limpiarStorage(dias); } catch (_) {}
   }
 
   /// Tablas que se vacían por completo con "Eliminar todo ahora".
@@ -50,9 +52,12 @@ class Retention {
     }
     // Borrar TODAS las fotos/grabaciones (sin importar la fecha), menos PDF.
     await _borrarTodosArchivos();
-    // Limpiar los eventos de la nube de este edificio (no bloquea si no hay red).
+    // Limpiar los eventos y las fotos de la nube de este edificio.
     try {
       await Cloud.borrarEventos(edificio: AppState.instance.edificioId);
+    } catch (_) {}
+    try {
+      await Cloud.borrarStorageEdificio();
     } catch (_) {}
     return total;
   }

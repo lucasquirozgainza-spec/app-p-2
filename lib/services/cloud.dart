@@ -1,7 +1,24 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'app_state.dart';
+
+/// Comprime una foto para la nube: máx 1080 px y JPEG calidad 55 (~80-150 KB).
+/// Se ejecuta en un isolate (compute) para no trabar la interfaz.
+Uint8List? _comprimirFotoBytes(Uint8List input) {
+  try {
+    final decoded = img.decodeImage(input);
+    if (decoded == null) return null;
+    final resized = decoded.width > 1080 ? img.copyResize(decoded, width: 1080) : decoded;
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 55));
+  } catch (_) {
+    return null;
+  }
+}
 
 /// Capa ONLINE con REST directo a Supabase (PostgREST).
 ///
@@ -187,5 +204,105 @@ class Cloud {
       lastError = 'presencia: $e';
       return [];
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // ALMACENAMIENTO DE FOTOS (Supabase Storage, bucket "osiris")
+  // Sube una copia COMPRIMIDA (para ver entre dispositivos). El original en
+  // máxima calidad se queda en el teléfono y se comparte por WhatsApp.
+  // ---------------------------------------------------------------------------
+  static const String _storage = '$url/storage/v1';
+  static const String bucket = 'osiris';
+
+  static String _edSafe() =>
+      AppState.instance.edificioId.replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
+
+  /// Sube UNA foto comprimida y devuelve su URL pública (o null si falla).
+  static Future<String?> subirFoto(String path, {String sufijo = ''}) async {
+    try {
+      final f = File(path);
+      if (!await f.exists()) return null;
+      final raw = await f.readAsBytes();
+      final small = await compute(_comprimirFotoBytes, raw) ?? raw;
+      final name = '${_edSafe()}/${DateTime.now().millisecondsSinceEpoch}_$deviceId$sufijo.jpg';
+      final r = await http
+          .post(Uri.parse('$_storage/object/$bucket/$name'),
+              headers: {'apikey': anonKey, 'Content-Type': 'image/jpeg', 'x-upsert': 'true'},
+              body: small)
+          .timeout(const Duration(seconds: 30));
+      if (r.statusCode >= 300) {
+        lastError = 'subirFoto ${r.statusCode}: ${r.body}';
+        return null;
+      }
+      return '$_storage/object/public/$bucket/$name';
+    } catch (e) {
+      lastError = 'subirFoto: $e';
+      return null;
+    }
+  }
+
+  /// Sube varias fotos (hasta [max]) y devuelve la lista de URLs subidas.
+  static Future<List<String>> subirFotos(List<String> paths, {int max = 6}) async {
+    final urls = <String>[];
+    for (int i = 0; i < paths.length && i < max; i++) {
+      final u = await subirFoto(paths[i], sufijo: '_$i');
+      if (u != null) urls.add(u);
+    }
+    return urls;
+  }
+
+  /// Borra del Storage las fotos del edificio con más de [dias] días.
+  static Future<void> limpiarStorage(int dias) async {
+    try {
+      final ed = _edSafe();
+      final corte = DateTime.now().subtract(Duration(days: dias)).millisecondsSinceEpoch;
+      final r = await http
+          .post(Uri.parse('$_storage/object/list/$bucket'),
+              headers: _h,
+              body: jsonEncode({'prefix': '$ed/', 'limit': 1000, 'sortBy': {'column': 'name', 'order': 'asc'}}))
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode >= 300) return;
+      final items = jsonDecode(r.body) as List;
+      final viejos = <String>[];
+      for (final it in items) {
+        final n = (it is Map ? it['name']?.toString() : null) ?? '';
+        final millis = int.tryParse(n.split('_').first) ?? 0;
+        if (millis > 0 && millis < corte) viejos.add('$ed/$n');
+      }
+      await _borrarObjetos(viejos);
+    } catch (e) {
+      lastError = 'limpiarStorage: $e';
+    }
+  }
+
+  /// Borra TODAS las fotos del edificio en Storage (para "Eliminar todo ahora").
+  static Future<void> borrarStorageEdificio() async {
+    try {
+      final ed = _edSafe();
+      final r = await http
+          .post(Uri.parse('$_storage/object/list/$bucket'),
+              headers: _h,
+              body: jsonEncode({'prefix': '$ed/', 'limit': 1000}))
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode >= 300) return;
+      final items = jsonDecode(r.body) as List;
+      final todos = <String>[
+        for (final it in items)
+          if (it is Map && it['name'] != null) '$ed/${it['name']}'
+      ];
+      await _borrarObjetos(todos);
+    } catch (e) {
+      lastError = 'borrarStorageEdificio: $e';
+    }
+  }
+
+  static Future<void> _borrarObjetos(List<String> rutas) async {
+    if (rutas.isEmpty) return;
+    try {
+      await http
+          .delete(Uri.parse('$_storage/object/$bucket'),
+              headers: {..._h}, body: jsonEncode({'prefixes': rutas}))
+          .timeout(const Duration(seconds: 25));
+    } catch (_) {}
   }
 }
