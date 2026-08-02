@@ -34,13 +34,41 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
 
   Future<void> _load() async {
     final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    // Traer turnos activos del edificio (tolerando edificio vacío/nulo).
     final rows = await db.query('ingreso_turno',
-        where: 'edificio=? AND activo=1',
-        whereArgs: [AppState.instance.edificioId], orderBy: 'id DESC');
+        where: "activo=1 AND (edificio=? OR edificio IS NULL OR edificio='')",
+        whereArgs: [ed], orderBy: 'id DESC');
+    final list = [for (final r in rows) Map<String, dynamic>.from(r)];
+    // Garantizar que el turno del operador actual de ESTE equipo aparezca
+    // siempre, aunque su edificio no coincida (evita "no hay guardia activo").
+    final s = AppState.instance;
+    final tid = s.turnoActivoId;
+    if (tid != null && !list.any((g) => g['id'] == tid)) {
+      final extra = await db.query('ingreso_turno', where: 'id=?', whereArgs: [tid]);
+      if (extra.isNotEmpty) {
+        list.insert(0, Map<String, dynamic>.from(extra.first));
+      } else if (s.userId != null) {
+        // Red de seguridad: el turno está activo en este equipo pero no se
+        // encontró la fila local; permitir cerrarlo con los datos del operador.
+        list.insert(0, {
+          'id': tid,
+          'guardia_id': s.userId,
+          'guardia_nombre': s.userNombre,
+          'cargo': s.userCargo,
+        });
+      }
+    }
     if (!mounted) return;
     setState(() {
-      _activos = rows;
-      if (rows.length == 1) _sel = rows.first;
+      _activos = list;
+      // Preseleccionar el operador actual; si no, el único activo.
+      if (tid != null) {
+        final match = list.where((g) => g['id'] == tid).toList();
+        _sel = match.isNotEmpty ? match.first : (list.length == 1 ? list.first : null);
+      } else if (list.length == 1) {
+        _sel = list.first;
+      }
     });
   }
 
@@ -134,7 +162,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
               ],
             ),
           const SizedBox(height: 16),
-          PhotoField(label: 'Foto de salida', obligatoria: true, onChanged: (v) => setState(() => _foto = v)),
+          PhotoField(label: 'Foto de salida', obligatoria: true, rapida: true, frontal: true, album: 'OSIRIS Turnos', onChanged: (v) => setState(() => _foto = v)),
           Row(children: [
             Expanded(child: LockedField(label: 'Fecha', value: DateFormat('dd/MM/yyyy').format(_ahora), icon: Icons.calendar_today)),
             const SizedBox(width: 10),

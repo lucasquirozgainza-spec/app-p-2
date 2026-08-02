@@ -630,7 +630,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       appBar: AppBar(title: const Text('Registrar Visita')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         // PASO 1: Depto y autorizacion
-        _paso('1', 'Departamento', const Color(0xFF1565C0)),
+        _paso('1', 'Departamento', AppColors.verde),
         TextField(controller: _depto,
             decoration: const InputDecoration(
               labelText: 'Depto (ej. 303)',
@@ -660,7 +660,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           width: double.infinity,
           child: FilledButton.icon(
             onPressed: _mostrarContactos,
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF66BB6A)),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
             icon: const Icon(Icons.phone_in_talk),
             label: const Text('Llamar para autorizar'),
           ),

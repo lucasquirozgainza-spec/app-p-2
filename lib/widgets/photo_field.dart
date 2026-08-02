@@ -11,6 +11,7 @@ class PhotoField extends StatefulWidget {
   final String? initialPath;
   final bool frontal;
   final String? album;
+  final bool rapida; // true = cámara veloz 720p (selfie de turno)
 
   const PhotoField({
     super.key,
@@ -20,6 +21,7 @@ class PhotoField extends StatefulWidget {
     this.initialPath,
     this.frontal = false,
     this.album,
+    this.rapida = false,
   });
 
   @override
@@ -39,7 +41,7 @@ class _PhotoFieldState extends State<PhotoField> {
     // Cámara en la app (rápida, sin botón de aceptar).
     final res = await Navigator.push<List<String>>(
       context,
-      MaterialPageRoute(builder: (_) => CameraScreen(multi: false, frontal: widget.frontal, album: widget.album)),
+      MaterialPageRoute(builder: (_) => CameraScreen(multi: false, frontal: widget.frontal, album: widget.album, rapida: widget.rapida)),
     );
     if (res != null && res.isNotEmpty) {
       setState(() => _path = res.first);

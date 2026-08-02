@@ -444,21 +444,18 @@ class _ConfigScreenState extends State<ConfigScreen> {
           ]),
           const Padding(
             padding: EdgeInsets.only(top: 4),
-            child: Text('El Excel debe tener columnas como: Depto, Nombre/Propietario, Teléfono/Celular '
-                '(opcional: Inquilino, Parentesco). Se cargan al edificio seleccionado arriba.',
+            child: Text('Excel: Depto, Nombre, Teléfono (opcional Inquilino).',
                 style: TextStyle(fontSize: 11, color: Colors.black54)),
           ),
           const SizedBox(height: 16),
-          Text('Modulos de ${_edificios.firstWhere((e) => e['id'] == _selId, orElse: () => {'nombre': ''})['nombre']}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const Text('Activa o desactiva modulos. La misma APK sirve para cualquier condominio.',
-              style: TextStyle(color: Colors.black54, fontSize: 12)),
+          const Text('Módulos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Card(
             child: Column(
               children: [
                 for (final entry in _modLabels.entries)
                   SwitchListTile(
+                    dense: true,
                     value: _modulos[entry.key] == true,
                     onChanged: (v) => _toggle(entry.key, v),
                     title: Text(entry.value),
@@ -468,19 +465,18 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          const Text('Campos que se piden en Visitas', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const Text('Ej: en edificios sin tarjeta de acceso, apaga "Tarjeta".',
-              style: TextStyle(color: Colors.black54, fontSize: 12)),
+          const Text('Campos de Visitas', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Card(
             child: Column(children: [
               for (final e in const {
                 'v_tarjeta': 'Tarjeta de acceso',
-                'v_carnet': 'Foto del carnet (obligatoria)',
-                'v_vehiculo': 'Preguntar por vehiculo',
-                'v_motivo': 'Motivo de la visita',
+                'v_carnet': 'Foto del carnet',
+                'v_vehiculo': 'Vehículo',
+                'v_motivo': 'Motivo',
               }.entries)
                 SwitchListTile(
+                  dense: true,
                   value: _modulos[e.key] != false,
                   onChanged: (v) => _toggle(e.key, v),
                   title: Text(e.value),
@@ -488,9 +484,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 ),
               if (_modulos['v_tarjeta'] != false)
                 ListTile(
+                  dense: true,
                   leading: const Icon(Icons.pin, color: Color(0xFFEF6C00)),
                   title: const Text('Dígitos de la tarjeta'),
-                  subtitle: Text('La tarjeta de este edificio tiene $_tarjetaDigitos dígitos'),
                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                     IconButton(
                       icon: const Icon(Icons.remove_circle_outline),
@@ -509,24 +505,24 @@ class _ConfigScreenState extends State<ConfigScreen> {
           const Text('Usuarios', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.person_add, color: AppColors.azulMarino),
-              title: const Text('Crear nuevo usuario'),
-              subtitle: const Text('Admin, supervisor, guardia, conserje, limpieza'),
-              onTap: _nuevoUsuario,
-            ),
-          ),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.password, color: AppColors.azulMarino),
-              title: const Text('Cambiar contrasena de admin'),
-              onTap: _cambiarPassword,
-            ),
+            child: Column(children: [
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.person_add, color: AppColors.azulMarino),
+                title: const Text('Crear usuario'),
+                onTap: _nuevoUsuario,
+              ),
+              const Divider(height: 1),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.password, color: AppColors.azulMarino),
+                title: const Text('Cambiar contraseña de admin'),
+                onTap: _cambiarPassword,
+              ),
+            ]),
           ),
           const SizedBox(height: 16),
           const Text('Alarmas y recordatorios', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const Text('Notificaciones automaticas en el telefono del guardia.',
-              style: TextStyle(color: Colors.black54, fontSize: 12)),
           const SizedBox(height: 8),
           Card(
             child: Column(children: [
@@ -571,8 +567,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 value: AppState.instance.alarmaCandados,
                 activeColor: AppColors.verde,
                 secondary: const Icon(Icons.lock_clock, color: AppColors.rojo),
-                title: const Text('Alarma de cerrar candados (00:00)'),
-                subtitle: const Text('Recordatorio cada noche a medianoche'),
+                title: const Text('Alarma de candados (00:00)'),
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(candados: v);
                   await Notificaciones.programarRecordatorios();
@@ -584,8 +579,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 value: AppState.instance.controlUniforme,
                 activeColor: AppColors.verde,
                 secondary: const Icon(Icons.checkroom, color: AppColors.azulMarino),
-                title: const Text('Controlar uniforme al iniciar turno'),
-                subtitle: const Text('Detecta camisa roja / chaleco negro en la foto'),
+                title: const Text('Controlar uniforme'),
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(uniforme: v);
                   setState(() {});
@@ -593,9 +587,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
               ),
               const Divider(height: 1),
               ListTile(
+                dense: true,
                 leading: const Icon(Icons.notifications_active, color: Color(0xFFEF6C00)),
                 title: const Text('Probar alarma ahora'),
-                subtitle: const Text('Envía una notificación de prueba para verificar que suenan.'),
                 onTap: () async {
                   await Notificaciones.mostrarAviso('Prueba de alarma OSIRIS',
                       'Si ves esto, las notificaciones funcionan. Recuerda desactivar el ahorro de batería para OSIRIS.');
@@ -605,8 +599,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
           ),
           const SizedBox(height: 16),
           const Text('Rondas y turnos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const Text('Fotos por ronda y horario de este dispositivo.',
-              style: TextStyle(color: Colors.black54, fontSize: 12)),
           const SizedBox(height: 8),
           Card(
             child: Column(children: [
@@ -635,43 +627,40 @@ class _ConfigScreenState extends State<ConfigScreen> {
               ),
               const Divider(height: 1),
               ListTile(
+                dense: true,
                 leading: const Icon(Icons.login, color: AppColors.verde),
-                title: const Text('Horario de ingreso (este dispositivo)'),
+                title: const Text('Horario de ingreso'),
                 subtitle: Text(AppState.instance.turnoIngreso.isEmpty ? 'Sin definir' : AppState.instance.turnoIngreso),
                 trailing: const Icon(Icons.schedule),
                 onTap: () => _pickHora(true),
               ),
               const Divider(height: 1),
               ListTile(
+                dense: true,
                 leading: const Icon(Icons.logout, color: AppColors.rojo),
-                title: const Text('Horario de salida (este dispositivo)'),
+                title: const Text('Horario de salida'),
                 subtitle: Text(AppState.instance.turnoSalida.isEmpty ? 'Sin definir' : AppState.instance.turnoSalida),
                 trailing: const Icon(Icons.schedule),
                 onTap: () => _pickHora(false),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Text('Los turnos se calculan de 12 horas; lo que pase de 12 h cuenta como hora extra.',
-                    style: TextStyle(fontSize: 11, color: Colors.black54)),
               ),
             ]),
           ),
           const SizedBox(height: 8),
           Card(
             child: ListTile(
+              dense: true,
               leading: const Icon(Icons.qr_code_2, color: Color(0xFF6A1B9A)),
-              title: const Text('Puntos de ronda (QR) — opcional'),
-              subtitle: const Text('Define puntos e imprime sus QR. Solo aparece en la ronda si hay puntos.'),
+              title: const Text('Puntos de ronda (QR)'),
+              subtitle: const Text('Opcional'),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PuntosControlScreen())),
             ),
           ),
           const SizedBox(height: 16),
-          const Text('Borrado automático de datos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const Text('Todo lo que registra la app (con sus fotos y videos) se borra al pasar este tiempo. '
-              'Los PDF descargados se conservan.', style: TextStyle(color: Colors.black54, fontSize: 12)),
+          const Text('Datos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Card(
             child: ListTile(
+              dense: true,
               leading: const Icon(Icons.auto_delete, color: AppColors.rojo),
               title: const Text('Conservar datos por'),
               subtitle: Text('${(AppState.instance.retencionDias / 30).round()} mes(es)  ·  ${AppState.instance.retencionDias} días'),
@@ -701,12 +690,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
           Card(
             color: const Color(0x0FC62828),
             child: ListTile(
+              dense: true,
               leading: const Icon(Icons.delete_forever, color: AppColors.rojo),
               title: const Text('Eliminar todo ahora'),
-              subtitle: const Text('Borra YA todos los registros y datos de prueba '
-                  '(visitas, rondas, turnos, propietarios, residentes, encomiendas, '
-                  'fotos y videos). NO borra los guardias ni las cámaras. Los guardias '
-                  'se eliminan en su apartado.'),
+              subtitle: const Text('Borra registros y datos de prueba (no los guardias).'),
               trailing: const Icon(Icons.chevron_right),
               onTap: _eliminarTodoAhora,
             ),
@@ -716,18 +703,20 @@ class _ConfigScreenState extends State<ConfigScreen> {
           const SizedBox(height: 8),
           Card(
             child: ListTile(
+              dense: true,
               leading: const Icon(Icons.notifications_active, color: Color(0xFFEF6C00)),
               title: const Text('Aviso de incidentes al admin'),
-              subtitle: const Text('WhatsApp o correo automatico cuando se reporta un incidente'),
+              subtitle: const Text('WhatsApp o correo'),
               onTap: _configAvisos,
             ),
           ),
           const SizedBox(height: 24),
           const Card(
             child: ListTile(
+              dense: true,
               leading: Icon(Icons.info_outline, color: Colors.blueGrey),
-              title: Text('OSIRIS v1.0'),
-              subtitle: Text('Base de datos local (SQLite). Preparada para sincronizar con Firebase.'),
+              title: Text('OSIRIS'),
+              subtitle: Text('Base de datos local'),
             ),
           ),
         ],

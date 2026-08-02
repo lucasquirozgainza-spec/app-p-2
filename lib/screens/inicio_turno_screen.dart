@@ -231,7 +231,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
                   _sel = _guardias.firstWhere((g) => g['id'] == id)),
             ),
           const SizedBox(height: 16),
-          PhotoField(key: ValueKey(_fotoKey), label: 'Foto del guardia (selfie)', obligatoria: true, frontal: true, album: 'OSIRIS Turnos', onChanged: _onFoto),
+          PhotoField(key: ValueKey(_fotoKey), label: 'Foto del guardia (selfie)', obligatoria: true, frontal: true, rapida: true, album: 'OSIRIS Turnos', onChanged: _onFoto),
           if (_revisando)
             const Padding(
               padding: EdgeInsets.only(bottom: 8),

@@ -17,7 +17,8 @@ class CameraScreen extends StatefulWidget {
   final int minFotos;
   final bool frontal;
   final String? album;
-  const CameraScreen({super.key, this.multi = false, this.minFotos = 0, this.frontal = false, this.album});
+  final bool rapida; // true = 720p rápido (selfie de turno). No para documentos.
+  const CameraScreen({super.key, this.multi = false, this.minFotos = 0, this.frontal = false, this.album, this.rapida = false});
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -76,10 +77,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // Rondas (multi): MÁXIMA resolución de la cámara (de ahí se sacan los
-      // detalles de los sucesos). Documentos (tarjeta/carnet): veryHigh ≈ 1080p,
-      // nítido y rápido para el OCR.
-      final preset = widget.multi ? ResolutionPreset.max : ResolutionPreset.veryHigh;
+      // Rondas (multi): MÁXIMA resolución (de ahí se sacan los detalles).
+      // Selfie de ingreso/salida (rapida): 720p, veloz. Documentos
+      // (tarjeta/carnet): veryHigh ≈ 1080p, nítido para el OCR.
+      final preset = widget.multi
+          ? ResolutionPreset.max
+          : (widget.rapida ? ResolutionPreset.high : ResolutionPreset.veryHigh);
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
@@ -127,10 +130,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // Para documentos (foto única: tarjeta/carnet/placa) forzamos el enfoque
-      // en el punto elegido y le damos un instante para que la lente enfoque
-      // el texto de cerca antes de disparar. En modo ronda no se espera.
-      if (!widget.multi) {
+      // Para documentos (tarjeta/carnet/placa) forzamos el enfoque en el punto
+      // elegido y le damos un instante para que la lente enfoque el texto de
+      // cerca antes de disparar. En ronda y en la selfie rápida NO se espera.
+      final enfocarDoc = !widget.multi && !widget.rapida;
+      if (enfocarDoc) {
         try {
           await c.setFocusMode(FocusMode.auto);
           await c.setFocusPoint(_focusNorm);
@@ -140,7 +144,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         } catch (_) {}
       }
       final XFile shot = await c.takePicture();
-      if (!widget.multi) {
+      if (enfocarDoc) {
         try { await c.setFocusMode(FocusMode.auto); } catch (_) {}
       }
       final dir = await getApplicationDocumentsDirectory();
