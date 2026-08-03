@@ -6,11 +6,11 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
-import '../services/native_cam.dart';
 import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/depto_field.dart';
 import '../widgets/toast.dart';
+import 'camera_screen.dart';
 
 // WhatsApp es la forma mas comun de confirmar hospedaje -> por defecto.
 const _plataformas = ['WhatsApp', 'Airbnb', 'Booking', 'Directo', 'Otro'];
@@ -228,33 +228,33 @@ class _HospedajeFormState extends State<HospedajeForm> {
 
   Future<void> _fotosDoc(_Huesped h) async {
     final carnet = h.tipo == 'Carnet';
-    // Cámara NATIVA (rápida, buen enfoque). Carnet: anverso + reverso.
-    final a = await NativeCam.foto(album: 'OSIRIS Documentos');
-    if (a == null) return;
-    final fotos = <String>[a];
-    if (carnet) {
-      if (mounted) TopToast.show(context, 'Ahora el reverso del carnet');
-      final b = await NativeCam.foto(album: 'OSIRIS Documentos');
-      if (b != null) fotos.add(b);
-    }
-    if (!mounted) return;
-    setState(() { h.fotos = fotos; h.leyendo = true; });
-    // OCR: autocompletar nombre (y número si es pasaporte).
-    String texto = '';
-    for (final f in fotos) {
-      texto = '$texto\n${await OcrService.leerTexto(f)}';
-    }
-    if (carnet) {
-      final d = OcrService.parseCarnet(texto);
-      if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
-    } else {
-      final d = OcrService.parsePasaporte(texto);
-      if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
-      if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
-    }
-    if (!mounted) return;
-    setState(() => h.leyendo = false);
-    TopToast.show(context, 'Documento leído. Revisa el nombre.');
+    // Cámara propia, sin confirmar cada foto. Carnet: 2 lados en una sesión.
+    final res = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CameraScreen(multi: carnet, minFotos: carnet ? 2 : 0, album: 'OSIRIS Documentos'),
+      ),
+    );
+    if (res == null || res.isEmpty) return;
+    setState(() { h.fotos = res; h.leyendo = true; });
+    // OCR en SEGUNDO PLANO: autocompleta nombre (y número si es pasaporte).
+    () async {
+      String texto = '';
+      for (final f in res) {
+        texto = '$texto\n${await OcrService.leerTexto(f)}';
+      }
+      if (carnet) {
+        final d = OcrService.parseCarnet(texto);
+        if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
+      } else {
+        final d = OcrService.parsePasaporte(texto);
+        if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
+        if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
+      }
+      if (!mounted) return;
+      setState(() => h.leyendo = false);
+      TopToast.show(context, 'Documento leído. Revisa el nombre.');
+    }();
   }
 
   Future<void> _guardar() async {

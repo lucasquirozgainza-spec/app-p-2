@@ -9,7 +9,7 @@ import '../services/cloud.dart';
 import '../services/contact_launch.dart';
 import '../services/contactos_repo.dart';
 import '../services/ocr_service.dart';
-import '../services/native_cam.dart';
+import 'camera_screen.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
@@ -309,61 +309,58 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
-  /// Captura la tarjeta y la re-lee automaticamente: si el OCR no obtiene los
-  /// digitos configurados (LIMCO=10, otros edificios distinto), vuelve a abrir
-  /// la camara sola hasta leerla bien. El guardia puede salir con "atras".
+  /// Captura la tarjeta (cámara propia, sin confirmar) y lee el número en
+  /// SEGUNDO PLANO para no demorar. Si no lo lee, avisa para repetir manual.
   Future<void> _capturarTarjeta() async {
+    final res = await Navigator.push<List<String>>(
+        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Tarjetas')));
+    if (res == null || res.isEmpty) return;
+    final path = res.first;
     final dig = AppState.instance.tarjetaDigitos;
-    while (mounted) {
-      // Cámara NATIVA del celular: enfoca rápido y bien de cerca.
-      final path = await NativeCam.foto(album: 'OSIRIS Tarjetas');
-      if (path == null) return; // el guardia cancelo
-      if (!mounted) return;
-      setState(() {
-        _fotoTarjeta = path;
-        _ocrLeyendo = true;
-      });
+    setState(() => _fotoTarjeta = path);
+    // OCR en segundo plano.
+    () async {
       final num = await OcrService.leerNumero(path, digitos: dig);
       if (!mounted) return;
-      setState(() {
-        _ocrLeyendo = false;
-        _tarjetaNum.text = (num != null && num.length == dig) ? num : '';
-      });
       if (num != null && num.length == dig) {
-        TopToast.show(context, 'N° de tarjeta detectado: $num');
-        return; // leida OK
+        setState(() => _tarjetaNum.text = num);
+        TopToast.show(context, 'N° de tarjeta: $num');
+      } else {
+        TopToast.show(context, 'No se leyó la tarjeta, escríbela o repite la foto',
+            color: AppColors.rojo, icon: Icons.error_outline);
       }
-      // No se leyeron los digitos: avisar y volver a la camara automaticamente.
-      TopToast.show(context, 'No se leyeron los $dig dígitos, repite la foto',
-          color: AppColors.rojo, icon: Icons.error_outline);
-      await Future.delayed(const Duration(milliseconds: 700));
-    }
+    }();
   }
 
-  /// Captura los DOS lados del carnet con la cámara nativa y lee CI+nombre.
+  /// Captura los DOS lados del carnet en UNA sola sesión (sin reabrir) y lee
+  /// CI+nombre en SEGUNDO PLANO para no demorar el registro.
   Future<void> _capturarCarnet() async {
-    final anverso = await NativeCam.foto(album: 'OSIRIS Carnet');
-    if (anverso == null) return;
-    if (mounted) TopToast.show(context, 'Ahora el reverso del carnet');
-    final reverso = await NativeCam.foto(album: 'OSIRIS Carnet');
-    _carnetAnverso = anverso;
-    _carnetReverso = reverso;
-    final fotos = [anverso, if (reverso != null) reverso];
-    setState(() => _ocrLeyendo = true);
-    _carnetTexto = '';
-    for (final path in fotos) {
-      _carnetTexto = '$_carnetTexto\n${await OcrService.leerTexto(path)}';
-    }
-    final data = OcrService.parseCarnet(_carnetTexto);
-    if (!mounted) return;
+    final res = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
+    );
+    if (res == null || res.isEmpty) return;
     setState(() {
-      _ocrLeyendo = false;
-      if (data.ci != null) _ci.text = data.ci!;
-      if (data.nombre != null) _nombre.text = data.nombre!;
+      _carnetAnverso = res.isNotEmpty ? res[0] : null;
+      _carnetReverso = res.length > 1 ? res[1] : null;
     });
-    if (data.ci != null || data.nombre != null) {
-      TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
-    }
+    // OCR en segundo plano: no bloquea el formulario.
+    () async {
+      String texto = '';
+      for (final path in res) {
+        texto = '$texto\n${await OcrService.leerTexto(path)}';
+      }
+      final data = OcrService.parseCarnet(texto);
+      if (!mounted) return;
+      _carnetTexto = texto;
+      setState(() {
+        if (data.ci != null) _ci.text = data.ci!;
+        if (data.nombre != null) _nombre.text = data.nombre!;
+      });
+      if (data.ci != null || data.nombre != null) {
+        TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
+      }
+    }();
   }
 
   /// Lee el carnet (anverso o reverso), acumula el texto y llena CI y nombre.

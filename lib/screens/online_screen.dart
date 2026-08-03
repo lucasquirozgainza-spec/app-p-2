@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
 import '../services/pdf_export.dart';
@@ -23,6 +24,8 @@ class _OnlineScreenState extends State<OnlineScreen> {
   List<Map<String, dynamic>> _presencia = [];
   List<Map<String, dynamic>> _eventos = [];
   List<Map<String, dynamic>> _turnos = [];
+  List<Map<String, dynamic>> _edificios = []; // para el filtro del admin
+  String? _edAdmin; // edificio seleccionado por el admin (null = todos)
   String? _filtro; // null = todos
   bool _loading = true;
 
@@ -33,6 +36,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
   @override
   void initState() {
     super.initState();
+    if (!widget.soloEdificio) _cargarEdificios();
     _cargar();
     // Actualiza solo cada 15 s (vinculación automática entre celulares).
     _auto = Timer.periodic(const Duration(seconds: 15), (_) => _cargar(silencioso: true));
@@ -44,7 +48,24 @@ class _OnlineScreenState extends State<OnlineScreen> {
     super.dispose();
   }
 
-  String? get _edFiltro => widget.soloEdificio ? AppState.instance.edificioId : null;
+  Future<void> _cargarEdificios() async {
+    try {
+      final db = await DB.instance.database;
+      final eds = await db.query('edificios', orderBy: 'nombre');
+      if (!mounted) return;
+      setState(() => _edificios = eds);
+    } catch (_) {}
+  }
+
+  // Guardia: siempre su edificio. Admin: el edificio elegido (o todos).
+  String? get _edFiltro => widget.soloEdificio ? AppState.instance.edificioId : _edAdmin;
+
+  String get _tituloEd {
+    if (widget.soloEdificio) return AppState.instance.edificioNombre;
+    if (_edAdmin == null) return 'Todos los edificios';
+    final m = _edificios.firstWhere((e) => e['id'] == _edAdmin, orElse: () => const {});
+    return (m['nombre'] ?? _edAdmin).toString();
+  }
 
   Future<void> _cargar({bool silencioso = false}) async {
     if (!silencioso) setState(() => _loading = true);
@@ -73,7 +94,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
   /// SOLO descarga: genera y comparte el PDF con la actividad. No borra nada.
   Future<void> _descargarPdf() async {
     final ed = _edFiltro;
-    final titulo = widget.soloEdificio ? AppState.instance.edificioNombre : 'Todos los edificios';
+    final titulo = _tituloEd;
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
     List<Map<String, dynamic>> todos = [];
     try {
@@ -169,11 +190,15 @@ class _OnlineScreenState extends State<OnlineScreen> {
     final ed = AppState.instance.edificioId;
     final enLinea = _presencia
         .where(_online)
-        .where((p) => !widget.soloEdificio || (p['edificio']?.toString() ?? '') == ed)
+        .where((p) {
+          if (widget.soloEdificio) return (p['edificio']?.toString() ?? '') == ed;
+          if (_edAdmin != null) return (p['edificio']?.toString() ?? '') == _edAdmin;
+          return true; // admin, todos
+        })
         .toList();
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.soloEdificio ? 'Actividad del edificio' : 'En linea (todos)'),
+        title: Text(widget.soloEdificio ? 'Actividad del edificio' : _tituloEd),
         actions: [
           IconButton(
             icon: const Icon(Icons.picture_as_pdf),
@@ -212,6 +237,26 @@ class _OnlineScreenState extends State<OnlineScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
+                  // Filtro por edificio (solo admin): ver cada uno por separado.
+                  if (!widget.soloEdificio) ...[
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Todos'),
+                          selected: _edAdmin == null,
+                          onSelected: (_) { setState(() => _edAdmin = null); _cargar(); },
+                        ),
+                        for (final e in _edificios)
+                          ChoiceChip(
+                            label: Text(e['nombre']?.toString() ?? ''),
+                            selected: _edAdmin == e['id'],
+                            onSelected: (_) { setState(() => _edAdmin = e['id'] as String?); _cargar(); },
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   Row(children: [
                     const Icon(Icons.circle, color: AppColors.verde, size: 12),
                     const SizedBox(width: 6),

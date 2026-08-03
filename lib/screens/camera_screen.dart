@@ -130,23 +130,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // Para documentos (tarjeta/carnet/placa) forzamos el enfoque en el punto
-      // elegido y le damos un instante para que la lente enfoque el texto de
-      // cerca antes de disparar. En ronda y en la selfie rápida NO se espera.
-      final enfocarDoc = !widget.multi && !widget.rapida;
-      if (enfocarDoc) {
-        try {
-          await c.setFocusMode(FocusMode.auto);
-          await c.setFocusPoint(_focusNorm);
-          await c.setExposurePoint(_focusNorm);
-          await Future.delayed(const Duration(milliseconds: 550));
-          await c.setFocusMode(FocusMode.locked); // fija el enfoque logrado
-        } catch (_) {}
-      }
+      // Captura inmediata: el enfoque continuo ya está activo. Nada de esperas
+      // (antes había una pausa que hacía lenta la foto).
       final XFile shot = await c.takePicture();
-      if (enfocarDoc) {
-        try { await c.setFocusMode(FocusMode.auto); } catch (_) {}
-      }
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));
       if (!await fotosDir.exists()) await fotosDir.create(recursive: true);

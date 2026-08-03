@@ -418,9 +418,10 @@ class PdfExport {
     // Límite de seguridad: una tabla con miles de filas puede congelar el
     // teléfono al armar el PDF. Se muestran las más recientes (vienen ordenadas
     // desc) y se avisa cuántas quedaron fuera.
-    const maxFilas = 1200;
+    const maxFilas = 800;
     final recortado = eventos.length > maxFilas;
     final filas = recortado ? eventos.sublist(0, maxFilas) : eventos;
+    final tituloSeguro = _safe(titulo);
 
     final doc = pw.Document();
     final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
@@ -435,17 +436,17 @@ class PdfExport {
             style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
       ),
       build: (ctx) => [
-        _portada(titulo, fecha),
+        _portada(tituloSeguro, fecha),
         pw.SizedBox(height: 14),
         if (recortado)
           pw.Padding(
             padding: const pw.EdgeInsets.only(bottom: 8),
-            child: pw.Text('Mostrando los $maxFilas registros más recientes de ${eventos.length}.',
+            child: pw.Text('Mostrando los $maxFilas registros mas recientes de ${eventos.length}.',
                 style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
           ),
         _tabla('Actividad (${eventos.length})', ['Fecha', 'Tipo', 'Guardia', 'Edificio', 'Detalle'],
             filas.map((e) => [
-              _h(e['created_at']), _s(e['tipo']), _s(e['guardia']), _s(e['edificio']), detalleStr(e['detalle']),
+              _h(e['created_at']), _s(e['tipo']), _s(e['guardia']), _s(e['edificio']), _safe(detalleStr(e['detalle'])),
             ]).toList()),
         if (eventos.isEmpty)
           pw.Padding(padding: const pw.EdgeInsets.only(top: 20), child: pw.Text('No hay actividad en la nube.')),
@@ -583,8 +584,27 @@ class PdfExport {
         child: pw.Text(t, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: _navy)),
       );
 
+  /// Quita caracteres que la fuente PDF (Helvetica/Latin-1) no puede dibujar
+  /// (emojis, guiones largos, viñetas), que si no HACEN FALLAR la generación.
+  static String _safe(String s) {
+    final b = StringBuffer();
+    for (final r in s.runes) {
+      if (r == 0x2022 || r == 0x00B7 || r == 0x2013 || r == 0x2014) {
+        b.write('-');
+      } else if (r == 0x2018 || r == 0x2019) {
+        b.write("'");
+      } else if (r == 0x201C || r == 0x201D) {
+        b.write('"');
+      } else if (r <= 0xFF) {
+        b.writeCharCode(r);
+      }
+      // Cualquier otro (emoji, símbolos raros) se omite.
+    }
+    return b.toString();
+  }
+
   static String _s(Object? v) {
-    final s = v?.toString() ?? '';
+    final s = _safe(v?.toString() ?? '');
     return s.length > 60 ? '${s.substring(0, 60)}...' : s;
   }
 
