@@ -553,9 +553,9 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     if (pideCarnet && _carnetReverso == null) return _snack('La foto del carnet (reverso) es obligatoria');
     setState(() => _saving = true);
     final s = AppState.instance;
-    final gps = await DeviceContext.gps();
-    final disp = await DeviceContext.dispositivo();
     final db = await DB.instance.database;
+    // Guardado LOCAL inmediato (sin esperar GPS ni nube) para poder registrar
+    // al siguiente al instante. La ubicación y la nube se completan solas.
     final id = await db.insert('visitas', {
       'guardia_id': s.userId,
       'guardia_nombre': s.userNombre,
@@ -570,16 +570,13 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'motivo': _motivo.text,
       'cantidad': int.tryParse(_cantidad.text) ?? 1,
       'placa': _tieneVehiculo ? _placa.text.trim() : '',
-      'gps_lat': gps?['lat'],
-      'gps_lng': gps?['lng'],
-      'dispositivo': disp,
       'observaciones': _obs.text,
       'estado': 'dentro',
       'edificio': s.edificioId,
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'visitas', '$id', detalle: _nombre.text);
-    // Nube en SEGUNDO PLANO: no demora el registro aunque el internet sea lento.
+    // Todo lo lento (GPS, dispositivo, subir foto, evento) en SEGUNDO PLANO.
     final fotoNube = _carnetAnverso ?? _fotoTarjeta ?? _carnetReverso;
     final det = {
       'nombre': _nombre.text.trim(),
@@ -591,6 +588,13 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'motivo': _motivo.text.trim(),
     };
     () async {
+      try {
+        final gps = await DeviceContext.gps();
+        final disp = await DeviceContext.dispositivo();
+        await db.update('visitas',
+            {'gps_lat': gps?['lat'], 'gps_lng': gps?['lng'], 'dispositivo': disp},
+            where: 'id=?', whereArgs: [id]);
+      } catch (_) {}
       final fotoUrl = fotoNube != null ? await Cloud.subirFoto(fotoNube) : null;
       await Cloud.evento('Visita', detalle: {...det, if (fotoUrl != null) 'foto_url': fotoUrl});
     }();

@@ -46,6 +46,11 @@ if "<queries>" not in txt:
 # Nombre visible de la app (bajo el icono)
 txt = re.sub(r'android:label="[^"]*"', 'android:label="OSIRIS"', txt, count=1)
 
+# Más memoria para la app (cámara en alta resolución, PDF, imágenes): evita
+# cierres por falta de memoria.
+if "largeHeap" not in txt:
+    txt = txt.replace("<application", '<application android:largeHeap="true"', 1)
+
 # Icono redondo
 if "roundIcon" not in txt:
     txt = txt.replace('android:icon="@mipmap/ic_launcher"',
@@ -86,6 +91,17 @@ if src_icons.exists():
 else:
     print("Aviso: no se encontraron iconos en tools/launcher_icons")
 
+# --- Firma FIJA de release ---------------------------------------------------
+# Sin esto, cada compilacion en GitHub firma con una clave distinta y Android
+# rechaza instalar/actualizar ("aplicacion no instalada"). Copiamos un keystore
+# fijo (tools/osiris.jks) a android/app y lo usamos para firmar el release.
+KEYSTORE_SRC = pathlib.Path("tools/osiris.jks")
+if KEYSTORE_SRC.exists():
+    shutil.copyfile(KEYSTORE_SRC, "android/app/osiris.jks")
+    print("Keystore de release copiado a android/app/osiris.jks")
+else:
+    print("AVISO: no se encontro tools/osiris.jks; el release usara la clave debug (cambia cada build)")
+
 # --- minSdk + core library desugaring (requerido por flutter_local_notifications) ---
 for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
     p = pathlib.Path(g)
@@ -97,6 +113,40 @@ for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
     # minSdk 23
     b = re.sub(r"minSdk(Version)?\s*=?\s*[\w\.\(\)]+",
                "minSdk = 23" if kts else "minSdkVersion 23", b)
+
+    # Configuracion de firma de release con el keystore fijo.
+    if KEYSTORE_SRC.exists() and "osiris_signing" not in b:
+        if kts:
+            sign_block = (
+                '\n    signingConfigs {\n'
+                '        create("release") {\n'
+                '            storeFile = file("osiris.jks")  // osiris_signing\n'
+                '            storePassword = "osiris2025"\n'
+                '            keyAlias = "osiris"\n'
+                '            keyPassword = "osiris2025"\n'
+                '        }\n'
+                '    }\n'
+            )
+        else:
+            sign_block = (
+                '\n    signingConfigs {\n'
+                '        release {\n'
+                "            storeFile file('osiris.jks')  // osiris_signing\n"
+                "            storePassword 'osiris2025'\n"
+                "            keyAlias 'osiris'\n"
+                "            keyPassword 'osiris2025'\n"
+                '        }\n'
+                '    }\n'
+            )
+        # Insertar el bloque de firma justo despues de "android {".
+        b = re.sub(r"android\s*\{", "android {" + sign_block, b, count=1)
+        # Apuntar la firma del release al keystore fijo (reemplaza la debug que
+        # trae la plantilla de Flutter). No se inyectan lineas extra.
+        if kts:
+            b = b.replace('signingConfigs.getByName("debug")', 'signingConfigs.getByName("release")')
+            b = b.replace('signingConfigs.debug', 'signingConfigs.getByName("release")')
+        else:
+            b = b.replace("signingConfigs.debug", "signingConfigs.release")
 
     # Activar desugaring dentro de compileOptions
     if "coreLibraryDesugaring" not in b:
