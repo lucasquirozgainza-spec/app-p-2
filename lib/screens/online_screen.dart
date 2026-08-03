@@ -70,61 +70,53 @@ class _OnlineScreenState extends State<OnlineScreen> {
     }
   }
 
-  Future<void> _descargarYLimpiar() async {
+  /// SOLO descarga: genera y comparte el PDF con la actividad. No borra nada.
+  Future<void> _descargarPdf() async {
+    final ed = _edFiltro;
+    final titulo = widget.soloEdificio ? AppState.instance.edificioNombre : 'Todos los edificios';
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    List<Map<String, dynamic>> todos = [];
+    try {
+      todos = await Cloud.eventos(edificio: ed, limit: 1500);
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.pop(context); // cerrar spinner ANTES de compartir (evita congelarse)
+    try {
+      await PdfExport.actividadNube(todos, titulo);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: $e')));
+    }
+  }
+
+  /// SOLO elimina: borra la actividad de la nube (rápido, sin generar PDF).
+  Future<void> _eliminarNube() async {
     final alcance = widget.soloEdificio ? 'de este edificio' : 'de TODOS los edificios';
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        icon: const Icon(Icons.cleaning_services, color: Color(0xFFEF6C00), size: 38),
-        title: const Text('Descargar PDF y limpiar'),
-        content: Text('Se descargará un PDF con toda la actividad $alcance y luego se '
-            'BORRARÁ esa información de la nube para liberar espacio. '
-            'Los registros locales de cada celular no se tocan. ¿Continuar?'),
+        icon: const Icon(Icons.delete_forever, color: AppColors.rojo, size: 38),
+        title: const Text('Eliminar actividad de la nube'),
+        content: Text('Se borrará la actividad $alcance de la nube para liberar espacio. '
+            'Los registros locales de cada celular NO se tocan.\n\n'
+            'Sugerencia: descarga primero el PDF si quieres conservarla.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF6C00)),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Descargar y limpiar'),
+            child: const Text('Eliminar'),
           ),
         ],
       ),
     );
     if (ok != true) return;
-    final ed = _edFiltro;
-    final titulo = widget.soloEdificio ? AppState.instance.edificioNombre : 'Todos los edificios';
-
-    // 1) Traer los datos (con spinner que se cierra antes de compartir).
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    List<Map<String, dynamic>> todos = [];
-    try {
-      todos = await Cloud.eventos(edificio: ed, limit: 2000);
-    } catch (_) {}
+    final borrado = await Cloud.borrarEventos(edificio: _edFiltro);
     if (!mounted) return;
-    Navigator.pop(context); // cerrar spinner ANTES de compartir (evita que se congele)
-
-    // 2) Generar y compartir el PDF (la hoja de compartir queda al frente).
-    try {
-      await PdfExport.actividadNube(todos, titulo);
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: $e')));
-      return;
-    }
-
-    // 3) Limpiar la nube y avisar el resultado.
-    final borrado = await Cloud.borrarEventos(edificio: ed);
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: Icon(borrado ? Icons.check_circle : Icons.error_outline, color: borrado ? AppColors.verde : AppColors.rojo, size: 38),
-        title: Text(borrado ? 'Listo' : 'PDF generado, pero...'),
-        content: Text(borrado
-            ? 'Se descargó el PDF y se limpió la nube (${todos.length} registros).'
-            : 'El PDF se generó, pero no se pudo limpiar la nube. Detalle: ${Cloud.lastError ?? ''}'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
-      ),
-    );
+    Navigator.pop(context); // cerrar spinner
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(borrado ? 'Actividad eliminada de la nube.' : 'No se pudo eliminar: ${Cloud.lastError ?? ''}'),
+        backgroundColor: borrado ? AppColors.verde : AppColors.rojo));
     _cargar();
   }
 
@@ -184,9 +176,14 @@ class _OnlineScreenState extends State<OnlineScreen> {
         title: Text(widget.soloEdificio ? 'Actividad del edificio' : 'En linea (todos)'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.download_for_offline),
-            tooltip: 'Descargar PDF y limpiar nube',
-            onPressed: _descargarYLimpiar,
+            icon: const Icon(Icons.picture_as_pdf),
+            tooltip: 'Descargar PDF',
+            onPressed: _descargarPdf,
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_forever),
+            tooltip: 'Eliminar actividad de la nube',
+            onPressed: _eliminarNube,
           ),
           IconButton(
             icon: const Icon(Icons.wifi_find),

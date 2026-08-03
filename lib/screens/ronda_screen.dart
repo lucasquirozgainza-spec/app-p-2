@@ -187,9 +187,10 @@ class _RondaScreenState extends State<RondaScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
+            style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
             onPressed: _tomarFotos,
             icon: const Icon(Icons.camera_alt),
-            label: Text('Abrir camara - tomar fotos (${_fotos.length}/$_min)'),
+            label: Text('Abrir cámara - tomar fotos (${_fotos.length}/$_min)'),
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6),
@@ -233,7 +234,7 @@ class _RondaScreenState extends State<RondaScreen> {
             ]),
             const SizedBox(height: 8),
             FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6A1B9A), minimumSize: const Size.fromHeight(48)),
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6A1B9A), minimumSize: const Size(double.infinity, 48)),
               onPressed: _escanearPunto,
               icon: const Icon(Icons.qr_code_scanner),
               label: const Text('Escanear punto de control'),
@@ -264,7 +265,9 @@ class _RondaScreenState extends State<RondaScreen> {
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: completo ? AppColors.verde : Colors.grey),
+            style: FilledButton.styleFrom(
+                backgroundColor: completo ? AppColors.verde : Colors.grey,
+                minimumSize: const Size(double.infinity, 52)),
             onPressed: _saving ? null : _guardar,
             icon: _saving
                 ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))

@@ -9,13 +9,13 @@ import '../services/cloud.dart';
 import '../services/contact_launch.dart';
 import '../services/contactos_repo.dart';
 import '../services/ocr_service.dart';
+import '../services/native_cam.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
 import '../widgets/toast.dart';
 import '../widgets/eventos_remotos.dart';
-import 'camera_screen.dart';
 
 class VisitasScreen extends StatefulWidget {
   const VisitasScreen({super.key});
@@ -315,10 +315,9 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   Future<void> _capturarTarjeta() async {
     final dig = AppState.instance.tarjetaDigitos;
     while (mounted) {
-      final res = await Navigator.push<List<String>>(
-          context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Tarjetas')));
-      if (res == null || res.isEmpty) return; // el guardia cancelo
-      final path = res.first;
+      // Cámara NATIVA del celular: enfoca rápido y bien de cerca.
+      final path = await NativeCam.foto(album: 'OSIRIS Tarjetas');
+      if (path == null) return; // el guardia cancelo
       if (!mounted) return;
       setState(() {
         _fotoTarjeta = path;
@@ -341,18 +340,18 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     }
   }
 
-  /// Captura los DOS lados del carnet seguidos (como en rondas) y lee CI+nombre.
+  /// Captura los DOS lados del carnet con la cámara nativa y lee CI+nombre.
   Future<void> _capturarCarnet() async {
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
-    );
-    if (res == null || res.isEmpty) return;
-    _carnetAnverso = res.isNotEmpty ? res[0] : null;
-    _carnetReverso = res.length > 1 ? res[1] : null;
+    final anverso = await NativeCam.foto(album: 'OSIRIS Carnet');
+    if (anverso == null) return;
+    if (mounted) TopToast.show(context, 'Ahora el reverso del carnet');
+    final reverso = await NativeCam.foto(album: 'OSIRIS Carnet');
+    _carnetAnverso = anverso;
+    _carnetReverso = reverso;
+    final fotos = [anverso, if (reverso != null) reverso];
     setState(() => _ocrLeyendo = true);
     _carnetTexto = '';
-    for (final path in res) {
+    for (final path in fotos) {
       _carnetTexto = '$_carnetTexto\n${await OcrService.leerTexto(path)}';
     }
     final data = OcrService.parseCarnet(_carnetTexto);

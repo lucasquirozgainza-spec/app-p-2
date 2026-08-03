@@ -6,10 +6,11 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
+import '../services/native_cam.dart';
+import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/depto_field.dart';
 import '../widgets/toast.dart';
-import 'camera_screen.dart';
 
 // WhatsApp es la forma mas comun de confirmar hospedaje -> por defecto.
 const _plataformas = ['WhatsApp', 'Airbnb', 'Booking', 'Directo', 'Otro'];
@@ -181,8 +182,10 @@ class _HospedajesScreenState extends State<HospedajesScreen> {
 /// Un huésped del hospedaje: nombre completo + tipo de documento + fotos.
 class _Huesped {
   final nombre = TextEditingController();
+  final doc = TextEditingController(); // nº documento (se usa en pasaporte)
   String tipo = 'Carnet'; // Carnet (2 fotos) | Pasaporte (1 foto)
   List<String> fotos = [];
+  bool leyendo = false;
 }
 
 class HospedajeForm extends StatefulWidget {
@@ -215,6 +218,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
     _obs.dispose();
     for (final h in _huespedes) {
       h.nombre.dispose();
+      h.doc.dispose();
     }
     super.dispose();
   }
@@ -224,17 +228,33 @@ class _HospedajeFormState extends State<HospedajeForm> {
 
   Future<void> _fotosDoc(_Huesped h) async {
     final carnet = h.tipo == 'Carnet';
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CameraScreen(
-          multi: carnet, // carnet: anverso + reverso; pasaporte: una sola
-          minFotos: carnet ? 2 : 0,
-          album: 'OSIRIS Documentos',
-        ),
-      ),
-    );
-    if (res != null && res.isNotEmpty) setState(() => h.fotos = res);
+    // Cámara NATIVA (rápida, buen enfoque). Carnet: anverso + reverso.
+    final a = await NativeCam.foto(album: 'OSIRIS Documentos');
+    if (a == null) return;
+    final fotos = <String>[a];
+    if (carnet) {
+      if (mounted) TopToast.show(context, 'Ahora el reverso del carnet');
+      final b = await NativeCam.foto(album: 'OSIRIS Documentos');
+      if (b != null) fotos.add(b);
+    }
+    if (!mounted) return;
+    setState(() { h.fotos = fotos; h.leyendo = true; });
+    // OCR: autocompletar nombre (y número si es pasaporte).
+    String texto = '';
+    for (final f in fotos) {
+      texto = '$texto\n${await OcrService.leerTexto(f)}';
+    }
+    if (carnet) {
+      final d = OcrService.parseCarnet(texto);
+      if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
+    } else {
+      final d = OcrService.parsePasaporte(texto);
+      if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
+      if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
+    }
+    if (!mounted) return;
+    setState(() => h.leyendo = false);
+    TopToast.show(context, 'Documento leído. Revisa el nombre.');
   }
 
   Future<void> _guardar() async {
@@ -252,13 +272,13 @@ class _HospedajeFormState extends State<HospedajeForm> {
     final db = await DB.instance.database;
     final huespedesData = [
       for (final h in _huespedes)
-        {'nombre': h.nombre.text.trim(), 'tipo': h.tipo, 'fotos': h.fotos}
+        {'nombre': h.nombre.text.trim(), 'tipo': h.tipo, 'doc': h.doc.text.trim(), 'fotos': h.fotos}
     ];
     final id = await db.insert('hospedajes', {
       'guardia_nombre': s.userNombre,
       'plataforma': _plataforma,
       'huesped': principal.nombre.text.trim(),
-      'documento': '',
+      'documento': principal.doc.text.trim(),
       'foto_doc': principal.fotos.isNotEmpty ? principal.fotos.first : null,
       'huespedes_json': jsonEncode(huespedesData),
       'depto': _depto.text.trim(),
@@ -400,8 +420,22 @@ class _HospedajeFormState extends State<HospedajeForm> {
             TextField(
               controller: h.nombre,
               textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Nombre y apellido completo'),
+              decoration: InputDecoration(
+                labelText: 'Nombre y apellido completo',
+                suffixIcon: h.leyendo
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)))
+                    : null,
+              ),
             ),
+            if (!carnet) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: h.doc,
+                decoration: const InputDecoration(labelText: 'N° de pasaporte'),
+              ),
+            ],
             const SizedBox(height: 8),
             Row(children: [
               ChoiceChip(

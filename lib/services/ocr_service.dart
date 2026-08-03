@@ -156,33 +156,77 @@ class OcrService {
   /// Lee el valor de una etiqueta (NOMBRES/APELLIDOS). El valor puede estar en
   /// la misma línea (tras ':') o en la(s) siguiente(s). Devuelve hasta 3
   /// palabras alfabéticas, sin etiquetas ni números.
+  // Palabras de etiqueta: al toparse con una, se corta la acumulación del valor.
+  static final RegExp _corte = RegExp(
+      r'APELLIDO|NOMBRE|FECHA|NACIMIENTO|SERIE|SECC|EMISI|EXPIRA|FIRMA|IDENTIDAD|CEDULA|CÉDULA|ESTADO|PLURINACIONAL|SERVICIO|DOMICILIO|LUGAR|OCUPAC|TITULAR');
+
+  /// Lee el valor de una etiqueta (NOMBRES/APELLIDOS). El valor puede estar en
+  /// la misma línea (tras ':') y/o en la(s) siguiente(s) — se acumulan hasta
+  /// toparse con otra etiqueta o un número. Así no se pierde un apellido que el
+  /// OCR partió en dos líneas (ej. QUIROZ / GAINZA).
   static String? _valorLabel(List<String> lines, int i) {
     String limpiar(String s) =>
         (RegExp(r'[A-Za-zÁÉÍÓÚÑ ]+').firstMatch(s)?.group(0) ?? '').trim();
 
-    // 1) Valor en la MISMA línea, después de ':'.
+    final parts = <String>[];
     final line = lines[i];
     final idx = line.indexOf(':');
-    String val = (idx >= 0 && idx < line.length - 1) ? limpiar(line.substring(idx + 1)) : '';
+    final same = (idx >= 0 && idx < line.length - 1) ? limpiar(line.substring(idx + 1)) : '';
+    if (same.length >= 2) parts.add(same);
 
-    // 2) Si no hay valor, tomar la siguiente línea que parezca un nombre (no
-    //    otra etiqueta) — hasta 2 líneas más abajo.
-    for (int j = i + 1; val.trim().length < 2 && j < lines.length && j <= i + 2; j++) {
+    // Acumular líneas siguientes que parezcan nombre (hasta 3), cortando en la
+    // primera etiqueta o línea con dígitos.
+    for (int j = i + 1; j < lines.length && j <= i + 3; j++) {
+      if (RegExp(r'\d').hasMatch(lines[j])) break;
+      if (_corte.hasMatch(lines[j].toUpperCase())) break;
       final cand = limpiar(lines[j]);
-      final u = cand.toUpperCase();
-      if (cand.length >= 2 && !u.contains('APELLIDO') && !u.contains('NOMBRE')) {
-        val = cand;
-        break;
-      }
+      if (cand.length >= 2) parts.add(cand);
     }
 
-    // 3) Quitar palabras-etiqueta y quedarse con hasta 3 tokens.
-    final toks = val.toUpperCase()
+    final toks = parts.join(' ').toUpperCase()
         .split(RegExp(r'\s+'))
         .where((w) => w.length >= 2 && !_stop.contains(w))
         .toList();
     if (toks.isEmpty) return null;
-    return toks.take(3).join(' ');
+    return toks.take(4).join(' ');
+  }
+
+  /// Lee un PASAPORTE por su MRZ (2 líneas al pie). Devuelve número + nombre.
+  /// Línea 1: P<BOLQUIROZ<GAINZA<<LUCAS<JOSUE<<<...
+  /// Línea 2: AB1234567 <número de documento al inicio>.
+  static CarnetData parsePasaporte(String texto) {
+    final up = texto.toUpperCase();
+    String? numero;
+    String? nombre;
+
+    // Nombre por MRZ (apellidos<<nombres).
+    final mrz = RegExp(r'P[<K][A-Z<]{0,3}([A-Z]+(?:<[A-Z]+)*)<<([A-Z<]+)').firstMatch(up.replaceAll(' ', ''));
+    if (mrz != null) {
+      final ape = mrz.group(1)!.replaceAll('<', ' ').trim();
+      final nom = mrz.group(2)!.replaceAll('<', ' ').trim();
+      if (ape.isNotEmpty && nom.isNotEmpty) nombre = _limpiarNombre('$nom $ape');
+    }
+    // Nombre por etiquetas si no hubo MRZ.
+    if (nombre == null) {
+      final data = parseCarnet(texto);
+      nombre = data.nombre;
+    }
+
+    // Número de documento: en la 2da línea del MRZ (primeros 6-9 caracteres) o
+    // una etiqueta "Pasaporte No / Passport No".
+    final et = RegExp(r'(?:PASAPORTE|PASSPORT|DOCUMENT[O]?)\s*(?:N[O°º.]*|NO|#)?\s*[:.]?\s*([A-Z0-9]{6,9})').firstMatch(up);
+    if (et != null) numero = et.group(1);
+    if (numero == null) {
+      // Buscar una corrida alfanumérica típica de pasaporte (empieza por letra).
+      final m = RegExp(r'\b([A-Z]{1,2}\d{6,7})\b').firstMatch(up.replaceAll(' ', ''));
+      if (m != null) numero = m.group(1);
+    }
+    if (numero == null) {
+      // Cualquier corrida de 7-9 dígitos como respaldo.
+      final m = RegExp(r'(?<!\d)(\d{7,9})(?!\d)').firstMatch(up);
+      if (m != null) numero = m.group(1);
+    }
+    return CarnetData(numero, nombre);
   }
 
   static bool _pareceNombre(String s) {
