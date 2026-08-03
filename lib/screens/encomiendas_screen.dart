@@ -148,13 +148,17 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'encomiendas', '$id');
-    final fotoUrl = _foto != null ? await Cloud.subirFoto(_foto!) : null;
-    await Cloud.evento('Encomienda', detalle: {
+    // Nube en segundo plano (registro instantáneo aunque el internet sea lento).
+    final foto = _foto;
+    final det = {
       'depto': _depto.text.trim(),
       'destinatario': _dest.text.trim(),
       'empresa': _empresa.text.trim(),
-      if (fotoUrl != null) 'foto_url': fotoUrl,
-    });
+    };
+    () async {
+      final fotoUrl = foto != null ? await Cloud.subirFoto(foto) : null;
+      await Cloud.evento('Encomienda', detalle: {...det, if (fotoUrl != null) 'foto_url': fotoUrl});
+    }();
     if (!mounted) return;
     await _avisarDepto();
     if (!mounted) return;

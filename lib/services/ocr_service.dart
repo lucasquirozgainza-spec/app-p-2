@@ -81,15 +81,16 @@ class OcrService {
       if (ape.isNotEmpty && nom.isNotEmpty) nombre = '$nom $ape';
     }
     final lines = texto.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
-    // 2) Carnet nuevo:  NOMBRES: ...   APELLIDOS: ...
+    // 2) Carnet nuevo:  APELLIDOS: ...   NOMBRES: ...
+    //    Combinamos SIEMPRE nombres + apellidos para armar el nombre completo.
     if (nombre == null) {
       String? nom, ape;
       for (int i = 0; i < lines.length; i++) {
         final L = lines[i].toUpperCase();
-        if (L.contains('NOMBRE')) nom = _valorLabel(lines, i);
-        if (L.contains('APELLIDO')) ape = _valorLabel(lines, i);
+        if (nom == null && L.contains('NOMBRE')) nom = _valorLabel(lines, i);
+        if (ape == null && L.contains('APELLIDO')) ape = _valorLabel(lines, i);
       }
-      final full = [nom, ape].where((e) => e != null && e.isNotEmpty).join(' ');
+      final full = [nom, ape].where((e) => e != null && e.trim().isNotEmpty).join(' ');
       if (full.trim().isNotEmpty) nombre = full;
     }
     // 3) Carnet antiguo (reverso): tras PERTENECE A: / A NOMBRE DE: viene el nombre.
@@ -152,16 +153,36 @@ class OcrService {
     return _titulo(keep.join(' '));
   }
 
+  /// Lee el valor de una etiqueta (NOMBRES/APELLIDOS). El valor puede estar en
+  /// la misma línea (tras ':') o en la(s) siguiente(s). Devuelve hasta 3
+  /// palabras alfabéticas, sin etiquetas ni números.
   static String? _valorLabel(List<String> lines, int i) {
+    String limpiar(String s) =>
+        (RegExp(r'[A-Za-zÁÉÍÓÚÑ ]+').firstMatch(s)?.group(0) ?? '').trim();
+
+    // 1) Valor en la MISMA línea, después de ':'.
     final line = lines[i];
     final idx = line.indexOf(':');
-    String v = '';
-    if (idx >= 0 && idx < line.length - 1) v = line.substring(idx + 1).trim();
-    if (v.isEmpty && i + 1 < lines.length) v = lines[i + 1].trim();
-    // Quedarse solo con la parte de letras (cortar en el primer numero).
-    final soloLetras = RegExp(r'^[A-Za-zÁÉÍÓÚÑ\s]+').firstMatch(v)?.group(0)?.trim() ?? '';
-    if (soloLetras.length >= 2 && !soloLetras.toUpperCase().contains('APELLIDO')) return soloLetras;
-    return null;
+    String val = (idx >= 0 && idx < line.length - 1) ? limpiar(line.substring(idx + 1)) : '';
+
+    // 2) Si no hay valor, tomar la siguiente línea que parezca un nombre (no
+    //    otra etiqueta) — hasta 2 líneas más abajo.
+    for (int j = i + 1; val.trim().length < 2 && j < lines.length && j <= i + 2; j++) {
+      final cand = limpiar(lines[j]);
+      final u = cand.toUpperCase();
+      if (cand.length >= 2 && !u.contains('APELLIDO') && !u.contains('NOMBRE')) {
+        val = cand;
+        break;
+      }
+    }
+
+    // 3) Quitar palabras-etiqueta y quedarse con hasta 3 tokens.
+    final toks = val.toUpperCase()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.length >= 2 && !_stop.contains(w))
+        .toList();
+    if (toks.isEmpty) return null;
+    return toks.take(3).join(' ');
   }
 
   static bool _pareceNombre(String s) {

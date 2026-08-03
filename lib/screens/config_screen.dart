@@ -465,6 +465,20 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          const Text('Conexión', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          Card(
+            child: SwitchListTile(
+              dense: true,
+              value: _modulos['solo_local'] == true,
+              onChanged: (v) => _toggle('solo_local', v),
+              secondary: const Icon(Icons.wifi_off, color: Color(0xFF546E7A)),
+              title: const Text('Trabajar sin conexión'),
+              subtitle: const Text('Edificio de una torre: registros instantáneos, no usa la nube.'),
+              activeColor: AppColors.verde,
+            ),
+          ),
+          const SizedBox(height: 16),
           const Text('Campos de Visitas', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Card(

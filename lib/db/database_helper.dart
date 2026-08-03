@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 12,
+      version: 13,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -98,6 +98,13 @@ class DB {
           try {
             await db.execute('DROP TABLE IF EXISTS camaras');
           } catch (_) {}
+        }
+        if (oldV < 13) {
+          for (final col in ['huespedes_json TEXT', 'noches INTEGER', 'salida_real TEXT']) {
+            try {
+              await db.execute('ALTER TABLE hospedajes ADD COLUMN $col');
+            } catch (_) {}
+          }
         }
       },
     );
@@ -298,6 +305,7 @@ class DB {
         guardia_nombre TEXT, plataforma TEXT, huesped TEXT, documento TEXT, foto_doc TEXT,
         depto TEXT, fecha_ingreso TEXT, fecha_salida TEXT, cantidad INTEGER,
         vehiculo TEXT, placa TEXT, observaciones TEXT, estado TEXT DEFAULT 'activo',
+        huespedes_json TEXT, noches INTEGER, salida_real TEXT,
         edificio TEXT, created_at TEXT NOT NULL, sync_status INTEGER DEFAULT 0
       )''');
     await db.execute('''

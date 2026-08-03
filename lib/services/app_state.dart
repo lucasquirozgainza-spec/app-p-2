@@ -51,6 +51,10 @@ class AppState {
   bool get hayOperador => userId != null;
   bool modulo(String key) => modulos[key] == true;
 
+  /// Edificio de UNA torre que trabaja SIN conexión: no cruza info con nadie,
+  /// así los registros y fotos son instantáneos (no esperan a internet).
+  bool get soloLocal => modulos['solo_local'] == true;
+
   /// Fin de turno ESPERADO para un ingreso dado, según los horarios de relevo
   /// configurados (ingreso y salida). Los dos horarios (ej. 08:30 y 20:30) son
   /// las horas de cambio de turno; se toma el próximo relevo que caiga al menos

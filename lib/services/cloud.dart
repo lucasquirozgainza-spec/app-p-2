@@ -77,6 +77,7 @@ class Cloud {
 
   /// Sube un evento (turno, visita, ronda, incidente...) a la nube.
   static Future<void> evento(String tipo, {String? guardia, Map<String, dynamic>? detalle}) async {
+    if (AppState.instance.soloLocal) return; // edificio sin conexión
     try {
       final r = await http.post(
         Uri.parse('$_rest/eventos'),
@@ -99,6 +100,7 @@ class Cloud {
   /// Si se pasan lat/lng, guarda la ubicacion actual (monitoreo constante).
   static Future<void> heartbeat({double? lat, double? lng}) async {
     final s = AppState.instance;
+    if (s.soloLocal) return; // edificio sin conexión
     try {
       final body = <String, dynamic>{
         'device_id': deviceId,
@@ -129,6 +131,7 @@ class Cloud {
 
   /// Lee eventos recientes. Con [edificio] solo trae los de ese edificio.
   static Future<List<Map<String, dynamic>>> eventos({String? tipo, String? edificio, int limit = 120}) async {
+    if (AppState.instance.soloLocal) return [];
     try {
       final params = <String>['select=*', 'order=created_at.desc', 'limit=$limit'];
       if (tipo != null) params.add('tipo=eq.${Uri.encodeComponent(tipo)}');
@@ -192,6 +195,7 @@ class Cloud {
   }
 
   static Future<List<Map<String, dynamic>>> presencia() async {
+    if (AppState.instance.soloLocal) return [];
     try {
       final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc'), headers: _h)
           .timeout(const Duration(seconds: 15));
@@ -219,6 +223,7 @@ class Cloud {
 
   /// Sube UNA foto comprimida y devuelve su URL pública (o null si falla).
   static Future<String?> subirFoto(String path, {String sufijo = ''}) async {
+    if (AppState.instance.soloLocal) return null; // edificio sin conexión
     try {
       final f = File(path);
       if (!await f.exists()) return null;

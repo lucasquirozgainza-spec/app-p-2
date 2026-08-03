@@ -508,28 +508,28 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
                     style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(46)),
                     onPressed: () => _anunciar(pred!['nombre'].toString(), pred!['tel'].toString(), depto),
                     icon: const Icon(Icons.sms, size: 18),
-                    label: const Text('Anunciar visita'),
+                    label: const Text('Anunciar', maxLines: 1),
                   ),
                 ),
                 const SizedBox(height: 6),
-                Row(children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () { Navigator.pop(context); Contacto.llamar(context, pred!['tel'].toString()); },
-                      icon: const Icon(Icons.call, size: 18),
-                      label: const Text('Llamar'),
-                    ),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () { Navigator.pop(context); Contacto.llamar(context, pred!['tel'].toString()); },
+                    icon: const Icon(Icons.call, size: 18),
+                    label: const Text('Llamar', maxLines: 1),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1565C0)),
-                      onPressed: () => _elegir(pred!['nombre'].toString()),
-                      icon: const Icon(Icons.check, size: 18),
-                      label: const Text('Autorizó'),
-                    ),
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1565C0), minimumSize: const Size.fromHeight(46)),
+                    onPressed: () => _elegir(pred!['nombre'].toString()),
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Autorizó', maxLines: 1),
                   ),
-                ]),
+                ),
               ],
               if (otros.isNotEmpty) ...[
                 const Divider(height: 18),
@@ -583,10 +583,9 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'visitas', '$id', detalle: _nombre.text);
-    // Subir una foto comprimida a la nube para verla desde otros equipos.
+    // Nube en SEGUNDO PLANO: no demora el registro aunque el internet sea lento.
     final fotoNube = _carnetAnverso ?? _fotoTarjeta ?? _carnetReverso;
-    final fotoUrl = fotoNube != null ? await Cloud.subirFoto(fotoNube) : null;
-    await Cloud.evento('Visita', detalle: {
+    final det = {
       'nombre': _nombre.text.trim(),
       'ci': _ci.text.trim(),
       'depto': _depto.text.trim(),
@@ -594,8 +593,11 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'placa': _tieneVehiculo ? _placa.text.trim() : '',
       'tarjeta': _tarjetaNum.text.trim(),
       'motivo': _motivo.text.trim(),
-      if (fotoUrl != null) 'foto_url': fotoUrl,
-    });
+    };
+    () async {
+      final fotoUrl = fotoNube != null ? await Cloud.subirFoto(fotoNube) : null;
+      await Cloud.evento('Visita', detalle: {...det, if (fotoUrl != null) 'foto_url': fotoUrl});
+    }();
     if (!mounted) return;
     Navigator.pop(context);
   }
