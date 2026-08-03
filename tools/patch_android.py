@@ -114,7 +114,31 @@ for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
     b = re.sub(r"minSdk(Version)?\s*=?\s*[\w\.\(\)]+",
                "minSdk = 23" if kts else "minSdkVersion 23", b)
 
-    # Configuracion de firma de release con el keystore fijo.
+    # Activar desugaring dentro de compileOptions
+    if "coreLibraryDesugaring" not in b:
+        enable = "isCoreLibraryDesugaringEnabled = true" if kts else "coreLibraryDesugaringEnabled true"
+        b = re.sub(r"compileOptions\s*\{", "compileOptions {\n        " + enable, b, count=1)
+        # Bloque de dependencias con la librería de desugaring
+        if kts:
+            dep = '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")\n}\n'
+        else:
+            dep = "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'\n}\n"
+        b = b + dep
+
+    # Desactivar R8/minificacion en release (evita errores de clases faltantes de ML Kit).
+    b = re.sub(r"minifyEnabled\s+true", "minifyEnabled false", b)
+    b = re.sub(r"(isMinifyEnabled|isShrinkResources)\s*=\s*true", r"\1 = false", b)
+    b = re.sub(r"shrinkResources\s+true", "shrinkResources false", b)
+    if "minifyEnabled" not in b and "isMinifyEnabled" not in b:
+        if kts:
+            b = re.sub(r"(release\s*\{)", r"\1\n            isMinifyEnabled = false\n            isShrinkResources = false", b, count=1)
+        else:
+            b = re.sub(r"(release\s*\{)", r"\1\n            minifyEnabled false\n            shrinkResources false", b, count=1)
+
+    # --- Firma FIJA de release (SE HACE AL FINAL) --------------------------
+    # Debe ir despues del bloque de minify: asi el "release {" que inyecta el
+    # bloque signingConfigs NO es confundido con el buildTypes.release (era la
+    # causa del error "Could not find method minifyEnabled() on SigningConfig").
     if KEYSTORE_SRC.exists() and "osiris_signing" not in b:
         if kts:
             sign_block = (
@@ -138,36 +162,12 @@ for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
                 '        }\n'
                 '    }\n'
             )
-        # Insertar el bloque de firma justo despues de "android {".
         b = re.sub(r"android\s*\{", "android {" + sign_block, b, count=1)
-        # Apuntar la firma del release al keystore fijo (reemplaza la debug que
-        # trae la plantilla de Flutter). No se inyectan lineas extra.
         if kts:
             b = b.replace('signingConfigs.getByName("debug")', 'signingConfigs.getByName("release")')
             b = b.replace('signingConfigs.debug', 'signingConfigs.getByName("release")')
         else:
             b = b.replace("signingConfigs.debug", "signingConfigs.release")
 
-    # Activar desugaring dentro de compileOptions
-    if "coreLibraryDesugaring" not in b:
-        enable = "isCoreLibraryDesugaringEnabled = true" if kts else "coreLibraryDesugaringEnabled true"
-        b = re.sub(r"compileOptions\s*\{", "compileOptions {\n        " + enable, b, count=1)
-        # Bloque de dependencias con la librería de desugaring
-        if kts:
-            dep = '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")\n}\n'
-        else:
-            dep = "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'\n}\n"
-        b = b + dep
-
-    # Desactivar R8/minificacion en release (evita errores de clases faltantes de ML Kit).
-    b = re.sub(r"minifyEnabled\s+true", "minifyEnabled false", b)
-    b = re.sub(r"(isMinifyEnabled|isShrinkResources)\s*=\s*true", r"\1 = false", b)
-    b = re.sub(r"shrinkResources\s+true", "shrinkResources false", b)
-    if "minifyEnabled" not in b and "isMinifyEnabled" not in b:
-        if kts:
-            b = re.sub(r"(release\s*\{)", r"\1\n            isMinifyEnabled = false\n            isShrinkResources = false", b, count=1)
-        else:
-            b = re.sub(r"(release\s*\{)", r"\1\n            minifyEnabled false\n            shrinkResources false", b, count=1)
-
     p.write_text(b, encoding="utf-8")
-    print(f"build.gradle ajustado (minSdk + desugaring + R8 off) en {g}")
+    print(f"build.gradle ajustado (minSdk + desugaring + R8 off + firma) en {g}")
