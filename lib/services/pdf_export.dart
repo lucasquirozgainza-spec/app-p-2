@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -7,6 +9,92 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
+
+/// Construye el PDF de actividad en un ISOLATE aparte (compute), para que la
+/// interfaz NUNCA se congele aunque haya cientos de filas. Recibe datos ya
+/// convertidos a texto (nada de AppState ni canales de plataforma aquí).
+Future<Uint8List> _actividadPdfBytes(Map<String, dynamic> args) async {
+  final titulo = args['titulo'] as String;
+  final fecha = args['fecha'] as String;
+  final total = args['total'] as int;
+  final recortado = args['recortado'] as bool;
+  final maxFilas = args['maxFilas'] as int;
+  final rows = (args['rows'] as List).map((r) => (r as List).cast<String>()).toList();
+
+  final navy = PdfColor.fromInt(0xFF0A335D);
+  final rojo = PdfColor.fromInt(0xFFC62828);
+
+  final doc = pw.Document();
+  doc.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a4,
+    margin: const pw.EdgeInsets.all(24),
+    header: (ctx) => ctx.pageNumber == 1
+        ? pw.SizedBox()
+        : pw.Container(
+            margin: const pw.EdgeInsets.only(bottom: 8),
+            child: pw.Text('OSIRIS Seguridad - Actividad',
+                style: pw.TextStyle(color: navy, fontSize: 11, fontWeight: pw.FontWeight.bold))),
+    footer: (ctx) => pw.Container(
+      alignment: pw.Alignment.centerRight,
+      margin: const pw.EdgeInsets.only(top: 8),
+      child: pw.Text('OSIRIS Seguridad  -  Pagina ${ctx.pageNumber}/${ctx.pagesCount}',
+          style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+    ),
+    build: (ctx) => [
+      // Portada simple (sin AppState, para poder correr en el isolate).
+      pw.Container(
+        padding: const pw.EdgeInsets.all(16),
+        decoration: pw.BoxDecoration(
+          gradient: pw.LinearGradient(colors: [navy, PdfColor.fromInt(0xFF1E6FB8)]),
+          borderRadius: pw.BorderRadius.circular(10),
+        ),
+        child: pw.Row(children: [
+          pw.Container(
+            width: 46, height: 46,
+            decoration: pw.BoxDecoration(color: rojo, borderRadius: pw.BorderRadius.circular(10)),
+            alignment: pw.Alignment.center,
+            child: pw.Text('O', style: pw.TextStyle(color: PdfColors.white, fontSize: 26, fontWeight: pw.FontWeight.bold)),
+          ),
+          pw.SizedBox(width: 14),
+          pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+            pw.Text('OSIRIS Seguridad', style: pw.TextStyle(color: PdfColors.white, fontSize: 22, fontWeight: pw.FontWeight.bold)),
+            pw.Text('Actividad: $titulo', style: const pw.TextStyle(color: PdfColors.white, fontSize: 12)),
+            pw.Text('Generado: $fecha', style: const pw.TextStyle(color: PdfColors.white, fontSize: 10)),
+          ]),
+        ]),
+      ),
+      pw.SizedBox(height: 14),
+      if (recortado)
+        pw.Padding(
+          padding: const pw.EdgeInsets.only(bottom: 8),
+          child: pw.Text('Mostrando los $maxFilas registros mas recientes de $total.',
+              style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+        ),
+      if (rows.isEmpty)
+        pw.Padding(padding: const pw.EdgeInsets.only(top: 20), child: pw.Text('No hay actividad en la nube.'))
+      else
+        pw.TableHelper.fromTextArray(
+          headers: const ['Fecha', 'Tipo', 'Guardia', 'Edificio', 'Detalle'],
+          data: rows,
+          headerStyle: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 8.5),
+          headerDecoration: pw.BoxDecoration(color: navy),
+          cellStyle: const pw.TextStyle(fontSize: 8),
+          cellHeight: 16,
+          cellAlignment: pw.Alignment.centerLeft,
+          columnWidths: {
+            0: const pw.FlexColumnWidth(1.6),
+            1: const pw.FlexColumnWidth(1.6),
+            2: const pw.FlexColumnWidth(1.8),
+            3: const pw.FlexColumnWidth(1.6),
+            4: const pw.FlexColumnWidth(3.4),
+          },
+          oddRowDecoration: pw.BoxDecoration(color: PdfColor.fromInt(0xFFF6F8FA)),
+          border: pw.TableBorder.all(color: PdfColors.grey300, width: .5),
+        ),
+    ],
+  ));
+  return doc.save();
+}
 
 /// Genera un informe PDF profesional del periodo y lo comparte/guarda.
 class PdfExport {
@@ -403,59 +491,45 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Ingresos y salidas OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
   }
 
-  /// PDF con toda la actividad en la nube (eventos de todos los celulares).
-  static Future<void> actividadNube(List<Map<String, dynamic>> eventos, String titulo) async {
+  /// Genera el PDF de actividad y devuelve la RUTA del archivo (no comparte).
+  /// El armado pesado corre en un isolate (compute) para no congelar la app.
+  static Future<String> actividadNube(List<Map<String, dynamic>> eventos, String titulo) async {
     String detalleStr(dynamic d) {
       if (d is Map) {
         return d.entries
-            .where((e) => '${e.value}'.trim().isNotEmpty && e.key != 'ubicacion')
+            .where((e) => '${e.value}'.trim().isNotEmpty && e.key != 'ubicacion' && e.key != 'foto_url' && e.key != 'fotos_url')
             .map((e) => '${e.key}: ${e.value}')
             .join(', ');
       }
       return '${d ?? ''}';
     }
 
-    // Límite de seguridad: una tabla con miles de filas puede congelar el
-    // teléfono al armar el PDF. Se muestran las más recientes (vienen ordenadas
-    // desc) y se avisa cuántas quedaron fuera.
+    // Preparamos las filas (texto) en el hilo principal — es liviano — y el
+    // armado/guardado del PDF se hace en un isolate.
     const maxFilas = 800;
-    final recortado = eventos.length > maxFilas;
-    final filas = recortado ? eventos.sublist(0, maxFilas) : eventos;
-    final tituloSeguro = _safe(titulo);
+    final total = eventos.length;
+    final recortado = total > maxFilas;
+    final fuente = recortado ? eventos.sublist(0, maxFilas) : eventos;
+    final rows = <List<String>>[];
+    for (final e in fuente) {
+      var det = _safe(detalleStr(e['detalle']));
+      if (det.length > 90) det = '${det.substring(0, 90)}...';
+      rows.add([_h(e['created_at']), _s(e['tipo']), _s(e['guardia']), _s(e['edificio']), det]);
+    }
 
-    final doc = pw.Document();
-    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
-    doc.addPage(pw.MultiPage(
-      pageFormat: PdfPageFormat.a4,
-      margin: const pw.EdgeInsets.all(24),
-      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
-      footer: (ctx) => pw.Container(
-        alignment: pw.Alignment.centerRight,
-        margin: const pw.EdgeInsets.only(top: 8),
-        child: pw.Text('OSIRIS Seguridad  ·  Pagina ${ctx.pageNumber}/${ctx.pagesCount}',
-            style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
-      ),
-      build: (ctx) => [
-        _portada(tituloSeguro, fecha),
-        pw.SizedBox(height: 14),
-        if (recortado)
-          pw.Padding(
-            padding: const pw.EdgeInsets.only(bottom: 8),
-            child: pw.Text('Mostrando los $maxFilas registros mas recientes de ${eventos.length}.',
-                style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
-          ),
-        _tabla('Actividad (${eventos.length})', ['Fecha', 'Tipo', 'Guardia', 'Edificio', 'Detalle'],
-            filas.map((e) => [
-              _h(e['created_at']), _s(e['tipo']), _s(e['guardia']), _s(e['edificio']), _safe(detalleStr(e['detalle'])),
-            ]).toList()),
-        if (eventos.isEmpty)
-          pw.Padding(padding: const pw.EdgeInsets.only(top: 20), child: pw.Text('No hay actividad en la nube.')),
-      ],
-    ));
+    final bytes = await compute(_actividadPdfBytes, <String, dynamic>{
+      'titulo': _safe(titulo),
+      'fecha': DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now()),
+      'rows': rows,
+      'total': total,
+      'recortado': recortado,
+      'maxFilas': maxFilas,
+    });
+
     final dir = await getApplicationDocumentsDirectory();
     final file = File(p.join(dir.path, 'Actividad_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
-    await file.writeAsBytes(await doc.save());
-    await Share.shareXFiles([XFile(file.path)], text: 'Actividad OSIRIS - $titulo');
+    await file.writeAsBytes(bytes);
+    return file.path;
   }
 
   /// PDF con los QR de los puntos de control, para imprimir y pegar en cada punto.

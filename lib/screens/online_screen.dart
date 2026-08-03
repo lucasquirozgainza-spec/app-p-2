@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
@@ -91,21 +92,28 @@ class _OnlineScreenState extends State<OnlineScreen> {
     }
   }
 
-  /// SOLO descarga: genera y comparte el PDF con la actividad. No borra nada.
+  /// SOLO descarga: genera (en segundo plano) y comparte el PDF. No borra nada.
   Future<void> _descargarPdf() async {
     final ed = _edFiltro;
     final titulo = _tituloEd;
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    List<Map<String, dynamic>> todos = [];
+    String? path;
+    String? error;
     try {
-      todos = await Cloud.eventos(edificio: ed, limit: 1500);
-    } catch (_) {}
-    if (!mounted) return;
-    Navigator.pop(context); // cerrar spinner ANTES de compartir (evita congelarse)
-    try {
-      await PdfExport.actividadNube(todos, titulo);
+      final todos = await Cloud.eventos(edificio: ed, limit: 1500);
+      // El armado del PDF corre en un isolate: la app no se congela.
+      path = await PdfExport.actividadNube(todos, titulo);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: $e')));
+      error = '$e';
+    }
+    if (!mounted) return;
+    Navigator.pop(context); // cerrar spinner ANTES de compartir
+    if (path != null) {
+      try {
+        await Share.shareXFiles([XFile(path)], text: 'Actividad OSIRIS - $titulo');
+      } catch (_) {}
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: ${error ?? ''}')));
     }
   }
 

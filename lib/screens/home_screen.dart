@@ -258,12 +258,28 @@ class _HomeScreenState extends State<HomeScreen> {
     if (s.modulo('rondas')) {
       acts.add(ActionButton(icon: Icons.directions_walk, label: 'Ronda', color: const Color(0xFF6A1B9A), onTap: () => _accionConTurno(const RondaScreen())));
     }
-    return GridView.extent(
-      maxCrossAxisExtent: 220, shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 1.7, mainAxisSpacing: 10, crossAxisSpacing: 10,
-      children: acts,
-    );
+    // Dos por fila; si la última queda sola (ej. Ronda), ocupa TODO el ancho
+    // para que no quede un espacio vacío al lado.
+    const double alto = 88;
+    final filas = <Widget>[];
+    for (int i = 0; i < acts.length; i += 2) {
+      if (i + 1 < acts.length) {
+        filas.add(Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(children: [
+            Expanded(child: SizedBox(height: alto, child: acts[i])),
+            const SizedBox(width: 10),
+            Expanded(child: SizedBox(height: alto, child: acts[i + 1])),
+          ]),
+        ));
+      } else {
+        filas.add(Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: SizedBox(height: alto, width: double.infinity, child: acts[i]),
+        ));
+      }
+    }
+    return Column(children: filas);
   }
 
   Widget _modules(AppState s) {
