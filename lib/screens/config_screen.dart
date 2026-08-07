@@ -13,7 +13,8 @@ import '../theme.dart';
 import 'puntos_control_screen.dart';
 
 class ConfigScreen extends StatefulWidget {
-  const ConfigScreen({super.key});
+  final String? initialEdificio; // admin: abrir configurando este edificio
+  const ConfigScreen({super.key, this.initialEdificio});
   @override
   State<ConfigScreen> createState() => _ConfigScreenState();
 }
@@ -36,7 +37,7 @@ const _modLabels = {
 
 class _ConfigScreenState extends State<ConfigScreen> {
   List<Map<String, dynamic>> _edificios = [];
-  String _selId = AppState.instance.edificioId;
+  late String _selId = widget.initialEdificio ?? AppState.instance.edificioId;
   Map<String, dynamic> _modulos = {};
 
   @override

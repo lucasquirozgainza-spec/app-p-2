@@ -1,12 +1,14 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
+import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/depto_field.dart';
 import '../widgets/toast.dart';
+import 'camera_screen.dart';
 
 const _colorRecu = Color(0xFF00695C);
 
@@ -165,10 +167,16 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(children: [
-                                CircleAvatar(
-                                  backgroundColor: (dentro ? AppColors.verde : Colors.grey).withOpacity(.15),
-                                  child: Icon(Icons.person, color: dentro ? AppColors.verde : Colors.grey),
-                                ),
+                                Builder(builder: (_) {
+                                  final f = (r['foto'] ?? '').toString();
+                                  if (f.isNotEmpty && File(f).existsSync()) {
+                                    return CircleAvatar(backgroundImage: FileImage(File(f)));
+                                  }
+                                  return CircleAvatar(
+                                    backgroundColor: (dentro ? AppColors.verde : Colors.grey).withOpacity(.15),
+                                    child: Icon(Icons.person, color: dentro ? AppColors.verde : Colors.grey),
+                                  );
+                                }),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -231,6 +239,8 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
   final _depto = TextEditingController();
   final _motivo = TextEditingController();
   final _placa = TextEditingController();
+  List<String> _fotosCarnet = [];
+  bool _leyendo = false;
   bool _saving = false;
 
   @override
@@ -241,6 +251,29 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
     _motivo.dispose();
     _placa.dispose();
     super.dispose();
+  }
+
+  /// Toma la foto del carnet (2 lados en una sesión) y llena nombre/CI en 2º plano.
+  Future<void> _fotoCarnet() async {
+    final res = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
+    );
+    if (res == null || res.isEmpty) return;
+    setState(() { _fotosCarnet = res; _leyendo = true; });
+    () async {
+      String texto = '';
+      for (final f in res) {
+        texto = '$texto\n${await OcrService.leerTexto(f)}';
+      }
+      final d = OcrService.parseCarnet(texto);
+      if (!mounted) return;
+      setState(() {
+        _leyendo = false;
+        if (d.nombre != null && _nombre.text.trim().isEmpty) _nombre.text = d.nombre!;
+        if (d.ci != null && _ci.text.trim().isEmpty) _ci.text = d.ci!;
+      });
+    }();
   }
 
   Future<void> _guardar() async {
@@ -257,6 +290,7 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
       'depto': _depto.text.trim(),
       'motivo': _motivo.text.trim(),
       'placa': _placa.text.trim(),
+      'foto': _fotosCarnet.isNotEmpty ? _fotosCarnet.first : null,
       'dentro': 0,
       'edificio': s.edificioId,
       'created_at': DateTime.now().toIso8601String(),
@@ -272,8 +306,43 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Se registra una vez. Después bastará un botón para marcar '
-              'su ingreso y su salida.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+          const Text('Se registra una vez (con foto del carnet). Después bastará un '
+              'botón para marcar su ingreso y su salida.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: _colorRecu, minimumSize: const Size.fromHeight(48)),
+              onPressed: _fotoCarnet,
+              icon: const Icon(Icons.camera_alt),
+              label: Text(_fotosCarnet.isEmpty ? 'Foto del carnet (2 lados)' : 'Repetir carnet (${_fotosCarnet.length})'),
+            ),
+          ),
+          if (_leyendo)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Row(children: [
+                SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                SizedBox(width: 10), Text('Leyendo carnet...'),
+              ]),
+            ),
+          if (_fotosCarnet.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: SizedBox(
+                height: 80,
+                child: ListView(scrollDirection: Axis.horizontal, children: [
+                  for (final f in _fotosCarnet)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(File(f), width: 110, height: 80, fit: BoxFit.cover),
+                      ),
+                    ),
+                ]),
+              ),
+            ),
           const SizedBox(height: 12),
           TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(labelText: 'Nombre y apellido *', prefixIcon: Icon(Icons.person))),

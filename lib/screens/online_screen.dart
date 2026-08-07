@@ -16,7 +16,8 @@ import '../theme.dart';
 /// edificios.
 class OnlineScreen extends StatefulWidget {
   final bool soloEdificio;
-  const OnlineScreen({super.key, this.soloEdificio = false});
+  final String? edificioInicial; // admin: abrir ya filtrado en este edificio
+  const OnlineScreen({super.key, this.soloEdificio = false, this.edificioInicial});
   @override
   State<OnlineScreen> createState() => _OnlineScreenState();
 }
@@ -37,7 +38,10 @@ class _OnlineScreenState extends State<OnlineScreen> {
   @override
   void initState() {
     super.initState();
-    if (!widget.soloEdificio) _cargarEdificios();
+    if (!widget.soloEdificio) {
+      _edAdmin = widget.edificioInicial; // prefiltrado por edificio (opcional)
+      _cargarEdificios();
+    }
     _cargar();
     // Actualiza solo cada 15 s (vinculación automática entre celulares).
     _auto = Timer.periodic(const Duration(seconds: 15), (_) => _cargar(silencioso: true));

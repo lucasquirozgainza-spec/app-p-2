@@ -286,6 +286,14 @@ class VisitaFormScreen extends StatefulWidget {
   State<VisitaFormScreen> createState() => _VisitaFormScreenState();
 }
 
+/// Visitante adicional (acompañante): nombre + foto(s) de su carnet.
+class _Acompanante {
+  final nombre = TextEditingController();
+  final ci = TextEditingController();
+  List<String> fotos = [];
+  bool leyendo = false;
+}
+
 class _VisitaFormScreenState extends State<VisitaFormScreen> {
   final _nombre = TextEditingController();
   final _depto = TextEditingController();
@@ -305,6 +313,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   String _carnetTexto = '';
   bool _tieneVehiculo = false;
   bool _saving = false;
+  final List<_Acompanante> _acomp = []; // visitantes adicionales
   final _ahora = DateTime.now();
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
@@ -360,6 +369,29 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       if (data.ci != null || data.nombre != null) {
         TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
       }
+    }();
+  }
+
+  /// Carnet de un visitante ADICIONAL: toma los 2 lados y llena su nombre/CI.
+  Future<void> _carnetAcompanante(_Acompanante a) async {
+    final res = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
+    );
+    if (res == null || res.isEmpty) return;
+    setState(() { a.fotos = res; a.leyendo = true; });
+    () async {
+      String texto = '';
+      for (final path in res) {
+        texto = '$texto\n${await OcrService.leerTexto(path)}';
+      }
+      final data = OcrService.parseCarnet(texto);
+      if (!mounted) return;
+      setState(() {
+        a.leyendo = false;
+        if (data.nombre != null && a.nombre.text.trim().isEmpty) a.nombre.text = data.nombre!;
+        if (data.ci != null && a.ci.text.trim().isEmpty) a.ci.text = data.ci!;
+      });
     }();
   }
 
@@ -598,6 +630,41 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       final fotoUrl = fotoNube != null ? await Cloud.subirFoto(fotoNube) : null;
       await Cloud.evento('Visita', detalle: {...det, if (fotoUrl != null) 'foto_url': fotoUrl});
     }();
+
+    // Visitantes adicionales: cada uno se guarda como su propia visita (con su
+    // carnet) para que tenga registro único en el historial.
+    for (final a in _acomp) {
+      if (a.nombre.text.trim().isEmpty && a.fotos.isEmpty) continue;
+      final aid = await db.insert('visitas', {
+        'guardia_id': s.userId,
+        'guardia_nombre': s.userNombre,
+        'nombre_visita': a.nombre.text.trim(),
+        'ci': a.ci.text.trim(),
+        'foto_ci': a.fotos.isNotEmpty ? a.fotos[0] : null,
+        'foto_visitante': a.fotos.length > 1 ? a.fotos[1] : null,
+        'depto': _depto.text,
+        'autoriza': _autoriza.text,
+        'motivo': _motivo.text,
+        'cantidad': 1,
+        'observaciones': 'Acompañante de ${_nombre.text.trim()}',
+        'estado': 'dentro',
+        'edificio': s.edificioId,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      final fotoA = a.fotos.isNotEmpty ? a.fotos.first : null;
+      final nombreA = a.nombre.text.trim();
+      final ciA = a.ci.text.trim();
+      final deptoA = _depto.text.trim();
+      () async {
+        final url = fotoA != null ? await Cloud.subirFoto(fotoA) : null;
+        await Cloud.evento('Visita', detalle: {
+          'nombre': nombreA, 'ci': ciA, 'depto': deptoA, 'motivo': 'acompañante',
+          if (url != null) 'foto_url': url,
+        });
+      }();
+      await Audit.log('CREAR', 'visitas', '$aid', detalle: nombreA);
+    }
+
     if (!mounted) return;
     Navigator.pop(context);
   }
@@ -614,6 +681,59 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         ),
         Text(label, style: const TextStyle(fontSize: 11, color: Colors.black54)),
       ]),
+    );
+  }
+
+  /// Tarjeta de un visitante adicional: nombre + foto del carnet.
+  Widget _tarjetaAcomp(int i) {
+    final a = _acomp[i];
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            CircleAvatar(radius: 13, backgroundColor: const Color(0xFF00838F),
+                child: Text('${i + 2}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
+            const SizedBox(width: 8),
+            const Text('Visitante adicional', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.delete_outline, color: AppColors.rojo),
+              onPressed: () => setState(() {
+                _acomp[i].nombre.dispose();
+                _acomp[i].ci.dispose();
+                _acomp.removeAt(i);
+              }),
+            ),
+          ]),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF00838F)),
+              onPressed: () => _carnetAcompanante(a),
+              icon: const Icon(Icons.camera_alt, size: 18),
+              label: Text(a.fotos.isEmpty ? 'Foto del carnet (2 lados)' : 'Repetir carnet (${a.fotos.length})'),
+            ),
+          ),
+          if (a.leyendo)
+            const Padding(padding: EdgeInsets.only(top: 6), child: Text('Leyendo carnet...', style: TextStyle(fontSize: 12, color: Colors.black54))),
+          if (a.fotos.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: SizedBox(height: 70, child: ListView(scrollDirection: Axis.horizontal, children: [
+                for (final f in a.fotos)
+                  Padding(padding: const EdgeInsets.only(right: 6),
+                      child: ClipRRect(borderRadius: BorderRadius.circular(6),
+                          child: Image.file(File(f), width: 100, height: 70, fit: BoxFit.cover))),
+              ])),
+            ),
+          const SizedBox(height: 8),
+          TextField(controller: a.nombre, textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Nombre del visitante', isDense: true)),
+        ]),
+      ),
     );
   }
 
@@ -738,6 +858,16 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         TextField(controller: _ci, keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'CI / documento', prefixIcon: Icon(Icons.badge))),
         const SizedBox(height: 12),
+        // Visitantes adicionales: cada uno solo con su foto de carnet.
+        if (s.campoVisita('v_carnet')) ...[
+          for (int i = 0; i < _acomp.length; i++) _tarjetaAcomp(i),
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _acomp.add(_Acompanante())),
+            icon: const Icon(Icons.person_add),
+            label: const Text('Agregar otro visitante'),
+          ),
+          const SizedBox(height: 12),
+        ],
         // PASO 4: Vehiculo, motivo, observaciones
         _paso('4', 'Detalles', const Color(0xFF6A1B9A)),
         if (s.campoVisita('v_vehiculo')) ...[

@@ -27,6 +27,7 @@ import 'normativas_screen.dart';
 import 'online_screen.dart';
 import 'rondas_historial_screen.dart';
 import 'recurrentes_screen.dart';
+import 'condominios_screen.dart';
 import 'advertencias_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -356,6 +357,7 @@ class _HomeScreenState extends State<HomeScreen> {
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
           const Divider(height: 1),
+          item(Icons.apartment, 'Condominios (admin)', const CondominiosScreen(), color: const Color(0xFF00695C), show: s.isAdmin),
           item(Icons.wifi_tethering, 'Actividad del edificio', const OnlineScreen(soloEdificio: true), color: const Color(0xFF0277BD), show: s.isAdmin),
           item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen(), color: const Color(0xFFEF6C00), show: s.isAdmin),
           item(Icons.shield, 'Guardias', const GuardiasScreen(), color: AppColors.verde, show: s.isAdmin),
