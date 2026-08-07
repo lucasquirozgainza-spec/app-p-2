@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
+import '../services/config_sync.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -25,6 +26,7 @@ import 'guardias_screen.dart';
 import 'normativas_screen.dart';
 import 'online_screen.dart';
 import 'rondas_historial_screen.dart';
+import 'recurrentes_screen.dart';
 import 'advertencias_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -56,6 +58,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _latido() async {
     final g = await DeviceContext.gps();
     await Cloud.heartbeat(lat: g?['lat'], lng: g?['lng']);
+    // Aplicar config remota si el admin cambió algo (refresca la pantalla).
+    try {
+      if (await ConfigSync.aplicarRemota() && mounted) setState(() {});
+    } catch (_) {}
   }
 
   Future<void> _openOnline() async {
@@ -286,6 +292,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final all = <_Mod>[
       // Historiales
       _Mod('visitas', Icons.manage_search, 'Visitas', const Color(0xFF00897B), () => const VisitasScreen()),
+      _Mod('visitas_recu', Icons.repeat, 'Recurrentes', const Color(0xFF00695C), () => const RecurrentesScreen()),
       _Mod('rondas', Icons.history, 'Rondas', const Color(0xFF512DA8), () => const RondasHistorialScreen()),
       _Mod('propietarios', Icons.people, 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
       _Mod('vehiculos', Icons.directions_car, 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),

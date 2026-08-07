@@ -73,6 +73,8 @@ class _OnlineScreenState extends State<OnlineScreen> {
     await Cloud.heartbeat();
     final pres = await Cloud.presencia();
     final evs = await Cloud.eventos(tipo: _filtro, edificio: _edFiltro);
+    // Los eventos de tipo 'Config' (sincronización de ajustes) no se muestran.
+    evs.removeWhere((e) => e['tipo'] == 'Config');
     final turnos = widget.soloEdificio ? <Map<String, dynamic>>[] : await Cloud.eventosTurnoMes();
     if (!mounted) return;
     setState(() {
@@ -100,9 +102,11 @@ class _OnlineScreenState extends State<OnlineScreen> {
     String? path;
     String? error;
     try {
-      final todos = await Cloud.eventos(edificio: ed, limit: 1500);
+      // Descarga SOLO el tipo seleccionado (Ingreso, Incidente, Visita...).
+      final todos = await Cloud.eventos(tipo: _filtro, edificio: ed, limit: 1500);
+      final tituloPdf = _filtro == null ? titulo : '$titulo - $_filtro';
       // El armado del PDF corre en un isolate: la app no se congela.
-      path = await PdfExport.actividadNube(todos, titulo);
+      path = await PdfExport.actividadNube(todos, tituloPdf);
     } catch (e) {
       error = '$e';
     }
@@ -388,6 +392,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
     } catch (_) {}
     return Card(
       child: ListTile(
+        onTap: () => _verEvento(e),
         leading: CircleAvatar(
           backgroundColor: AppColors.azulMarino.withOpacity(.1),
           child: Icon(_icono(e['tipo']?.toString()), color: AppColors.azulMarino, size: 20),
@@ -397,8 +402,55 @@ class _OnlineScreenState extends State<OnlineScreen> {
             style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text('${e['edificio'] ?? ''}${sub.isNotEmpty ? ' · $sub' : ''}',
             maxLines: 2, overflow: TextOverflow.ellipsis),
-        trailing: Text(_hace(e['created_at']?.toString()),
-            style: const TextStyle(fontSize: 11, color: Colors.black54)),
+        trailing: const Icon(Icons.chevron_right, color: Colors.black26),
+      ),
+    );
+  }
+
+  /// Muestra el detalle del evento (con foto si la nube la tiene).
+  void _verEvento(Map<String, dynamic> e) {
+    Map detalle = {};
+    try {
+      final d = e['detalle'];
+      final m = d is String ? jsonDecode(d) : d;
+      if (m is Map) detalle = m;
+    } catch (_) {}
+    final fotos = <String>[];
+    final f1 = detalle['foto_url'];
+    if (f1 is String && f1.isNotEmpty) fotos.add(f1);
+    final f2 = detalle['fotos_url'];
+    if (f2 is List) {
+      for (final u in f2) {
+        if (u is String && u.isNotEmpty) fotos.add(u);
+      }
+    }
+    const ocultas = {'ubicacion', 'foto_url', 'fotos_url'};
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: Icon(_icono(e['tipo']?.toString()), color: AppColors.azulMarino, size: 34),
+        title: Text('${e['tipo']}'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Guardia: ${e['guardia'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Edificio: ${e['edificio'] ?? ''}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            Text('Fecha: ${_hace(e['created_at']?.toString())}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            const SizedBox(height: 8),
+            for (final entry in detalle.entries)
+              if ('${entry.value}'.trim().isNotEmpty && !ocultas.contains(entry.key))
+                Padding(padding: const EdgeInsets.only(bottom: 3), child: Text('${entry.key}: ${entry.value}')),
+            for (final u in fotos)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(u, fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const SizedBox(height: 40, child: Center(child: Text('Foto no disponible')))),
+                ),
+              ),
+          ]),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
       ),
     );
   }

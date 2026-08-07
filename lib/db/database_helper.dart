@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 13,
+      version: 14,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -105,6 +105,15 @@ class DB {
               await db.execute('ALTER TABLE hospedajes ADD COLUMN $col');
             } catch (_) {}
           }
+        }
+        if (oldV < 14) {
+          try {
+            await db.execute('''CREATE TABLE IF NOT EXISTS recurrentes (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              nombre TEXT, ci TEXT, depto TEXT, motivo TEXT, placa TEXT, foto TEXT,
+              dentro INTEGER DEFAULT 0, visita_abierta INTEGER,
+              edificio TEXT, created_at TEXT)''');
+          } catch (_) {}
         }
       },
     );
@@ -351,6 +360,14 @@ class DB {
       CREATE TABLE encargados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         edificio TEXT, depto TEXT, nombre TEXT, telefono TEXT
+      )''');
+
+    await db.execute('''
+      CREATE TABLE recurrentes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT, ci TEXT, depto TEXT, motivo TEXT, placa TEXT, foto TEXT,
+        dentro INTEGER DEFAULT 0, visita_abierta INTEGER,
+        edificio TEXT, created_at TEXT
       )''');
 
     await db.execute('''

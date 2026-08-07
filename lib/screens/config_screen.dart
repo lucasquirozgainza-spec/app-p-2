@@ -5,6 +5,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/auth_service.dart';
+import '../services/cloud.dart';
 import '../services/excel_import.dart';
 import '../services/notifications_service.dart';
 import '../services/retention.dart';
@@ -69,12 +70,14 @@ class _ConfigScreenState extends State<ConfigScreen> {
   Future<void> _setMod(String key, dynamic val) async {
     setState(() => _modulos[key] = val);
     final db = await DB.instance.database;
-    await db.update('edificios', {'modulos': jsonEncode(_modulos)},
-        where: 'id=?', whereArgs: [_selId]);
+    final json = jsonEncode(_modulos);
+    await db.update('edificios', {'modulos': json}, where: 'id=?', whereArgs: [_selId]);
     await Audit.log('EDITAR', 'edificios', _selId, detalle: '$key=$val');
     if (_selId == AppState.instance.edificioId) {
       await AppState.instance.loadEdificio();
     }
+    // Publicar a los otros dispositivos del edificio (config remota).
+    Cloud.pushConfig(_selId, json);
   }
 
   int get _tarjetaDigitos {
@@ -86,13 +89,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
   Future<void> _toggle(String key, bool val) async {
     setState(() => _modulos[key] = val);
     final db = await DB.instance.database;
-    await db.update('edificios', {'modulos': jsonEncode(_modulos)},
-        where: 'id=?', whereArgs: [_selId]);
+    final json = jsonEncode(_modulos);
+    await db.update('edificios', {'modulos': json}, where: 'id=?', whereArgs: [_selId]);
     await Audit.log('EDITAR', 'edificios', _selId, detalle: '$key=$val');
     // Si es el edificio activo, refrescar estado global.
     if (_selId == AppState.instance.edificioId) {
       await AppState.instance.loadEdificio();
     }
+    // Publicar a los otros dispositivos del edificio (config remota).
+    Cloud.pushConfig(_selId, json);
   }
 
   /// Borra AHORA todos los datos/registros y de prueba (menos guardias y cámaras).

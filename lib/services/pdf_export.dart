@@ -684,7 +684,9 @@ class PdfExport {
 
   static String _h(Object? iso) {
     try {
-      return DateFormat('dd/MM HH:mm').format(DateTime.parse(iso.toString()));
+      // La nube guarda en UTC; se convierte a hora local para que coincida con
+      // la hora real del celular.
+      return DateFormat('dd/MM HH:mm').format(DateTime.parse(iso.toString()).toLocal());
     } catch (_) {
       return '';
     }

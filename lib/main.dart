@@ -6,6 +6,7 @@ import 'services/app_state.dart';
 import 'services/retention.dart';
 import 'services/notifications_service.dart';
 import 'services/cloud.dart';
+import 'services/config_sync.dart';
 import 'screens/home_screen.dart';
 
 void main() {
@@ -58,6 +59,10 @@ class _BootState extends State<_Boot> {
     try {
       await Cloud.init();
       await Cloud.heartbeat();
+    } catch (_) {}
+    // Aplicar config remota que haya publicado el admin para este edificio.
+    try {
+      await ConfigSync.aplicarRemota();
     } catch (_) {}
     // La purga (local + nube) corre DESPUÉS de iniciar la nube, así el borrado
     // de fotos viejas en Supabase Storage se ejecuta cada vez que se abre la app.

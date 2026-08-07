@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'app_state.dart';
 
 /// Comprime una foto para la nube: máx 1080 px y JPEG calidad 55 (~80-150 KB).
@@ -42,9 +44,25 @@ class Cloud {
       };
 
   static Future<void> init() async {
+    // ID ÚNICO por instalación. OJO: androidInfo.id es el Build.ID del sistema
+    // y es IGUAL en teléfonos del mismo modelo/firmware, así que NO sirve para
+    // distinguir dispositivos (hacía que las presencias se pisaran entre sí y
+    // que un guardia "tapara" a otro). Generamos un id propio y lo guardamos.
     try {
-      final info = await DeviceInfoPlugin().androidInfo;
-      deviceId = info.id;
+      final prefs = await SharedPreferences.getInstance();
+      var uid = prefs.getString('device_uid');
+      if (uid == null || uid.isEmpty) {
+        String base = '';
+        try {
+          final info = await DeviceInfoPlugin().androidInfo;
+          base = '${info.manufacturer}_${info.model}'.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+        } catch (_) {}
+        final rnd = Random();
+        final r = List.generate(12, (_) => rnd.nextInt(36).toRadixString(36)).join();
+        uid = '${base}_${DateTime.now().millisecondsSinceEpoch}_$r';
+        await prefs.setString('device_uid', uid);
+      }
+      deviceId = uid;
     } catch (_) {}
     enabled = true;
   }
@@ -93,6 +111,55 @@ class Cloud {
       if (r.statusCode >= 300) lastError = 'evento ${r.statusCode}: ${r.body}';
     } catch (e) {
       lastError = 'evento: $e';
+    }
+  }
+
+  /// El admin publica la configuración (módulos) de un edificio para que los
+  /// OTROS dispositivos de ese edificio la reciban. Se guarda como un evento
+  /// 'Config' con el JSON de módulos.
+  static Future<void> pushConfig(String edificio, String modulosJson) async {
+    try {
+      await http.post(
+        Uri.parse('$_rest/eventos'),
+        headers: {..._h, 'Prefer': 'return=minimal'},
+        body: jsonEncode({
+          'tipo': 'Config',
+          'edificio': edificio,
+          'guardia': AppState.instance.userNombre ?? 'Admin',
+          'detalle': {'modulos': modulosJson},
+          'device_id': deviceId,
+        }),
+      ).timeout(const Duration(seconds: 12));
+    } catch (e) {
+      lastError = 'pushConfig: $e';
+    }
+  }
+
+  /// Trae la última configuración publicada para [edificio] (o null).
+  /// Devuelve {created_at, modulos}.
+  static Future<Map<String, dynamic>?> ultimaConfig(String edificio) async {
+    if (AppState.instance.soloLocal) return null;
+    try {
+      final params = [
+        'select=created_at,detalle',
+        'tipo=eq.Config',
+        'edificio=eq.${Uri.encodeComponent(edificio)}',
+        'order=created_at.desc',
+        'limit=1',
+      ];
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+          .timeout(const Duration(seconds: 12));
+      if (r.statusCode >= 300) return null;
+      final list = jsonDecode(r.body) as List;
+      if (list.isEmpty) return null;
+      final row = list.first as Map<String, dynamic>;
+      final det = row['detalle'];
+      final modulos = det is Map ? det['modulos'] : null;
+      if (modulos == null) return null;
+      return {'created_at': row['created_at'], 'modulos': modulos};
+    } catch (e) {
+      lastError = 'ultimaConfig: $e';
+      return null;
     }
   }
 
