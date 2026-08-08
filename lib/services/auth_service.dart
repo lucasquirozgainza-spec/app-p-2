@@ -63,9 +63,12 @@ class AuthService {
     }
     if (nueva.trim().length < 4) return 'La nueva contrasena es muy corta';
     final salt = CryptoUtil.newSalt();
-    await db.update('usuarios', {'salt': salt, 'pass_hash': CryptoUtil.hash(nueva, salt)},
+    final hash = CryptoUtil.hash(nueva, salt);
+    await db.update('usuarios', {'salt': salt, 'pass_hash': hash},
         where: 'id=?', whereArgs: [u['id']]);
     await Audit.log('CAMBIO_PASS', 'usuarios', '${u['id']}');
+    // Propagar la nueva contraseña a los otros dispositivos (por la nube).
+    Cloud.pushAdminPass(usuario.trim(), salt, hash);
     return null;
   }
 

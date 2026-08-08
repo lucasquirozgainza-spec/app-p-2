@@ -143,6 +143,36 @@ class _ConfigScreenState extends State<ConfigScreen> {
     );
   }
 
+  /// Vacía TODA la actividad de la nube (todos los edificios).
+  Future<void> _vaciarNube() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00), size: 38),
+        title: const Text('¿Vaciar la nube?'),
+        content: const Text('Se borrará TODA la actividad guardada en la nube (todos los '
+            'edificios) para liberar espacio. Los registros locales de cada celular NO se tocan.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF6C00)),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Vaciar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    final okB = await Cloud.borrarEventos(edificio: null);
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(okB ? 'Nube vaciada.' : 'No se pudo vaciar: ${Cloud.lastError ?? ''}'),
+        backgroundColor: okB ? AppColors.verde : AppColors.rojo));
+  }
+
   Future<void> _activar(String id) async {
     await AppState.instance.setEdificio(id);
     if (!mounted) return;
@@ -716,6 +746,16 @@ class _ConfigScreenState extends State<ConfigScreen> {
               subtitle: const Text('Borra registros y datos de prueba (no los guardias).'),
               trailing: const Icon(Icons.chevron_right),
               onTap: _eliminarTodoAhora,
+            ),
+          ),
+          Card(
+            child: ListTile(
+              dense: true,
+              leading: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00)),
+              title: const Text('Vaciar la nube ahora'),
+              subtitle: const Text('Borra la actividad de la nube (se limpia sola cada 3 meses).'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _vaciarNube,
             ),
           ),
           const SizedBox(height: 16),

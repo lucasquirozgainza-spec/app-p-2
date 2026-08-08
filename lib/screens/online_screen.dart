@@ -9,6 +9,7 @@ import '../services/app_state.dart';
 import '../services/cloud.dart';
 import '../services/pdf_export.dart';
 import '../theme.dart';
+import 'config_screen.dart';
 
 /// Actividad en línea. Con [soloEdificio]=true (guardias) solo se ve la
 /// actividad del edificio actual, para que los guardias de los distintos
@@ -74,12 +75,18 @@ class _OnlineScreenState extends State<OnlineScreen> {
 
   Future<void> _cargar({bool silencioso = false}) async {
     if (!silencioso) setState(() => _loading = true);
-    await Cloud.heartbeat();
-    final pres = await Cloud.presencia();
-    final evs = await Cloud.eventos(tipo: _filtro, edificio: _edFiltro);
-    // Los eventos de tipo 'Config' (sincronización de ajustes) no se muestran.
-    evs.removeWhere((e) => e['tipo'] == 'Config');
-    final turnos = widget.soloEdificio ? <Map<String, dynamic>>[] : await Cloud.eventosTurnoMes();
+    // Cargar todo EN PARALELO para que no tarde (antes iban una tras otra).
+    Cloud.heartbeat(); // en segundo plano, no bloquea la carga
+    final res = await Future.wait([
+      Cloud.presencia(),
+      Cloud.eventos(tipo: _filtro, edificio: _edFiltro),
+      widget.soloEdificio ? Future.value(<Map<String, dynamic>>[]) : Cloud.eventosTurnoMes(),
+    ]);
+    final pres = res[0];
+    final evs = res[1];
+    // Eventos internos de sincronización no se muestran en la actividad.
+    evs.removeWhere((e) => e['tipo'] == 'Config' || e['tipo'] == 'AdminPass');
+    final turnos = res[2];
     if (!mounted) return;
     setState(() {
       _presencia = pres;
@@ -221,6 +228,13 @@ class _OnlineScreenState extends State<OnlineScreen> {
             tooltip: 'Descargar PDF',
             onPressed: _descargarPdf,
           ),
+          if (!widget.soloEdificio)
+            IconButton(
+              icon: const Icon(Icons.settings),
+              tooltip: 'Configurar este edificio',
+              onPressed: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => ConfigScreen(initialEdificio: _edAdmin))),
+            ),
           IconButton(
             icon: const Icon(Icons.delete_forever),
             tooltip: 'Eliminar actividad de la nube',

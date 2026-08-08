@@ -239,14 +239,15 @@ class _HospedajeFormState extends State<HospedajeForm> {
     setState(() { h.fotos = res; h.leyendo = true; });
     // OCR en SEGUNDO PLANO: autocompleta nombre (y número si es pasaporte).
     () async {
-      String texto = '';
-      for (final f in res) {
-        texto = '$texto\n${await OcrService.leerTexto(f)}';
-      }
       if (carnet) {
-        final d = OcrService.parseCarnet(texto);
+        final d = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
         if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
+        if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
       } else {
+        String texto = '';
+        for (final f in res) {
+          texto = '$texto\n${await OcrService.leerTexto(f)}';
+        }
         final d = OcrService.parsePasaporte(texto);
         if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
         if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;

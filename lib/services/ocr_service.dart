@@ -131,6 +131,85 @@ class OcrService {
     return CarnetData(ci, (nombre != null && nombre.trim().isNotEmpty) ? nombre : null);
   }
 
+  /// Lee un carnet de sus DOS fotos, respetando dónde está cada dato:
+  /// - Carnet NUEVO: el nombre está en la 1ra foto (frente).
+  /// - Carnet ANTIGUO: el nombre está en la 2da foto (reverso), tras "A:".
+  /// - El NÚMERO de carnet siempre está en la 1ra foto (frente).
+  static Future<CarnetData> leerCarnetDosLados(String frontPath, String? backPath) async {
+    final t1 = await leerTexto(frontPath);
+    final t2 = (backPath != null && backPath.isNotEmpty) ? await leerTexto(backPath) : '';
+    // Número: SOLO del frente (así no confunde con el CI de padre/madre del reverso).
+    final ci = _ciDe(t1);
+    // Nombre: nuevo (frente) -> antiguo (reverso) -> antiguo (frente) -> nuevo (reverso).
+    final nombre = _nombreNuevoDe(t1) ?? _nombreAntiguoDe(t2) ?? _nombreAntiguoDe(t1) ?? _nombreNuevoDe(t2);
+    return CarnetData(ci, nombre);
+  }
+
+  /// Número de carnet a partir del texto del FRENTE (N° / No. / 6-9 dígitos).
+  static String? _ciDe(String texto) {
+    final up = texto.toUpperCase();
+    final mrz = RegExp(r'BOL[<]*?(\d{6,9})').firstMatch(up);
+    if (mrz != null) return mrz.group(1);
+    // Prioridad: la etiqueta "No." / "N°" (evita serie/seccion de 5 y series largas).
+    final etiqueta = RegExp(r'N[O°\.\s]{0,4}(\d{6,9})').firstMatch(up);
+    if (etiqueta != null) return etiqueta.group(1);
+    // Respaldo: número aislado de 6-8 dígitos.
+    final nums = RegExp(r'(?<!\d)(\d{6,8})(?!\d)').allMatches(up).map((e) => e.group(1)!).toList();
+    if (nums.isNotEmpty) {
+      nums.sort((a, b) => b.length.compareTo(a.length));
+      return nums.first;
+    }
+    return null;
+  }
+
+  /// Nombre en carnet NUEVO: por MRZ o por etiquetas NOMBRES/APELLIDOS.
+  static String? _nombreNuevoDe(String texto) {
+    final up = texto.toUpperCase();
+    final mrzName = RegExp(r'([A-Z]+(?:<[A-Z]+)*)<<([A-Z<]+)').firstMatch(up);
+    if (mrzName != null) {
+      final ape = mrzName.group(1)!.replaceAll('<', ' ').trim();
+      final nom = mrzName.group(2)!.replaceAll('<', ' ').trim();
+      if (ape.isNotEmpty && nom.isNotEmpty) return _limpiarNombre('$nom $ape');
+    }
+    final lines = texto.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+    String? nom, ape;
+    for (int i = 0; i < lines.length; i++) {
+      final L = lines[i].toUpperCase();
+      if (nom == null && L.contains('NOMBRE')) nom = _valorLabel(lines, i);
+      if (ape == null && L.contains('APELLIDO')) ape = _valorLabel(lines, i);
+    }
+    final full = [nom, ape].where((e) => e != null && e.trim().isNotEmpty).join(' ');
+    if (full.trim().isNotEmpty) return _limpiarNombre(full);
+    return null;
+  }
+
+  /// Nombre en carnet ANTIGUO (reverso): tras "PERTENECE ... A:" hasta "NACIDO".
+  static String? _nombreAntiguoDe(String texto) {
+    final plana = texto.toUpperCase().replaceAll('\n', ' ').replaceAll(RegExp(r'\s+'), ' ');
+    // "...PERTENECE A: NOMBRE COMPLETO NACIDO EL..."
+    var m = RegExp(r'PERTENECE.{0,12}?A\s*:?\s*([A-ZÁÉÍÓÚÑ ]{6,60}?)\s+NACID').firstMatch(plana);
+    m ??= RegExp(r'\bA\s*:\s*([A-ZÁÉÍÓÚÑ ]{6,60}?)\s+NACID').firstMatch(plana);
+    if (m != null) {
+      final cand = m.group(1)!.trim();
+      if (_pareceNombre(cand)) return _limpiarNombre(cand);
+    }
+    // Respaldo: línea siguiente a "A:" / "PERTENECE" que parezca nombre.
+    final lines = texto.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+    for (int i = 0; i < lines.length; i++) {
+      final L = lines[i].toUpperCase();
+      if (L.contains('PERTENECE') || RegExp(r'^A\s*:').hasMatch(L)) {
+        for (int j = i; j < lines.length && j < i + 4; j++) {
+          final cand = lines[j]
+              .replaceAll(RegExp(r'^.*?A\s*:\s*'), '')
+              .replaceAll(RegExp(r'PERTENECE|CERTIFICA|IMPRESI|FOTOGRAF|FIRMA', caseSensitive: false), '')
+              .trim();
+          if (_pareceNombre(cand)) return _limpiarNombre(cand);
+        }
+      }
+    }
+    return null;
+  }
+
   // Palabras que NO forman parte de un nombre (etiquetas del carnet).
   static const _stop = {
     'FECHA', 'NACIMIENTO', 'EMISION', 'EMISIÓN', 'EXPIRACION', 'EXPIRACIÓN',

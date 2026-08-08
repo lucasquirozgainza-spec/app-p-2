@@ -15,7 +15,9 @@ Uint8List? _comprimirFotoBytes(Uint8List input) {
   try {
     final decoded = img.decodeImage(input);
     if (decoded == null) return null;
-    final resized = decoded.width > 1080 ? img.copyResize(decoded, width: 1080) : decoded;
+    // Aplicar la orientación EXIF para que la miniatura no salga volteada.
+    final upright = img.bakeOrientation(decoded);
+    final resized = upright.width > 1080 ? img.copyResize(upright, width: 1080) : upright;
     return Uint8List.fromList(img.encodeJpg(resized, quality: 55));
   } catch (_) {
     return null;
@@ -135,6 +137,46 @@ class Cloud {
     }
   }
 
+  /// Publica la contraseña de admin (hash + salt, NO texto plano) para que los
+  /// otros dispositivos la adopten. Se guarda como evento 'AdminPass'.
+  static Future<void> pushAdminPass(String usuario, String salt, String hash) async {
+    try {
+      await http.post(
+        Uri.parse('$_rest/eventos'),
+        headers: {..._h, 'Prefer': 'return=minimal'},
+        body: jsonEncode({
+          'tipo': 'AdminPass',
+          'edificio': '*',
+          'guardia': 'Admin',
+          'detalle': {'usuario': usuario, 'salt': salt, 'hash': hash},
+          'device_id': deviceId,
+        }),
+      ).timeout(const Duration(seconds: 12));
+    } catch (e) {
+      lastError = 'pushAdminPass: $e';
+    }
+  }
+
+  /// Trae la última contraseña de admin publicada (o null).
+  static Future<Map<String, dynamic>?> ultimaAdminPass() async {
+    if (AppState.instance.soloLocal) return null;
+    try {
+      final params = ['select=created_at,detalle', 'tipo=eq.AdminPass', 'order=created_at.desc', 'limit=1'];
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+          .timeout(const Duration(seconds: 12));
+      if (r.statusCode >= 300) return null;
+      final list = jsonDecode(r.body) as List;
+      if (list.isEmpty) return null;
+      final row = list.first as Map<String, dynamic>;
+      final det = row['detalle'];
+      if (det is! Map || det['salt'] == null || det['hash'] == null) return null;
+      return {'created_at': row['created_at'], 'usuario': det['usuario'], 'salt': det['salt'], 'hash': det['hash']};
+    } catch (e) {
+      lastError = 'ultimaAdminPass: $e';
+      return null;
+    }
+  }
+
   /// Trae la última configuración publicada para [edificio] (o null).
   /// Devuelve {created_at, modulos}.
   static Future<Map<String, dynamic>?> ultimaConfig(String edificio) async {
@@ -243,6 +285,19 @@ class Cloud {
 
   /// Borra eventos de la nube (para liberar espacio en Supabase). Si se pasa
   /// [edificio], solo borra los de ese edificio; sin edificio, borra todos.
+  /// Borra de la nube los eventos con más de [dias] días (auto-limpieza para
+  /// que el servidor no se llene). Se llama en cada arranque desde Retention.
+  static Future<void> borrarEventosViejos(int dias) async {
+    if (AppState.instance.soloLocal) return;
+    try {
+      final corte = DateTime.now().subtract(Duration(days: dias)).toUtc().toIso8601String();
+      await http.delete(Uri.parse('$_rest/eventos?created_at=lt.${Uri.encodeComponent(corte)}'), headers: _h)
+          .timeout(const Duration(seconds: 20));
+    } catch (e) {
+      lastError = 'borrarViejos: $e';
+    }
+  }
+
   static Future<bool> borrarEventos({String? edificio}) async {
     try {
       final filtro = edificio != null

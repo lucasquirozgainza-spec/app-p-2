@@ -60,9 +60,10 @@ class _BootState extends State<_Boot> {
       await Cloud.init();
       await Cloud.heartbeat();
     } catch (_) {}
-    // Aplicar config remota que haya publicado el admin para este edificio.
+    // Aplicar config y contraseña de admin remotas (publicadas por el admin).
     try {
       await ConfigSync.aplicarRemota();
+      await ConfigSync.aplicarAdminPassRemota();
     } catch (_) {}
     // La purga (local + nube) corre DESPUÉS de iniciar la nube, así el borrado
     // de fotos viejas en Supabase Storage se ejecuta cada vez que se abre la app.

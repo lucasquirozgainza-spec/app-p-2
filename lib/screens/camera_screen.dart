@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../services/gallery.dart';
+import '../services/img_util.dart';
 import '../theme.dart';
 
 /// Cámara propia: permite tomar fotos SEGUIDAS sin la confirmación del
@@ -139,9 +140,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final dest = p.join(fotosDir.path, 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(shot.path).copy(dest);
       _fotos.add(dest);
-      // Guardar en galeria en segundo plano (sin await) para pasar rapido a la
-      // siguiente foto en modo ronda.
-      Gallery.guardar(dest, album: widget.album);
+      // En segundo plano: corregir orientación (que no salga volteada) y luego
+      // guardar en galería. No demora la siguiente foto.
+      () async {
+        await ImgUtil.normalizarOrientacion(dest);
+        Gallery.guardar(dest, album: widget.album);
+      }();
       if (!widget.multi) {
         if (mounted) Navigator.pop(context, _fotos);
         return;

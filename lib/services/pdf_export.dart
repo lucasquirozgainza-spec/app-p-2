@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -20,6 +21,7 @@ Future<Uint8List> _actividadPdfBytes(Map<String, dynamic> args) async {
   final recortado = args['recortado'] as bool;
   final maxFilas = args['maxFilas'] as int;
   final rows = (args['rows'] as List).map((r) => (r as List).cast<String>()).toList();
+  final logo = args['logo'] as Uint8List?;
 
   final navy = PdfColor.fromInt(0xFF0A335D);
   final rojo = PdfColor.fromInt(0xFFC62828);
@@ -49,12 +51,20 @@ Future<Uint8List> _actividadPdfBytes(Map<String, dynamic> args) async {
           borderRadius: pw.BorderRadius.circular(10),
         ),
         child: pw.Row(children: [
-          pw.Container(
-            width: 46, height: 46,
-            decoration: pw.BoxDecoration(color: rojo, borderRadius: pw.BorderRadius.circular(10)),
-            alignment: pw.Alignment.center,
-            child: pw.Text('O', style: pw.TextStyle(color: PdfColors.white, fontSize: 26, fontWeight: pw.FontWeight.bold)),
-          ),
+          if (logo != null)
+            pw.Container(
+              width: 60, height: 60,
+              padding: const pw.EdgeInsets.all(6),
+              decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: pw.BorderRadius.circular(10)),
+              child: pw.Image(pw.MemoryImage(logo), fit: pw.BoxFit.contain),
+            )
+          else
+            pw.Container(
+              width: 46, height: 46,
+              decoration: pw.BoxDecoration(color: rojo, borderRadius: pw.BorderRadius.circular(10)),
+              alignment: pw.Alignment.center,
+              child: pw.Text('O', style: pw.TextStyle(color: PdfColors.white, fontSize: 26, fontWeight: pw.FontWeight.bold)),
+            ),
           pw.SizedBox(width: 14),
           pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
             pw.Text('OSIRIS Seguridad', style: pw.TextStyle(color: PdfColors.white, fontSize: 22, fontWeight: pw.FontWeight.bold)),
@@ -102,7 +112,22 @@ class PdfExport {
   static final _navy = PdfColor.fromInt(0xFF0A335D);
   static final _gris = PdfColor.fromInt(0xFFEFEFEF);
 
+  // Logo OSIRIS para los PDF (se carga una vez desde assets).
+  static Uint8List? _logoBytes;
+  static bool _logoTried = false;
+  static Future<Uint8List?> _ensureLogo() async {
+    if (_logoTried) return _logoBytes;
+    _logoTried = true;
+    try {
+      _logoBytes = (await rootBundle.load('assets/osiris_logo.png')).buffer.asUint8List();
+    } catch (_) {
+      _logoBytes = null;
+    }
+    return _logoBytes;
+  }
+
   static Future<void> informe({required DateTime desde, required String periodo}) async {
+    await _ensureLogo();
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
     final di = desde.toIso8601String();
@@ -176,6 +201,7 @@ class PdfExport {
 
   /// Informe PDF solo de advertencias (descargable/compartible).
   static Future<void> advertencias() async {
+    await _ensureLogo();
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
     final rows = await db.query('advertencias',
@@ -214,6 +240,7 @@ class PdfExport {
 
   /// Informe MENSUAL de toda la actividad del edificio.
   static Future<void> informeMensual({required DateTime mes}) async {
+    await _ensureLogo();
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
     final desde = DateTime(mes.year, mes.month, 1);
@@ -288,6 +315,7 @@ class PdfExport {
   /// Reporte MENSUAL de guardias: dias, horas, horas extra (>12h), turnos 24h
   /// y dias sin uniforme.
   static Future<void> reporteGuardias({required DateTime mes}) async {
+    await _ensureLogo();
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
     final desde = DateTime(mes.year, mes.month, 1);
@@ -403,6 +431,7 @@ class PdfExport {
   /// cuentan el tiempo que el guardia se quedó pasada su hora de relevo (llegar
   /// temprano NO da extra).
   static Future<void> reporteIngresoSalida({required DateTime mes}) async {
+    await _ensureLogo();
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
     final desde = DateTime(mes.year, mes.month, 1);
@@ -517,6 +546,7 @@ class PdfExport {
       rows.add([_h(e['created_at']), _s(e['tipo']), _s(e['guardia']), _s(e['edificio']), det]);
     }
 
+    final logo = await _ensureLogo();
     final bytes = await compute(_actividadPdfBytes, <String, dynamic>{
       'titulo': _safe(titulo),
       'fecha': DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now()),
@@ -524,6 +554,7 @@ class PdfExport {
       'total': total,
       'recortado': recortado,
       'maxFilas': maxFilas,
+      'logo': logo,
     });
 
     final dir = await getApplicationDocumentsDirectory();
@@ -585,12 +616,20 @@ class PdfExport {
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
-          pw.Container(
-            width: 46, height: 46,
-            decoration: pw.BoxDecoration(color: _rojo, borderRadius: pw.BorderRadius.circular(10)),
-            alignment: pw.Alignment.center,
-            child: pw.Text('O', style: pw.TextStyle(color: PdfColors.white, fontSize: 26, fontWeight: pw.FontWeight.bold)),
-          ),
+          if (_logoBytes != null)
+            pw.Container(
+              width: 60, height: 60,
+              padding: const pw.EdgeInsets.all(6),
+              decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: pw.BorderRadius.circular(10)),
+              child: pw.Image(pw.MemoryImage(_logoBytes!), fit: pw.BoxFit.contain),
+            )
+          else
+            pw.Container(
+              width: 46, height: 46,
+              decoration: pw.BoxDecoration(color: _rojo, borderRadius: pw.BorderRadius.circular(10)),
+              alignment: pw.Alignment.center,
+              child: pw.Text('O', style: pw.TextStyle(color: PdfColors.white, fontSize: 26, fontWeight: pw.FontWeight.bold)),
+            ),
           pw.SizedBox(width: 14),
           pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
             pw.Text('OSIRIS Seguridad', style: pw.TextStyle(color: PdfColors.white, fontSize: 22, fontWeight: pw.FontWeight.bold)),

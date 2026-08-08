@@ -91,6 +91,12 @@ class _VisitasScreenState extends State<VisitasScreen> {
         'created_at': DateTime.now().toIso8601String(),
       });
     }
+    // Si esta visita pertenece a un recurrente, marcarlo también como FUERA
+    // (así no hay que dar salida en los dos lados).
+    try {
+      await db.update('recurrentes', {'dentro': 0, 'visita_abierta': null},
+          where: 'visita_abierta=?', whereArgs: [v['id']]);
+    } catch (_) {}
     await Audit.log('SALIDA_VISITA', 'visitas', '${v['id']}');
     _load();
   }
@@ -316,7 +322,69 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   final List<_Acompanante> _acomp = []; // visitantes adicionales
   final _ahora = DateTime.now();
 
+  bool _recurrenteAvisado = false;
+
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
+
+  /// Si el CI o el nombre coinciden con un recurrente ya registrado, ofrece
+  /// marcar su ingreso directo (sin volver a llenar todo).
+  Future<void> _chequearRecurrente() async {
+    if (_recurrenteAvisado) return;
+    final ci = _ci.text.trim();
+    final nom = _nombre.text.trim();
+    if (ci.length < 5 && nom.length < 4) return;
+    final db = await DB.instance.database;
+    final ed = AppState.instance.edificioId;
+    final rows = await db.query('recurrentes',
+        where: 'edificio=? AND (ci=? OR nombre=?)', whereArgs: [ed, ci, nom]);
+    if (rows.isEmpty || !mounted) return;
+    final r = rows.first;
+    _recurrenteAvisado = true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.repeat, color: Color(0xFF00695C), size: 36),
+        title: const Text('Visita recurrente'),
+        content: Text('${r['nombre']} está registrado como visita recurrente'
+            '${(r['depto'] ?? '').toString().isNotEmpty ? ' del depto ${r['depto']}' : ''}. '
+            '¿Marcar su ingreso directamente?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('No, seguir')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Marcar ingreso'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _ingresoRecurrente(r);
+  }
+
+  Future<void> _ingresoRecurrente(Map<String, dynamic> r) async {
+    final db = await DB.instance.database;
+    final s = AppState.instance;
+    final depto = (_depto.text.trim().isNotEmpty ? _depto.text.trim() : (r['depto'] ?? '').toString());
+    final vid = await db.insert('visitas', {
+      'guardia_id': s.userId,
+      'guardia_nombre': s.userNombre,
+      'nombre_visita': r['nombre'],
+      'ci': r['ci'],
+      'foto_ci': r['foto'],
+      'depto': depto,
+      'motivo': r['motivo'],
+      'placa': r['placa'],
+      'observaciones': 'Visita recurrente',
+      'estado': 'dentro',
+      'edificio': s.edificioId,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    await db.update('recurrentes', {'dentro': 1, 'visita_abierta': vid}, where: 'id=?', whereArgs: [r['id']]);
+    Cloud.evento('Visita', detalle: {'nombre': r['nombre'], 'depto': depto, 'tipo': 'recurrente ingreso'});
+    if (!mounted) return;
+    TopToast.show(context, 'Ingreso de ${r['nombre']}');
+    Navigator.pop(context);
+  }
 
   /// Captura la tarjeta (cámara propia, sin confirmar) y lee el número en
   /// SEGUNDO PLANO para no demorar. Si no lo lee, avisa para repetir manual.
@@ -353,15 +421,11 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       _carnetAnverso = res.isNotEmpty ? res[0] : null;
       _carnetReverso = res.length > 1 ? res[1] : null;
     });
-    // OCR en segundo plano: no bloquea el formulario.
+    // OCR en segundo plano: no bloquea el formulario. Lee según el tipo de
+    // carnet (nuevo: nombre al frente; antiguo: nombre al reverso).
     () async {
-      String texto = '';
-      for (final path in res) {
-        texto = '$texto\n${await OcrService.leerTexto(path)}';
-      }
-      final data = OcrService.parseCarnet(texto);
+      final data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
       if (!mounted) return;
-      _carnetTexto = texto;
       setState(() {
         if (data.ci != null) _ci.text = data.ci!;
         if (data.nombre != null) _nombre.text = data.nombre!;
@@ -369,6 +433,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       if (data.ci != null || data.nombre != null) {
         TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
       }
+      _chequearRecurrente();
     }();
   }
 
@@ -381,11 +446,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     if (res == null || res.isEmpty) return;
     setState(() { a.fotos = res; a.leyendo = true; });
     () async {
-      String texto = '';
-      for (final path in res) {
-        texto = '$texto\n${await OcrService.leerTexto(path)}';
-      }
-      final data = OcrService.parseCarnet(texto);
+      final data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
       if (!mounted) return;
       setState(() {
         a.leyendo = false;
@@ -853,9 +914,11 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           const SizedBox(height: 8),
         ],
         TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
+            onChanged: (_) => _chequearRecurrente(),
             decoration: const InputDecoration(labelText: 'Nombre *', prefixIcon: Icon(Icons.person))),
         const SizedBox(height: 12),
         TextField(controller: _ci, keyboardType: TextInputType.number,
+            onChanged: (_) => _chequearRecurrente(),
             decoration: const InputDecoration(labelText: 'CI / documento', prefixIcon: Icon(Icons.badge))),
         const SizedBox(height: 12),
         // Visitantes adicionales: cada uno solo con su foto de carnet.

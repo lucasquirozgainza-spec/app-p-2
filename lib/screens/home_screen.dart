@@ -27,7 +27,7 @@ import 'normativas_screen.dart';
 import 'online_screen.dart';
 import 'rondas_historial_screen.dart';
 import 'recurrentes_screen.dart';
-import 'condominios_screen.dart';
+import 'guardias_nube_screen.dart';
 import 'advertencias_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -62,15 +62,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // Aplicar config remota si el admin cambió algo (refresca la pantalla).
     try {
       if (await ConfigSync.aplicarRemota() && mounted) setState(() {});
+      await ConfigSync.aplicarAdminPassRemota();
     } catch (_) {}
-  }
-
-  Future<void> _openOnline() async {
-    final s = AppState.instance;
-    if (s.isAdmin) return _open(const OnlineScreen());
-    final ok = await Navigator.push<bool>(
-        context, MaterialPageRoute(builder: (_) => const AdminLoginScreen()));
-    if (ok == true && mounted) _open(const OnlineScreen());
   }
 
   Future<void> _open(Widget screen) async {
@@ -357,8 +350,8 @@ class _HomeScreenState extends State<HomeScreen> {
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
           const Divider(height: 1),
-          item(Icons.apartment, 'Condominios (admin)', const CondominiosScreen(), color: const Color(0xFF00695C), show: s.isAdmin),
-          item(Icons.wifi_tethering, 'Actividad del edificio', const OnlineScreen(soloEdificio: true), color: const Color(0xFF0277BD), show: s.isAdmin),
+          item(Icons.apartment, 'Condominios (admin)', const OnlineScreen(soloEdificio: false), color: const Color(0xFF00695C), show: s.isAdmin),
+          item(Icons.groups, 'Guardias - todos (admin)', const GuardiasNubeScreen(), color: const Color(0xFF00838F), show: s.isAdmin),
           item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen(), color: const Color(0xFFEF6C00), show: s.isAdmin),
           item(Icons.shield, 'Guardias', const GuardiasScreen(), color: AppColors.verde, show: s.isAdmin),
           const Divider(height: 1),
@@ -371,14 +364,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 _entrarAdmin();
               },
             ),
-          ListTile(
-            leading: const Icon(Icons.cloud, color: Color(0xFF0277BD)),
-            title: const Text('En línea - todos (admin)'),
-            onTap: () {
-              Navigator.pop(context);
-              _openOnline();
-            },
-          ),
           ListTile(
             leading: const Icon(Icons.settings, color: AppColors.azulMarino),
             title: const Text('Configuración (admin)'),

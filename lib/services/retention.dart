@@ -26,8 +26,10 @@ class Retention {
       } catch (_) {}
     }
     await _borrarArchivos(dias);
-    // Limpiar tambien las fotos viejas en la nube (Storage).
+    // Limpiar tambien la nube: fotos (Storage) y eventos viejos, para que el
+    // servidor no se llene (se "sobreescribe" manteniendo solo los ultimos meses).
     try { await Cloud.limpiarStorage(dias); } catch (_) {}
+    try { await Cloud.borrarEventosViejos(dias); } catch (_) {}
   }
 
   /// Tablas que se vacían por completo con "Eliminar todo ahora".

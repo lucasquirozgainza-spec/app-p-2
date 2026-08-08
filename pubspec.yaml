@@ -43,3 +43,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/seed/seed.json
+    - assets/osiris_logo.png
