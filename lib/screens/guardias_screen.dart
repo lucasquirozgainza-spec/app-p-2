@@ -9,6 +9,30 @@ import '../widgets/toast.dart';
 import 'reporte_personal_screen.dart';
 import 'advertencias_screen.dart';
 
+/// Un turno emparejado (ingreso -> salida) con su duración.
+class _Turno {
+  final DateTime inicio;
+  final double horas;
+  _Turno(this.inicio, this.horas);
+  // Tipo de turno según su duración: 24 o 36 (el más largo es 36).
+  int get tipo => horas < 30 ? 24 : 36;
+  double get extra => horas > tipo ? horas - tipo : 0; // pasó de su turno
+  double get falta => horas < tipo ? tipo - horas : 0; // hizo menos (llegó antes)
+}
+
+/// Resumen de un guardia (horas del mes) calculado desde la nube.
+class _ResG {
+  final String guardia;
+  final Set<String> dias = {};
+  final List<_Turno> turnos = [];
+  DateTime? abierto;
+  _ResG(this.guardia);
+  double get horas => turnos.fold(0.0, (a, t) => a + t.horas);
+  double get extra => turnos.fold(0.0, (a, t) => a + t.extra);
+  int get n24 => turnos.where((t) => t.tipo == 24).length;
+  int get n36 => turnos.where((t) => t.tipo == 36).length;
+}
+
 class GuardiasScreen extends StatefulWidget {
   const GuardiasScreen({super.key});
   @override
@@ -19,6 +43,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
   List<Map<String, dynamic>> _activosLocal = [];
   List<Map<String, dynamic>> _presencia = []; // en linea desde la nube (todos los celulares)
   List<Map<String, dynamic>> _personal = [];
+  Map<String, Map<String, _ResG>> _horas = {}; // edificio -> guardia -> resumen (nube)
 
   @override
   void initState() {
@@ -36,16 +61,87 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
             "AND (edificio=? OR edificio IS NULL OR edificio='')",
         whereArgs: [ed],
         orderBy: 'nombre');
-    // Presencia en linea de TODOS los celulares (Supabase).
-    await Cloud.heartbeat();
-    final pres = await Cloud.presencia();
+    // Presencia + horas del mes de TODOS los celulares (Supabase).
+    Cloud.heartbeat();
+    final res = await Future.wait([Cloud.presencia(), Cloud.eventosTurnoMes()]);
+    final pres = res[0];
+    final horas = _calcularHoras(res[1]);
     if (!mounted) return;
     setState(() {
       _activosLocal = activos;
       _personal = personal;
       _presencia = pres;
+      _horas = horas;
     });
   }
+
+  /// Empareja ingreso->salida por guardia y edificio para sacar horas/turnos.
+  Map<String, Map<String, _ResG>> _calcularHoras(List<Map<String, dynamic>> eventos) {
+    eventos.sort((a, b) => (a['created_at'] ?? '').toString().compareTo((b['created_at'] ?? '').toString()));
+    final data = <String, Map<String, _ResG>>{};
+    for (final e in eventos) {
+      final ed = (e['edificio'] ?? 'Sin edificio').toString();
+      final g = (e['guardia'] ?? 'Sin nombre').toString();
+      final tipo = (e['tipo'] ?? '').toString();
+      DateTime? t;
+      try { t = DateTime.parse(e['created_at'].toString()).toLocal(); } catch (_) {}
+      final r = data.putIfAbsent(ed, () => {}).putIfAbsent(g, () => _ResG(g));
+      if (tipo == 'Ingreso de turno') {
+        if (t != null) { r.dias.add(DateFormat('yyyy-MM-dd').format(t)); r.abierto = t; }
+      } else if (tipo == 'Salida de turno') {
+        if (t != null && r.abierto != null) {
+          final h = t.difference(r.abierto!).inMinutes / 60.0;
+          if (h > 0 && h < 48) r.turnos.add(_Turno(r.abierto!, h));
+          r.abierto = null;
+        }
+      }
+    }
+    return data;
+  }
+
+  /// Panel de detalle de un guardia: turnos de 24h/36h, extras y cada turno.
+  void _detalleGuardia(_ResG r) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(r.guardia),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              _chip('Días', '${r.dias.length}', AppColors.azulMarino),
+              _chip('Turnos 24h', '${r.n24}', AppColors.verde),
+              _chip('Turnos 36h', '${r.n36}', const Color(0xFF6A1B9A)),
+              _chip('Horas extra', r.extra.toStringAsFixed(1), const Color(0xFFEF6C00)),
+              _chip('Horas total', r.horas.toStringAsFixed(1), Colors.teal),
+            ]),
+            const Divider(height: 20),
+            const Text('Turnos del mes', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            if (r.turnos.isEmpty) const Text('Sin turnos cerrados este mes.'),
+            for (final t in r.turnos)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Text('${DateFormat('dd/MM HH:mm').format(t.inicio)} · ${t.horas.toStringAsFixed(1)} h '
+                    '(turno ${t.tipo}h'
+                    '${t.extra > 0 ? ', +${t.extra.toStringAsFixed(1)} h extra' : ''}'
+                    '${t.falta > 0 ? ', ${t.falta.toStringAsFixed(1)} h menos (llegó antes)' : ''})',
+                    style: const TextStyle(fontSize: 13)),
+              ),
+          ]),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+      ),
+    );
+  }
+
+  Widget _chip(String label, String value, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(value, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: color)),
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+        ]),
+      );
 
   bool _enLinea(Map<String, dynamic> p) {
     try {
@@ -159,7 +255,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
           if (admin)
             IconButton(
               icon: const Icon(Icons.assessment),
-              tooltip: 'Reporte de personal (admin)',
+              tooltip: 'Reporte de personal (PDF)',
               onPressed: () => Navigator.push(context,
                   MaterialPageRoute(builder: (_) => const ReportePersonalScreen())),
             ),
@@ -249,6 +345,40 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                     ),
                   ),
                 ),
+              // Horas del mes (todos los edificios) desde la nube — tocable.
+              const SizedBox(height: 20),
+              Row(children: [
+                const Icon(Icons.query_stats, color: Color(0xFF00838F)),
+                const SizedBox(width: 8),
+                const Text('Horas del mes (todos los edificios)',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ]),
+              const Text('Toca un guardia para ver sus turnos de 24h/36h y horas extra.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54)),
+              const SizedBox(height: 8),
+              if (_horas.isEmpty)
+                const Card(child: ListTile(title: Text('Sin turnos este mes en la nube')))
+              else
+                for (final ed in (_horas.keys.toList()..sort())) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+                    child: Text(ed, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.azulMarino)),
+                  ),
+                  for (final r in (_horas[ed]!.values.toList()..sort((a, b) => b.horas.compareTo(a.horas))))
+                    Card(
+                      child: ListTile(
+                        onTap: () => _detalleGuardia(r),
+                        leading: CircleAvatar(
+                          backgroundColor: AppColors.verde.withOpacity(.12),
+                          child: Text('${r.dias.length}', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.verde)),
+                        ),
+                        title: Text(r.guardia, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text('${r.n24} de 24h · ${r.n36} de 36h · ${r.horas.toStringAsFixed(1)} h'
+                            '${r.extra > 0 ? ' · +${r.extra.toStringAsFixed(1)} extra' : ''}'),
+                        trailing: const Icon(Icons.chevron_right),
+                      ),
+                    ),
+                ],
             ] else ...[
               const SizedBox(height: 24),
               const Card(

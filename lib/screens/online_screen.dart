@@ -223,41 +223,47 @@ class _OnlineScreenState extends State<OnlineScreen> {
       appBar: AppBar(
         title: Text(widget.soloEdificio ? 'Actividad del edificio' : _tituloEd),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf),
-            tooltip: 'Descargar PDF',
-            onPressed: _descargarPdf,
-          ),
-          if (!widget.soloEdificio)
-            IconButton(
-              icon: const Icon(Icons.settings),
-              tooltip: 'Configurar este edificio',
-              onPressed: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => ConfigScreen(initialEdificio: _edAdmin))),
-            ),
-          IconButton(
-            icon: const Icon(Icons.delete_forever),
-            tooltip: 'Eliminar actividad de la nube',
-            onPressed: _eliminarNube,
-          ),
-          IconButton(
-            icon: const Icon(Icons.wifi_find),
-            tooltip: 'Probar conexión',
-            onPressed: () async {
-              final r = await Cloud.probar();
-              if (!mounted) return;
-              await showDialog(
-                context: context,
-                builder: (_) => AlertDialog(
-                  title: const Text('Prueba de conexión a la nube'),
-                  content: SingleChildScrollView(child: SelectableText(r)),
-                  actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
-                ),
-              );
-              _cargar();
+          // Un solo menú (⋮) para no llenar la barra de iconos.
+          PopupMenuButton<String>(
+            onSelected: (v) async {
+              switch (v) {
+                case 'pdf':
+                  _descargarPdf();
+                  break;
+                case 'eliminar':
+                  _eliminarNube();
+                  break;
+                case 'config':
+                  Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => ConfigScreen(initialEdificio: _edAdmin)));
+                  break;
+                case 'probar':
+                  final r = await Cloud.probar();
+                  if (!mounted) return;
+                  await showDialog(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text('Prueba de conexión a la nube'),
+                      content: SingleChildScrollView(child: SelectableText(r)),
+                      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+                    ),
+                  );
+                  _cargar();
+                  break;
+                case 'refrescar':
+                  _cargar();
+                  break;
+              }
             },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'pdf', child: ListTile(leading: Icon(Icons.picture_as_pdf), title: Text('Descargar PDF'))),
+              const PopupMenuItem(value: 'eliminar', child: ListTile(leading: Icon(Icons.delete_forever), title: Text('Eliminar de la nube'))),
+              if (!widget.soloEdificio)
+                const PopupMenuItem(value: 'config', child: ListTile(leading: Icon(Icons.settings), title: Text('Configurar edificio'))),
+              const PopupMenuItem(value: 'probar', child: ListTile(leading: Icon(Icons.wifi_find), title: Text('Probar conexión'))),
+              const PopupMenuItem(value: 'refrescar', child: ListTile(leading: Icon(Icons.refresh), title: Text('Actualizar'))),
+            ],
           ),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _cargar),
         ],
       ),
       body: _loading

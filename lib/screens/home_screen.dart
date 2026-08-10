@@ -27,7 +27,6 @@ import 'normativas_screen.dart';
 import 'online_screen.dart';
 import 'rondas_historial_screen.dart';
 import 'recurrentes_screen.dart';
-import 'guardias_nube_screen.dart';
 import 'advertencias_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -350,8 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
           const Divider(height: 1),
-          item(Icons.apartment, 'Condominios (admin)', const OnlineScreen(soloEdificio: false), color: const Color(0xFF00695C), show: s.isAdmin),
-          item(Icons.groups, 'Guardias - todos (admin)', const GuardiasNubeScreen(), color: const Color(0xFF00838F), show: s.isAdmin),
+          item(Icons.apartment, 'Condominios', const OnlineScreen(soloEdificio: false), color: const Color(0xFF00695C), show: s.isAdmin),
           item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen(), color: const Color(0xFFEF6C00), show: s.isAdmin),
           item(Icons.shield, 'Guardias', const GuardiasScreen(), color: AppColors.verde, show: s.isAdmin),
           const Divider(height: 1),
@@ -366,7 +364,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ListTile(
             leading: const Icon(Icons.settings, color: AppColors.azulMarino),
-            title: const Text('Configuración (admin)'),
+            title: const Text('Configuración'),
             onTap: () {
               Navigator.pop(context);
               _openConfig();
