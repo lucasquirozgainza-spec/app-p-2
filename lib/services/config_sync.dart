@@ -35,6 +35,39 @@ class ConfigSync {
     }
   }
 
+  /// Trae los guardias que el admin registró (desde cualquier dispositivo) y
+  /// los guarda LOCALMENTE en este equipo, para que aparezcan al iniciar turno
+  /// aunque después se limpie la nube.
+  static Future<void> sincronizarGuardias() async {
+    try {
+      final ed = AppState.instance.edificioId;
+      final nube = await Cloud.eventos(tipo: 'Guardia', edificio: ed, limit: 300);
+      if (nube.isEmpty) return;
+      final db = await DB.instance.database;
+      for (final e in nube) {
+        final det = e['detalle'];
+        final d = det is Map ? det : const {};
+        final nombre = (d['nombre'] ?? e['guardia'] ?? '').toString().trim();
+        if (nombre.isEmpty) continue;
+        final ex = await db.query('usuarios',
+            where: "nombre=? AND (edificio=? OR edificio IS NULL OR edificio='')",
+            whereArgs: [nombre, ed], limit: 1);
+        if (ex.isNotEmpty) continue; // ya existe: no duplicar
+        await db.insert('usuarios', {
+          'usuario': 'gsync${DateTime.now().microsecondsSinceEpoch}_${nombre.hashCode}',
+          'nombre': nombre,
+          'cargo': (d['cargo'] ?? '').toString(),
+          'rol': (d['rol'] ?? 'guardia').toString(),
+          'pass_hash': 'sync',
+          'salt': 'sync',
+          'activo': 1,
+          'edificio': ed,
+          'created_at': DateTime.now().toIso8601String(),
+        });
+      }
+    } catch (_) {}
+  }
+
   /// Adopta la contraseña de admin publicada desde otro dispositivo.
   static Future<void> aplicarAdminPassRemota() async {
     try {

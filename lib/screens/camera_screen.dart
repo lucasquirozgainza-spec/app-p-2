@@ -37,6 +37,42 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   final GlobalKey _previewKey = GlobalKey();
   Offset? _focusRing;        // posición del anillo de enfoque (coords locales)
   Offset _focusNorm = const Offset(0.5, 0.5); // último punto de enfoque (0..1)
+  double _zoom = 1.0;        // zoom actual
+  double _zoomMin = 1.0;     // zoom mínimo del lente
+  double _zoomMax = 1.0;     // zoom máximo del lente
+  double _zoomBase = 1.0;    // zoom al empezar el pellizco (pinch)
+
+  Future<void> _setZoom(double z) async {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    final nz = z.clamp(_zoomMin, _zoomMax);
+    _zoom = nz;
+    try { await c.setZoomLevel(nz); } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  Widget _zoomBtn(String label, double z) {
+    final activo = (_zoom - z).abs() < 0.15;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: GestureDetector(
+        onTap: () => _setZoom(z),
+        child: Container(
+          width: 40, height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: activo ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                color: activo ? Colors.black : Colors.white,
+                fontWeight: FontWeight.bold, fontSize: 12,
+              )),
+        ),
+      ),
+    );
+  }
 
   Future<void> _toggleFlash() async {
     final c = _controller;
@@ -78,12 +114,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // Rondas (multi): MÁXIMA resolución (de ahí se sacan los detalles).
-      // Selfie de ingreso/salida (rapida): 720p, veloz. Documentos
-      // (tarjeta/carnet): veryHigh ≈ 1080p, nítido para el OCR.
-      final preset = widget.multi
-          ? ResolutionPreset.max
-          : (widget.rapida ? ResolutionPreset.high : ResolutionPreset.veryHigh);
+      // veryHigh (≈1080p) es nítido y NO traba (max saturaba la memoria y salía
+      // borroso por no enfocar a tiempo). Selfie de turno (rapida): 720p veloz.
+      final preset = widget.rapida ? ResolutionPreset.high : ResolutionPreset.veryHigh;
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
@@ -91,6 +124,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       await _initFuture;
       if (mounted) setState(() {});
       try { await c.setFlashMode(_flash ? FlashMode.torch : FlashMode.off); } catch (_) {}
+      // Rango de zoom del lente (para el pellizco y los botones).
+      try {
+        _zoomMin = await c.getMinZoomLevel();
+        _zoomMax = await c.getMaxZoomLevel();
+        _zoom = _zoom.clamp(_zoomMin, _zoomMax);
+        await c.setZoomLevel(_zoom);
+      } catch (_) {}
       // Enfoque/exposicion automaticos en segundo plano (no bloquea la apertura).
       c.setFocusMode(FocusMode.auto).catchError((_) {});
       c.setExposureMode(ExposureMode.auto).catchError((_) {});
@@ -131,21 +171,31 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // Captura inmediata: el enfoque continuo ya está activo. Nada de esperas
-      // (antes había una pausa que hacía lenta la foto).
+      // Enfocar ANTES de disparar (salvo en la selfie rápida): dispara el
+      // autoenfoque en el punto elegido y espera a que fije, para que la foto
+      // salga nítida y no borrosa. ~600 ms da tiempo al lente a estabilizar.
+      if (!widget.rapida) {
+        try {
+          await c.setFocusMode(FocusMode.auto);
+          await c.setExposureMode(ExposureMode.auto);
+          await c.setFocusPoint(_focusNorm);
+          await c.setExposurePoint(_focusNorm);
+          await Future.delayed(const Duration(milliseconds: 600));
+        } catch (_) {}
+      }
       final XFile shot = await c.takePicture();
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));
       if (!await fotosDir.exists()) await fotosDir.create(recursive: true);
       final dest = p.join(fotosDir.path, 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(shot.path).copy(dest);
+      // Corregir orientación AQUÍ (esperando) para que la foto quede DERECHA
+      // antes de devolverla: así WhatsApp/nube nunca reciben una volteada
+      // (antes se subía mientras se corregía en segundo plano => a veces salía
+      // girada y a veces no). El guardado en galería sí queda en segundo plano.
+      await ImgUtil.normalizarOrientacion(dest);
       _fotos.add(dest);
-      // En segundo plano: corregir orientación (que no salga volteada) y luego
-      // guardar en galería. No demora la siguiente foto.
-      () async {
-        await ImgUtil.normalizarOrientacion(dest);
-        Gallery.guardar(dest, album: widget.album);
-      }();
+      Gallery.guardar(dest, album: widget.album);
       if (!widget.multi) {
         if (mounted) Navigator.pop(context, _fotos);
         return;
@@ -202,6 +252,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 Expanded(
                   child: Center(
                     child: GestureDetector(
+                      // Pellizcar (dos dedos) para acercar/alejar el zoom.
+                      onScaleStart: (_) => _zoomBase = _zoom,
+                      onScaleUpdate: (d) {
+                        if (d.pointerCount < 2 || _zoomMax <= _zoomMin) return;
+                        _setZoom(_zoomBase * d.scale);
+                      },
                       // Tocar sobre el numero/letra para enfocar ahi.
                       onTapDown: (d) async {
                         try {
@@ -243,9 +299,32 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                               color: Colors.black54,
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            child: const Text('Toca el número/carnet para enfocar',
+                            child: const Text('Toca para enfocar · pellizca para zoom',
                                 style: TextStyle(color: Colors.white, fontSize: 12)),
                           ),
+                          if (_zoomMax > _zoomMin)
+                            Positioned(
+                              right: 8,
+                              top: 0, bottom: 0,
+                              child: Center(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black45,
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _zoomBtn('1x', 1.0),
+                                      if (_zoomMax >= 2) _zoomBtn('2x', 2.0),
+                                      if (_zoomMax >= 4) _zoomBtn('4x', 4.0),
+                                      _zoomBtn('Max', _zoomMax),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),

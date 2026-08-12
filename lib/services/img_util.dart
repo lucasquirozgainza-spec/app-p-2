@@ -22,12 +22,17 @@ bool _bakeOrient(String path) {
     if (!f.existsSync()) return false;
     final decoded = img.decodeImage(f.readAsBytesSync());
     if (decoded == null) return false;
-    // bakeOrientation aplica la rotación EXIF a los píxeles. Si la foto ya
-    // estaba derecha (sin marca de rotación) devuelve la misma imagen; solo
-    // reescribimos cuando realmente cambió, para no perder calidad.
+    // Leer la marca EXIF de orientación. 1 = derecha; 2..8 = girada o espejada.
+    int orient = 1;
+    try { orient = decoded.exif.imageIfd.orientation ?? 1; } catch (_) {}
+    // bakeOrientation aplica la rotación/espejo EXIF a los PÍXELES y deja la
+    // imagen derecha con la marca en 1 (así WhatsApp/galería la ven siempre
+    // bien, sin depender de que respeten el EXIF).
     final derecha = img.bakeOrientation(decoded);
-    final cambio = derecha.width != decoded.width || derecha.height != decoded.height;
-    if (!cambio) return false; // no había rotación 90/270: no tocar el original
+    final cambioDim = derecha.width != decoded.width || derecha.height != decoded.height;
+    // Reescribir si hubo CUALQUIER orientación no-normal (incluye 180° y espejo,
+    // que no cambian el tamaño) o si cambiaron las dimensiones (90/270).
+    if (orient == 1 && !cambioDim) return false; // ya estaba derecha: no tocar
     f.writeAsBytesSync(img.encodeJpg(derecha, quality: 95));
     return true;
   } catch (_) {

@@ -62,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       if (await ConfigSync.aplicarRemota() && mounted) setState(() {});
       await ConfigSync.aplicarAdminPassRemota();
+      await ConfigSync.sincronizarGuardias();
     } catch (_) {}
   }
 
@@ -294,6 +295,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _Mod('mantenimiento', Icons.build, 'Mantenim.', const Color(0xFF5D4037), () => const MantenimientoScreen()),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();
+    if (visibles.isEmpty) return const SizedBox.shrink();
+    // Si queda una sola tarjeta, se estira a lo ancho (no queda chiquita al lado).
+    if (visibles.length == 1) {
+      final m = visibles.first;
+      return SizedBox(
+        height: 120, width: double.infinity,
+        child: ModuleCard(icon: m.icon, label: m.label, color: m.color, onTap: () => _open(m.build())),
+      );
+    }
     return GridView.extent(
       maxCrossAxisExtent: 130, shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),

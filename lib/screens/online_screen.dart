@@ -85,7 +85,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
     final pres = res[0];
     final evs = res[1];
     // Eventos internos de sincronización no se muestran en la actividad.
-    evs.removeWhere((e) => e['tipo'] == 'Config' || e['tipo'] == 'AdminPass');
+    evs.removeWhere((e) => e['tipo'] == 'Config' || e['tipo'] == 'AdminPass' || e['tipo'] == 'Guardia');
     final turnos = res[2];
     if (!mounted) return;
     setState(() {

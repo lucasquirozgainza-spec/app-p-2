@@ -14,10 +14,12 @@ class _Turno {
   final DateTime inicio;
   final double horas;
   _Turno(this.inicio, this.horas);
+  // Tolerancia: diferencias de pocos minutos (ej. 8:00 vs 8:08) NO cuentan.
+  static const double _tol = 0.5; // 30 min
   // Tipo de turno según su duración: 24 o 36 (el más largo es 36).
   int get tipo => horas < 30 ? 24 : 36;
-  double get extra => horas > tipo ? horas - tipo : 0; // pasó de su turno
-  double get falta => horas < tipo ? tipo - horas : 0; // hizo menos (llegó antes)
+  double get extra => horas > tipo + _tol ? horas - tipo : 0; // se quedó más
+  double get falta => horas < tipo - _tol ? tipo - horas : 0; // hizo menos (llegó antes)
 }
 
 /// Resumen de un guardia (horas del mes) calculado desde la nube.

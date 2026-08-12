@@ -117,18 +117,36 @@ class _PanelScreenState extends State<PanelScreen> {
     );
   }
 
+  // Módulo asociado a cada fila del periodo (para ocultar los desactivados).
+  final _moduloPeriodo = const {
+    'Visitas': 'visitas', 'Rondas': 'rondas', 'Incidentes': 'incidentes',
+    'Encomiendas': 'encomiendas', 'Mantenimiento': 'mantenimiento',
+    'Hospedajes': 'hospedajes', 'Ingresos de turno': '_core',
+  };
+
   @override
   Widget build(BuildContext context) {
+    final s = AppState.instance;
+    // Solo se muestran las tarjetas de los módulos ACTIVOS en este edificio.
+    // Guardias/turnos son parte del núcleo y siempre se ven.
     final live = <Widget>[
-      _liveTile(Icons.people_alt, '${_vivo['dentro'] ?? 0}', 'Dentro ahora', AppColors.verde, () => const VisitasScreen()),
-      _liveTile(Icons.inventory_2, '${_vivo['encomiendas'] ?? 0}', 'Encomiendas pend.', const Color(0xFFEF6C00), () => const EncomiendasScreen()),
-      _liveTile(Icons.warning_amber, '${_vivo['incidentes'] ?? 0}', 'Incidentes abiertos', AppColors.rojo, () => const IncidentesScreen()),
-      _liveTile(Icons.build, '${_vivo['mantenimiento'] ?? 0}', 'Mantenim. pend.', const Color(0xFF5D4037), () => const MantenimientoScreen()),
-      _liveTile(Icons.hotel, '${_vivo['hospedajes'] ?? 0}', 'Hospedajes activos', const Color(0xFF00838F), () => const HospedajesScreen()),
+      if (s.modulo('visitas'))
+        _liveTile(Icons.people_alt, '${_vivo['dentro'] ?? 0}', 'Dentro ahora', AppColors.verde, () => const VisitasScreen()),
+      if (s.modulo('encomiendas'))
+        _liveTile(Icons.inventory_2, '${_vivo['encomiendas'] ?? 0}', 'Encomiendas pend.', const Color(0xFFEF6C00), () => const EncomiendasScreen()),
+      if (s.modulo('incidentes'))
+        _liveTile(Icons.warning_amber, '${_vivo['incidentes'] ?? 0}', 'Incidentes abiertos', AppColors.rojo, () => const IncidentesScreen()),
+      if (s.modulo('mantenimiento'))
+        _liveTile(Icons.build, '${_vivo['mantenimiento'] ?? 0}', 'Mantenim. pend.', const Color(0xFF5D4037), () => const MantenimientoScreen()),
+      if (s.modulo('hospedajes'))
+        _liveTile(Icons.hotel, '${_vivo['hospedajes'] ?? 0}', 'Hospedajes activos', const Color(0xFF00838F), () => const HospedajesScreen()),
       _liveTile(Icons.shield, '${_vivo['guardias'] ?? 0}', 'Guardias activos', AppColors.verde, () => const GuardiasScreen()),
-      _liveTile(Icons.directions_walk, '${_vivo['rondas_hoy'] ?? 0}', 'Rondas hoy', const Color(0xFF6A1B9A), () => const RondasHistorialScreen()),
-      _liveTile(Icons.directions_car, '${_vivo['vehiculos'] ?? 0}', 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
-      _liveTile(Icons.people, '${_vivo['propietarios'] ?? 0}', 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
+      if (s.modulo('rondas'))
+        _liveTile(Icons.directions_walk, '${_vivo['rondas_hoy'] ?? 0}', 'Rondas hoy', const Color(0xFF6A1B9A), () => const RondasHistorialScreen()),
+      if (s.modulo('vehiculos'))
+        _liveTile(Icons.directions_car, '${_vivo['vehiculos'] ?? 0}', 'Vehiculos', const Color(0xFF283593), () => const VehiculosScreen()),
+      if (s.modulo('propietarios'))
+        _liveTile(Icons.people, '${_vivo['propietarios'] ?? 0}', 'Propietarios', const Color(0xFF1565C0), () => const PropietariosScreen()),
     ];
 
     return Scaffold(
@@ -165,15 +183,18 @@ class _PanelScreenState extends State<PanelScreen> {
                   const Text('Toca cualquier tarjeta para ver el detalle',
                       style: TextStyle(color: Colors.black54, fontSize: 12)),
                   const SizedBox(height: 10),
-                  GridView.extent(
-                    maxCrossAxisExtent: 200,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    childAspectRatio: 1.5,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    children: live,
-                  ),
+                  if (live.length == 1)
+                    SizedBox(width: double.infinity, height: 110, child: live.first)
+                  else
+                    GridView.extent(
+                      maxCrossAxisExtent: 200,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      childAspectRatio: 1.5,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      children: live,
+                    ),
                   const SizedBox(height: 18),
                   const Text('Actividad del periodo',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -194,6 +215,7 @@ class _PanelScreenState extends State<PanelScreen> {
                   ),
                   const SizedBox(height: 10),
                   for (final e in _periodoConteo.entries)
+                    if (_moduloPeriodo[e.key] == '_core' || s.modulo(_moduloPeriodo[e.key] ?? ''))
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: InkWell(

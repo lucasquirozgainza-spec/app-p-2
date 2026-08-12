@@ -64,6 +64,7 @@ class _BootState extends State<_Boot> {
     try {
       await ConfigSync.aplicarRemota();
       await ConfigSync.aplicarAdminPassRemota();
+      await ConfigSync.sincronizarGuardias();
     } catch (_) {}
     // La purga (local + nube) corre DESPUÉS de iniciar la nube, así el borrado
     // de fotos viejas en Supabase Storage se ejecuta cada vez que se abre la app.

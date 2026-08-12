@@ -431,6 +431,24 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
   }
 
+  /// Sección plegable (acordeón) para dejar la configuración más limpia: cada
+  /// bloque se abre solo cuando el admin lo necesita, en vez de un scroll largo.
+  Widget _seccion(String title, IconData icon, Color color, List<Widget> children, {bool abierta = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: ExpansionTile(
+          initiallyExpanded: abierta,
+          leading: Icon(icon, color: color),
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+          childrenPadding: EdgeInsets.zero,
+          children: children,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final activo = AppState.instance.edificioId;
@@ -483,28 +501,18 @@ class _ConfigScreenState extends State<ConfigScreen> {
             child: Text('Excel: Depto, Nombre, Teléfono (opcional Inquilino).',
                 style: TextStyle(fontSize: 11, color: Colors.black54)),
           ),
-          const SizedBox(height: 16),
-          const Text('Módulos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: Column(
-              children: [
-                for (final entry in _modLabels.entries)
-                  SwitchListTile(
-                    dense: true,
-                    value: _modulos[entry.key] == true,
-                    onChanged: (v) => _toggle(entry.key, v),
-                    title: Text(entry.value),
-                    activeColor: AppColors.verde,
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text('Conexión', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: SwitchListTile(
+          _seccion('Módulos', Icons.widgets, const Color(0xFF1565C0), [
+            for (final entry in _modLabels.entries)
+              SwitchListTile(
+                dense: true,
+                value: _modulos[entry.key] == true,
+                onChanged: (v) => _toggle(entry.key, v),
+                title: Text(entry.value),
+                activeColor: AppColors.verde,
+              ),
+          ]),
+          _seccion('Conexión', Icons.wifi, const Color(0xFF546E7A), [
+            SwitchListTile(
               dense: true,
               value: _modulos['solo_local'] == true,
               onChanged: (v) => _toggle('solo_local', v),
@@ -513,12 +521,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
               subtitle: const Text('Edificio de una torre: registros instantáneos, no usa la nube.'),
               activeColor: AppColors.verde,
             ),
-          ),
-          const SizedBox(height: 16),
-          const Text('Campos de Visitas', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: Column(children: [
+          ]),
+          _seccion('Campos de Visitas', Icons.badge, const Color(0xFF00897B), [
               for (final e in const {
                 'v_tarjeta': 'Tarjeta de acceso',
                 'v_carnet': 'Foto del carnet',
@@ -550,12 +554,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   ]),
                 ),
             ]),
-          ),
-          const SizedBox(height: 16),
-          const Text('Usuarios', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: Column(children: [
+          _seccion('Usuarios', Icons.people_alt, AppColors.azulMarino, [
               ListTile(
                 dense: true,
                 leading: const Icon(Icons.person_add, color: AppColors.azulMarino),
@@ -569,13 +568,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 title: const Text('Cambiar contraseña de admin'),
                 onTap: _cambiarPassword,
               ),
-            ]),
-          ),
-          const SizedBox(height: 16),
-          const Text('Alarmas y recordatorios', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: Column(children: [
+          ]),
+          _seccion('Alarmas y recordatorios', Icons.notifications_active, const Color(0xFFEF6C00), [
               SwitchListTile(
                 value: AppState.instance.notifRondas,
                 activeColor: AppColors.verde,
@@ -646,12 +640,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 },
               ),
             ]),
-          ),
-          const SizedBox(height: 16),
-          const Text('Rondas y turnos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: Column(children: [
+          _seccion('Rondas y turnos', Icons.directions_walk, const Color(0xFF6A1B9A), [
               ListTile(
                 leading: const Icon(Icons.photo_camera, color: Color(0xFF6A1B9A)),
                 title: const Text('Fotos obligatorias por ronda'),
@@ -693,26 +682,20 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 trailing: const Icon(Icons.schedule),
                 onTap: () => _pickHora(false),
               ),
-            ]),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.qr_code_2, color: Color(0xFF6A1B9A)),
-              title: const Text('Puntos de ronda (QR)'),
-              subtitle: const Text('Opcional'),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PuntosControlScreen())),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text('Datos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.auto_delete, color: AppColors.rojo),
-              title: const Text('Conservar datos por'),
+              const Divider(height: 1),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.qr_code_2, color: Color(0xFF6A1B9A)),
+                title: const Text('Puntos de ronda (QR)'),
+                subtitle: const Text('Opcional'),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PuntosControlScreen())),
+              ),
+          ]),
+          _seccion('Datos', Icons.storage, AppColors.rojo, [
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.auto_delete, color: AppColors.rojo),
+                title: const Text('Conservar datos por'),
               subtitle: Text('${(AppState.instance.retencionDias / 30).round()} mes(es)  ·  ${AppState.instance.retencionDias} días'),
               trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
@@ -735,41 +718,34 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 ),
               ]),
             ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            color: const Color(0x0FC62828),
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.delete_forever, color: AppColors.rojo),
-              title: const Text('Eliminar todo ahora'),
-              subtitle: const Text('Borra registros y datos de prueba (no los guardias).'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _eliminarTodoAhora,
-            ),
-          ),
-          Card(
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00)),
-              title: const Text('Vaciar la nube ahora'),
-              subtitle: const Text('Borra la actividad de la nube (se limpia sola cada 3 meses).'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _vaciarNube,
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text('Avisos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.notifications_active, color: Color(0xFFEF6C00)),
-              title: const Text('Aviso de incidentes al admin'),
-              subtitle: const Text('WhatsApp o correo'),
-              onTap: _configAvisos,
-            ),
-          ),
+              const Divider(height: 1),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.delete_forever, color: AppColors.rojo),
+                title: const Text('Eliminar todo ahora'),
+                subtitle: const Text('Borra registros y datos de prueba (no los guardias).'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _eliminarTodoAhora,
+              ),
+              const Divider(height: 1),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00)),
+                title: const Text('Vaciar la nube ahora'),
+                subtitle: const Text('Borra la actividad de la nube (se limpia sola cada 3 meses).'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _vaciarNube,
+              ),
+          ]),
+          _seccion('Avisos', Icons.campaign, const Color(0xFFEF6C00), [
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.notifications_active, color: Color(0xFFEF6C00)),
+                title: const Text('Aviso de incidentes al admin'),
+                subtitle: const Text('WhatsApp o correo'),
+                onTap: _configAvisos,
+              ),
+          ]),
           const SizedBox(height: 24),
           const Card(
             child: ListTile(
