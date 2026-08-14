@@ -16,8 +16,20 @@ class _Turno {
   _Turno(this.inicio, this.horas);
   // Tolerancia: diferencias de pocos minutos (ej. 8:00 vs 8:08) NO cuentan.
   static const double _tol = 0.5; // 30 min
-  // Tipo de turno según su duración: 24 o 36 (el más largo es 36).
-  int get tipo => horas < 30 ? 24 : 36;
+  // Duraciones esperadas: turno normal = 12 h, largo = 24 h, extra largo = 36 h.
+  static const List<int> _esperados = [12, 24, 36];
+  // Tipo de turno = la duración esperada MÁS CERCANA a lo que trabajó. Así un
+  // turno de 12 h se cuenta como 12 (antes cualquier cosa < 30 h salía como 24,
+  // por eso un turno normal aparecía duplicado como "24h").
+  int get tipo {
+    int best = _esperados.first;
+    double bestD = (horas - best).abs();
+    for (final e in _esperados) {
+      final d = (horas - e).abs();
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    return best;
+  }
   double get extra => horas > tipo + _tol ? horas - tipo : 0; // se quedó más
   double get falta => horas < tipo - _tol ? tipo - horas : 0; // hizo menos (llegó antes)
 }
@@ -31,6 +43,7 @@ class _ResG {
   _ResG(this.guardia);
   double get horas => turnos.fold(0.0, (a, t) => a + t.horas);
   double get extra => turnos.fold(0.0, (a, t) => a + t.extra);
+  int get n12 => turnos.where((t) => t.tipo == 12).length;
   int get n24 => turnos.where((t) => t.tipo == 24).length;
   int get n36 => turnos.where((t) => t.tipo == 36).length;
 }
@@ -111,6 +124,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Wrap(spacing: 8, runSpacing: 8, children: [
               _chip('Días', '${r.dias.length}', AppColors.azulMarino),
+              _chip('Turnos 12h', '${r.n12}', const Color(0xFF1565C0)),
               _chip('Turnos 24h', '${r.n24}', AppColors.verde),
               _chip('Turnos 36h', '${r.n36}', const Color(0xFF6A1B9A)),
               _chip('Horas extra', r.extra.toStringAsFixed(1), const Color(0xFFEF6C00)),
@@ -375,7 +389,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                           child: Text('${r.dias.length}', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.verde)),
                         ),
                         title: Text(r.guardia, style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Text('${r.n24} de 24h · ${r.n36} de 36h · ${r.horas.toStringAsFixed(1)} h'
+                        subtitle: Text('${r.n12} de 12h · ${r.n24} de 24h · ${r.n36} de 36h · ${r.horas.toStringAsFixed(1)} h'
                             '${r.extra > 0 ? ' · +${r.extra.toStringAsFixed(1)} extra' : ''}'),
                         trailing: const Icon(Icons.chevron_right),
                       ),

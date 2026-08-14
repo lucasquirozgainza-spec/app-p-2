@@ -179,6 +179,30 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
       });
       await Cloud.evento('Guardia sin uniforme', guardia: _sel!['nombre'] as String?);
     }
+    // Aviso por ENTRAR TARDE: si hay horario de relevo configurado y el guardia
+    // ingresa con retraso, se le avisa y se guarda la advertencia para llevar la
+    // cuenta de cuántas veces llega tarde.
+    final tarde = s.minutosTardeIngreso(DateTime.now());
+    if (tarde != null && tarde >= 15) {
+      final txt = tarde >= 60
+          ? '${(tarde / 60).floor()} h ${tarde % 60} min tarde'
+          : '$tarde min tarde';
+      await db.insert('advertencias', {
+        'guardia_nombre': _sel!['nombre'],
+        'mensaje': 'Ingresó TARDE al turno ($txt respecto al horario de relevo).',
+        'tipo': 'tarde',
+        'foto': _foto,
+        'edificio': s.edificioId,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      Cloud.evento('Advertencia', guardia: _sel!['nombre'] as String?,
+          detalle: {'tipo': 'tarde', 'motivo': 'Ingresó tarde al turno ($txt)'});
+      try {
+        await Notificaciones.mostrarAviso('⚠️ Estás entrando tarde',
+            'Registraste tu ingreso $txt. Se guardó una advertencia por entrar tarde al turno.');
+      } catch (_) {}
+      if (mounted) _snack('Advertencia: estás entrando tarde al turno ($txt).');
+    }
     await Audit.log('INICIO_TURNO', 'ingreso_turno', '$id');
     // La nube en segundo plano: no demora el inicio del turno.
     Cloud.evento('Ingreso de turno',

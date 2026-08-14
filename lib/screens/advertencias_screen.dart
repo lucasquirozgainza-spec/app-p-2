@@ -39,6 +39,12 @@ class _AdvertenciasScreenState extends State<AdvertenciasScreen> {
         return Icons.badge;
       case 'sos':
         return Icons.sos;
+      case 'tarde':
+        return Icons.schedule;
+      case 'ronda_saltada':
+        return Icons.directions_walk;
+      case 'ronda_tarde':
+        return Icons.running_with_errors;
       default:
         return Icons.warning_amber;
     }
@@ -53,6 +59,12 @@ class _AdvertenciasScreenState extends State<AdvertenciasScreen> {
         return const Color(0xFFEF6C00);
       case 'sos':
         return AppColors.rojo;
+      case 'tarde':
+        return const Color(0xFFEF6C00);
+      case 'ronda_saltada':
+        return AppColors.rojo;
+      case 'ronda_tarde':
+        return const Color(0xFFF9A825);
       default:
         return const Color(0xFF283593);
     }

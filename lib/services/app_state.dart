@@ -79,6 +79,29 @@ class AppState {
     return mejor ?? inicio.add(const Duration(hours: horasTurno));
   }
 
+  /// Minutos de atraso al INICIAR turno respecto al horario de relevo más
+  /// cercano (ingreso/salida configurados). Positivo = llegó tarde; negativo =
+  /// llegó antes; null si no hay horarios configurados. Se usa para avisar al
+  /// guardia y registrar la advertencia por entrar tarde.
+  int? minutosTardeIngreso(DateTime llegada) {
+    final horas = <String>[turnoIngreso, turnoSalida].where((h) => h.contains(':')).toList();
+    if (horas.isEmpty) return null;
+    int? mejor; // minutos de diferencia (llegada - programado) del relevo más cercano
+    for (final h in horas) {
+      final pz = h.split(':');
+      final hh = int.tryParse(pz[0]) ?? 0;
+      final mm = pz.length > 1 ? (int.tryParse(pz[1]) ?? 0) : 0;
+      for (int addDay = -1; addDay <= 1; addDay++) {
+        final prog = DateTime(llegada.year, llegada.month, llegada.day, hh, mm).add(Duration(days: addDay));
+        final diff = llegada.difference(prog).inMinutes;
+        if (diff.abs() <= 6 * 60) {
+          if (mejor == null || diff.abs() < mejor!.abs()) mejor = diff;
+        }
+      }
+    }
+    return mejor;
+  }
+
   /// Horas extra de un turno: SOLO cuenta el tiempo que el guardia se quedó
   /// DESPUÉS de su hora de relevo (porque el otro guardia llegó tarde). Llegar
   /// temprano NO da horas extra (fue su decisión).

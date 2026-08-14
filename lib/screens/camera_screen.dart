@@ -41,6 +41,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   double _zoomMin = 1.0;     // zoom mínimo del lente
   double _zoomMax = 1.0;     // zoom máximo del lente
   double _zoomBase = 1.0;    // zoom al empezar el pellizco (pinch)
+  // Umbral de nitidez: por debajo se considera movida/borrosa y se ofrece
+  // repetir. Bajo a propósito para NO rechazar fotos buenas por error.
+  static const double _umbralNitidez = 70;
 
   Future<void> _setZoom(double z) async {
     final c = _controller;
@@ -53,25 +56,45 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   Widget _zoomBtn(String label, double z) {
     final activo = (_zoom - z).abs() < 0.15;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: GestureDetector(
-        onTap: () => _setZoom(z),
-        child: Container(
-          width: 40, height: 32,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: activo ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Text(label,
-              style: TextStyle(
-                color: activo ? Colors.black : Colors.white,
-                fontWeight: FontWeight.bold, fontSize: 12,
-              )),
+    return GestureDetector(
+      onTap: () => _setZoom(z),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        width: 30, height: 24,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: activo ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
         ),
+        child: Text(label,
+            style: TextStyle(
+              color: activo ? Colors.black : Colors.white,
+              fontWeight: FontWeight.bold, fontSize: 10,
+            )),
       ),
     );
+  }
+
+  Future<bool> _preguntarRepetir() async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.blur_on, color: AppColors.rojo, size: 40),
+        title: const Text('Foto movida'),
+        content: const Text(
+            'La foto salió borrosa o movida. Para que quede nítida: mantén el '
+            'celular fijo y toca la placa/número en la pantalla para enfocar.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Usar igual')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Repetir'),
+          ),
+        ],
+      ),
+    );
+    return r == true;
   }
 
   Future<void> _toggleFlash() async {
@@ -171,24 +194,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (c == null || !c.value.isInitialized || _capturando) return;
     setState(() => _capturando = true);
     try {
-      // Enfocar ANTES de disparar (salvo en la selfie rápida): dispara el
-      // autoenfoque en el punto elegido y espera a que fije, para que la foto
-      // salga nítida y no borrosa. ~600 ms da tiempo al lente a estabilizar.
-      if (!widget.rapida) {
-        try {
-          await c.setFocusMode(FocusMode.auto);
-          await c.setExposureMode(ExposureMode.auto);
-          await c.setFocusPoint(_focusNorm);
-          await c.setExposurePoint(_focusNorm);
-          await Future.delayed(const Duration(milliseconds: 600));
-        } catch (_) {}
-      }
+      // Disparo INSTANTÁNEO: el enfoque es continuo (automático) mientras se ve
+      // la imagen, así que al apretar se captura de una, sin esperas. Si sale
+      // movida se detecta después y se ofrece repetir.
       final XFile shot = await c.takePicture();
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));
       if (!await fotosDir.exists()) await fotosDir.create(recursive: true);
       final dest = p.join(fotosDir.path, 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(shot.path).copy(dest);
+      // Revisar que NO esté movida/borrosa (salvo la selfie rápida de turno). Si
+      // lo está, se ofrece repetirla para que las fotos queden nítidas.
+      if (!widget.rapida) {
+        final score = await ImgUtil.nitidez(dest);
+        if (score < _umbralNitidez && mounted) {
+          final repetir = await _preguntarRepetir();
+          if (repetir) {
+            try { File(dest).deleteSync(); } catch (_) {}
+            if (mounted) setState(() => _capturando = false);
+            return;
+          }
+        }
+      }
       // Corregir orientación AQUÍ (esperando) para que la foto quede DERECHA
       // antes de devolverla: así WhatsApp/nube nunca reciben una volteada
       // (antes se subía mientras se corregía en segundo plano => a veces salía
@@ -304,24 +331,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           ),
                           if (_zoomMax > _zoomMin)
                             Positioned(
-                              right: 8,
-                              top: 0, bottom: 0,
-                              child: Center(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black45,
-                                    borderRadius: BorderRadius.circular(24),
-                                  ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      _zoomBtn('1x', 1.0),
-                                      if (_zoomMax >= 2) _zoomBtn('2x', 2.0),
-                                      if (_zoomMax >= 4) _zoomBtn('4x', 4.0),
-                                      _zoomBtn('Max', _zoomMax),
-                                    ],
-                                  ),
+                              bottom: 54,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black45,
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _zoomBtn('1x', 1.0),
+                                    if (_zoomMax >= 2) _zoomBtn('2x', 2.0),
+                                    _zoomBtn('Max', _zoomMax),
+                                  ],
                                 ),
                               ),
                             ),

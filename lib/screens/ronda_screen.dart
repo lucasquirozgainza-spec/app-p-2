@@ -8,6 +8,7 @@ import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../services/dvr.dart';
+import '../services/notifications_service.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
 import 'camera_screen.dart';
@@ -111,6 +112,60 @@ class _RondaScreenState extends State<RondaScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'rondas', '$id');
+
+    // CONTROL DE CADENCIA DE RONDAS: compara con la ronda anterior del mismo
+    // guardia. Si tardó más de lo debido => "atrasada"; si pasó tanto tiempo que
+    // se saltó una o más => "no hizo ronda". Se avisa al guardia y se guarda la
+    // advertencia para llevar la cuenta.
+    try {
+      final cada = s.rondaHoras.clamp(1, 12).toDouble();
+      // Inicio del turno activo: solo comparamos rondas DENTRO del mismo turno,
+      // para no marcar falsas advertencias entre un turno y el siguiente.
+      DateTime? turnoIni;
+      final tid = s.turnoActivoId;
+      if (tid != null) {
+        final row = await db.query('ingreso_turno', where: 'id=?', whereArgs: [tid], limit: 1);
+        if (row.isNotEmpty) turnoIni = DateTime.tryParse(row.first['created_at']?.toString() ?? '');
+      }
+      final prev = await db.query('rondas',
+          where: 'edificio=? AND guardia_id=? AND id<?',
+          whereArgs: [s.edificioId, s.userId, id],
+          orderBy: 'id DESC', limit: 1);
+      if (prev.isNotEmpty) {
+        final tPrev = DateTime.tryParse(prev.first['created_at']?.toString() ?? '');
+        if (tPrev != null && (turnoIni == null || !tPrev.isBefore(turnoIni))) {
+          final gap = DateTime.now().difference(tPrev).inMinutes / 60.0;
+          const tol = 0.5; // 30 min de gracia
+          String? msg;
+          String? tipo;
+          if (gap > 0.4 && gap < 14) { // dentro de la misma jornada
+            if (gap >= 2 * cada - tol) {
+              final saltadas = (gap / cada).round() - 1;
+              if (saltadas >= 1) {
+                msg = 'No hizo $saltadas ronda(s): pasaron ${gap.toStringAsFixed(1)} h '
+                    'desde la anterior (deben ser cada ${cada.toStringAsFixed(0)} h).';
+                tipo = 'ronda_saltada';
+              }
+            } else if (gap > cada + tol) {
+              msg = 'Ronda atrasada: la hizo ${(gap - cada).toStringAsFixed(1)} h tarde '
+                  '(deben ser cada ${cada.toStringAsFixed(0)} h).';
+              tipo = 'ronda_tarde';
+            }
+          }
+          if (msg != null) {
+            await db.insert('advertencias', {
+              'guardia_nombre': s.userNombre,
+              'mensaje': msg,
+              'tipo': tipo,
+              'edificio': s.edificioId,
+              'created_at': DateTime.now().toIso8601String(),
+            });
+            Cloud.evento('Advertencia', guardia: s.userNombre, detalle: {'tipo': tipo, 'motivo': msg});
+            try { await Notificaciones.mostrarAviso('⚠️ Advertencia de ronda', msg); } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
 
     // Subida a la nube en SEGUNDO PLANO (no demora el WhatsApp): sube hasta 6
     // fotos comprimidas para verlas desde otros equipos y publica el evento.
