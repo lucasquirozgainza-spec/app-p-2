@@ -74,6 +74,24 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
+  /// El guardia DECLARA que dobla el turno (24h) o lo triplica (36h). No cierra
+  /// el turno ni pide foto: solo deja registrado el nivel para que después el
+  /// conteo de 12h/24h/36h sea exacto (sin adivinar por horas).
+  Future<void> _doblar(int nuevoNivel) async {
+    if (_sel == null) return _snack('Selecciona el guardia');
+    setState(() => _saving = true);
+    final s = AppState.instance;
+    final db = await DB.instance.database;
+    await db.update('ingreso_turno', {'nivel': nuevoNivel}, where: 'id=?', whereArgs: [_sel!['id']]);
+    await Audit.log('DOBLAR_TURNO', 'ingreso_turno', '${_sel!['id']}', detalle: 'nivel=$nuevoNivel');
+    Cloud.evento('Doblar turno',
+        guardia: _sel!['guardia_nombre'] as String?,
+        detalle: {'nivel': nuevoNivel, 'edificio': s.edificioId});
+    if (!mounted) return;
+    TopToast.show(context, 'Turno marcado como ${nuevoNivel}h', color: AppColors.verde, icon: Icons.check_circle);
+    Navigator.pop(context);
+  }
+
   Future<void> _finalizar() async {
     if (_sel == null) return _snack('Selecciona el guardia que sale');
     if (_foto == null) return _snack('La foto de salida es obligatoria');
@@ -92,9 +110,11 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     });
     await db.update('ingreso_turno', {'activo': 0}, where: 'id=?', whereArgs: [_sel!['id']]);
     await Audit.log('FIN_TURNO', 'salida_turno', '$id');
+    final nivel = (_sel!['nivel'] as int?) ?? 12;
     Cloud.evento('Salida de turno',
         guardia: _sel!['guardia_nombre'] as String?,
         detalle: {
+          'nivel': nivel, // turno DECLARADO por el guardia (12/24/36)
           'observaciones': _obs.text,
           'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
         });
@@ -161,7 +181,58 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
                   ),
               ],
             ),
+          if (_sel != null) ...[
+            const SizedBox(height: 16),
+            Builder(builder: (_) {
+              final nivel = (_sel!['nivel'] as int?) ?? 12;
+              return Card(
+                color: const Color(0xFFF1F8E9),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      const Icon(Icons.timelapse, color: Color(0xFF33691E)),
+                      const SizedBox(width: 8),
+                      Text('Turno actual: ${nivel}h',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    ]),
+                    const SizedBox(height: 4),
+                    const Text('¿El guardia se queda a doblar? Marca aquí (no cierra el turno). '
+                        'Si ya se va, usa Finalizar turno abajo.',
+                        style: TextStyle(fontSize: 12, color: Colors.black54)),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      if (nivel < 24)
+                        Expanded(
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF2E7D32)),
+                            onPressed: _saving ? null : () => _doblar(24),
+                            icon: const Icon(Icons.replay, size: 20),
+                            label: const Text('Doblar a 24h'),
+                          ),
+                        ),
+                      if (nivel < 24 && nivel < 36) const SizedBox(width: 8),
+                      if (nivel < 36)
+                        Expanded(
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6A1B9A)),
+                            onPressed: _saving ? null : () => _doblar(36),
+                            icon: const Icon(Icons.replay_circle_filled, size: 20),
+                            label: const Text('Doblar a 36h'),
+                          ),
+                        ),
+                    ]),
+                  ]),
+                ),
+              );
+            }),
+          ],
           const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 8),
+          const Text('Salida definitiva del guardia',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          const SizedBox(height: 8),
           PhotoField(label: 'Foto de salida', obligatoria: true, rapida: true, frontal: true, album: 'OSIRIS Turnos', onChanged: (v) => setState(() => _foto = v)),
           Row(children: [
             Expanded(child: LockedField(label: 'Fecha', value: DateFormat('dd/MM/yyyy').format(_ahora), icon: Icons.calendar_today)),

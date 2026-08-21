@@ -21,7 +21,7 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 14,
+      version: 15,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -115,6 +115,13 @@ class DB {
               edificio TEXT, created_at TEXT)''');
           } catch (_) {}
         }
+        if (oldV < 15) {
+          // Nivel de turno DECLARADO por el guardia: 12 (normal), 24 (doblado)
+          // o 36 (triple). Reemplaza el cálculo automático por horas.
+          try {
+            await db.execute('ALTER TABLE ingreso_turno ADD COLUMN nivel INTEGER DEFAULT 12');
+          } catch (_) {}
+        }
       },
     );
   }
@@ -182,6 +189,7 @@ class DB {
         observaciones TEXT,
         edificio TEXT,
         activo INTEGER DEFAULT 1,
+        nivel INTEGER DEFAULT 12,
         created_at TEXT NOT NULL,
         sync_status INTEGER DEFAULT 0
       )''');

@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../services/gallery.dart';
@@ -124,9 +123,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _initFuture = c.initialize();
       await _initFuture;
       if (mounted) setState(() {});
-      // Fijar la orientación de captura en vertical: el plugin escribe la foto
-      // ya orientada y consistente (menos fotos volteadas).
-      try { await c.lockCaptureOrientation(DeviceOrientation.portraitUp); } catch (_) {}
+      // NO fijar la orientación: la foto sigue cómo está FÍSICAMENTE el teléfono
+      // (si la tomas horizontal, queda horizontal). El enderezado nativo después
+      // "quema" esa orientación en los píxeles para que se vea igual en WhatsApp.
+      try { await c.unlockCaptureOrientation(); } catch (_) {}
       try { await c.setFlashMode(_flash ? FlashMode.torch : FlashMode.off); } catch (_) {}
       // Rango de zoom del lente (para el pellizco y los botones).
       try {

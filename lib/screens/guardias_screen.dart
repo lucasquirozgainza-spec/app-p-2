@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
@@ -11,17 +12,18 @@ import 'advertencias_screen.dart';
 
 /// Un turno emparejado (ingreso -> salida) con su duración.
 class _Turno {
-  final DateTime inicio;
-  final double horas;
-  _Turno(this.inicio, this.horas);
+  final DateTime inicio;   // hora de ingreso
+  final DateTime fin;      // hora de salida
+  final double horas;      // horas reales trabajadas
+  final int? nivelDeclarado; // 12/24/36 si el guardia lo marcó (fuente de verdad)
+  _Turno(this.inicio, this.fin, this.horas, {this.nivelDeclarado});
   // Tolerancia: diferencias de pocos minutos (ej. 8:00 vs 8:08) NO cuentan.
   static const double _tol = 0.5; // 30 min
-  // Duraciones esperadas: turno normal = 12 h, largo = 24 h, extra largo = 36 h.
   static const List<int> _esperados = [12, 24, 36];
-  // Tipo de turno = la duración esperada MÁS CERCANA a lo que trabajó. Así un
-  // turno de 12 h se cuenta como 12 (antes cualquier cosa < 30 h salía como 24,
-  // por eso un turno normal aparecía duplicado como "24h").
+  // Tipo de turno: si el guardia lo DECLARÓ (doblar 24/36) se usa eso; si no,
+  // se estima por la duración más cercana (turnos viejos sin declarar).
   int get tipo {
+    if (nivelDeclarado != null && _esperados.contains(nivelDeclarado)) return nivelDeclarado!;
     int best = _esperados.first;
     double bestD = (horas - best).abs();
     for (final e in _esperados) {
@@ -31,7 +33,7 @@ class _Turno {
     return best;
   }
   double get extra => horas > tipo + _tol ? horas - tipo : 0; // se quedó más
-  double get falta => horas < tipo - _tol ? tipo - horas : 0; // hizo menos (llegó antes)
+  double get falta => horas < tipo - _tol ? tipo - horas : 0; // hizo menos (salió antes)
 }
 
 /// Resumen de un guardia (horas del mes) calculado desde la nube.
@@ -46,6 +48,8 @@ class _ResG {
   int get n12 => turnos.where((t) => t.tipo == 12).length;
   int get n24 => turnos.where((t) => t.tipo == 24).length;
   int get n36 => turnos.where((t) => t.tipo == 36).length;
+  // Veces que dobló: 24h = 1 doblada, 36h = 2 dobladas (triple).
+  int get dobles => turnos.fold(0, (a, t) => a + (t.tipo == 24 ? 1 : t.tipo == 36 ? 2 : 0));
 }
 
 class GuardiasScreen extends StatefulWidget {
@@ -106,7 +110,16 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
       } else if (tipo == 'Salida de turno') {
         if (t != null && r.abierto != null) {
           final h = t.difference(r.abierto!).inMinutes / 60.0;
-          if (h > 0 && h < 48) r.turnos.add(_Turno(r.abierto!, h));
+          if (h > 0 && h < 60) {
+            // Nivel declarado por el guardia (doblar 24/36), si viene.
+            int? nivel;
+            var det = e['detalle'];
+            if (det is String && det.isNotEmpty) {
+              try { det = jsonDecode(det); } catch (_) {}
+            }
+            if (det is Map && det['nivel'] != null) nivel = int.tryParse('${det['nivel']}');
+            r.turnos.add(_Turno(r.abierto!, t, h, nivelDeclarado: nivel));
+          }
           r.abierto = null;
         }
       }
@@ -127,20 +140,23 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
               _chip('Turnos 12h', '${r.n12}', const Color(0xFF1565C0)),
               _chip('Turnos 24h', '${r.n24}', AppColors.verde),
               _chip('Turnos 36h', '${r.n36}', const Color(0xFF6A1B9A)),
+              _chip('Veces que dobló', '${r.dobles}', const Color(0xFFC2185B)),
               _chip('Horas extra', r.extra.toStringAsFixed(1), const Color(0xFFEF6C00)),
               _chip('Horas total', r.horas.toStringAsFixed(1), Colors.teal),
             ]),
             const Divider(height: 20),
-            const Text('Turnos del mes', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Turnos del mes (ingreso → salida)', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             if (r.turnos.isEmpty) const Text('Sin turnos cerrados este mes.'),
             for (final t in r.turnos)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Text('${DateFormat('dd/MM HH:mm').format(t.inicio)} · ${t.horas.toStringAsFixed(1)} h '
-                    '(turno ${t.tipo}h'
-                    '${t.extra > 0 ? ', +${t.extra.toStringAsFixed(1)} h extra' : ''}'
-                    '${t.falta > 0 ? ', ${t.falta.toStringAsFixed(1)} h menos (llegó antes)' : ''})',
+                child: Text(
+                    'Ingreso ${DateFormat('dd/MM HH:mm').format(t.inicio)}  →  '
+                    'Salida ${DateFormat('dd/MM HH:mm').format(t.fin)}\n'
+                    'Turno ${t.tipo}h · ${t.horas.toStringAsFixed(1)} h reales'
+                    '${t.extra > 0 ? ' · +${t.extra.toStringAsFixed(1)} h extra' : ''}'
+                    '${t.falta > 0 ? ' · ${t.falta.toStringAsFixed(1)} h menos' : ''}',
                     style: const TextStyle(fontSize: 13)),
               ),
           ]),
@@ -389,7 +405,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                           child: Text('${r.dias.length}', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.verde)),
                         ),
                         title: Text(r.guardia, style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Text('${r.n12} de 12h · ${r.n24} de 24h · ${r.n36} de 36h · ${r.horas.toStringAsFixed(1)} h'
+                        subtitle: Text('${r.n12} de 12h · ${r.n24} de 24h · ${r.n36} de 36h · dobló ${r.dobles} · ${r.horas.toStringAsFixed(1)} h'
                             '${r.extra > 0 ? ' · +${r.extra.toStringAsFixed(1)} extra' : ''}'),
                         trailing: const Icon(Icons.chevron_right),
                       ),
