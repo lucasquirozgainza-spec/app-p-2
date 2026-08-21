@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../services/gallery.dart';
@@ -41,9 +42,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   double _zoomMin = 1.0;     // zoom mínimo del lente
   double _zoomMax = 1.0;     // zoom máximo del lente
   double _zoomBase = 1.0;    // zoom al empezar el pellizco (pinch)
-  // Umbral de nitidez: por debajo se considera movida/borrosa y se ofrece
-  // repetir. Bajo a propósito para NO rechazar fotos buenas por error.
-  static const double _umbralNitidez = 70;
 
   Future<void> _setZoom(double z) async {
     final c = _controller;
@@ -73,28 +71,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             )),
       ),
     );
-  }
-
-  Future<bool> _preguntarRepetir() async {
-    final r = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: const Icon(Icons.blur_on, color: AppColors.rojo, size: 40),
-        title: const Text('Foto movida'),
-        content: const Text(
-            'La foto salió borrosa o movida. Para que quede nítida: mantén el '
-            'celular fijo y toca la placa/número en la pantalla para enfocar.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Usar igual')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Repetir'),
-          ),
-        ],
-      ),
-    );
-    return r == true;
   }
 
   Future<void> _toggleFlash() async {
@@ -137,15 +113,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_cams.isEmpty) return;
       await _controller?.dispose();
-      // veryHigh (≈1080p) es nítido y NO traba (max saturaba la memoria y salía
-      // borroso por no enfocar a tiempo). Selfie de turno (rapida): 720p veloz.
-      final preset = widget.rapida ? ResolutionPreset.high : ResolutionPreset.veryHigh;
+      // max = resolución NATIVA máxima del sensor (normalmente 4:3): capta la
+      // MAYOR información posible y SIN recorte a 1x (veryHigh forzaba 16:9 y
+      // recortaba el campo visual). Ya no traba porque el procesado pesado se
+      // quitó del disparo. Selfie de turno (rapida): 720p veloz.
+      final preset = widget.rapida ? ResolutionPreset.high : ResolutionPreset.max;
       final c = CameraController(_cams[_idx], preset,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       _controller = c;
       _initFuture = c.initialize();
       await _initFuture;
       if (mounted) setState(() {});
+      // Fijar la orientación de captura en vertical: el plugin escribe la foto
+      // ya orientada y consistente (menos fotos volteadas).
+      try { await c.lockCaptureOrientation(DeviceOrientation.portraitUp); } catch (_) {}
       try { await c.setFlashMode(_flash ? FlashMode.torch : FlashMode.off); } catch (_) {}
       // Rango de zoom del lente (para el pellizco y los botones).
       try {
@@ -195,44 +176,36 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     setState(() => _capturando = true);
     try {
       // Disparo INSTANTÁNEO: el enfoque es continuo (automático) mientras se ve
-      // la imagen, así que al apretar se captura de una, sin esperas. Si sale
-      // movida se detecta después y se ofrece repetir.
+      // la imagen, así que al apretar se captura de una, sin esperas ni
+      // confirmación. El enderezado se hace después, aparte, para que la cámara
+      // quede lista para la siguiente foto de inmediato.
       final XFile shot = await c.takePicture();
       final dir = await getApplicationDocumentsDirectory();
       final fotosDir = Directory(p.join(dir.path, 'fotos'));
       if (!await fotosDir.exists()) await fotosDir.create(recursive: true);
       final dest = p.join(fotosDir.path, 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(shot.path).copy(dest);
-      // Revisar que NO esté movida/borrosa (salvo la selfie rápida de turno). Si
-      // lo está, se ofrece repetirla para que las fotos queden nítidas.
-      if (!widget.rapida) {
-        final score = await ImgUtil.nitidez(dest);
-        if (score < _umbralNitidez && mounted) {
-          final repetir = await _preguntarRepetir();
-          if (repetir) {
-            try { File(dest).deleteSync(); } catch (_) {}
-            if (mounted) setState(() => _capturando = false);
-            return;
-          }
-        }
-      }
-      // Corregir orientación AQUÍ (esperando) para que la foto quede DERECHA
-      // antes de devolverla: así WhatsApp/nube nunca reciben una volteada
-      // (antes se subía mientras se corregía en segundo plano => a veces salía
-      // girada y a veces no). El guardado en galería sí queda en segundo plano.
-      await ImgUtil.normalizarOrientacion(dest);
       _fotos.add(dest);
+      if (widget.multi) {
+        // RONDAS/varias fotos: enderezar (nativo, rápido) y guardar en galería
+        // EN SEGUNDO PLANO. El botón queda libre YA para la siguiente foto; para
+        // cuando se comparte/sube (al final), ya están todas derechas.
+        () async {
+          await ImgUtil.normalizarNativa(dest);
+          Gallery.guardar(dest, album: widget.album);
+        }();
+        if (widget.minFotos > 0 && _fotos.length >= widget.minFotos) {
+          if (mounted) Navigator.pop(context, _fotos);
+          return;
+        }
+        if (mounted) setState(() => _capturando = false);
+        return;
+      }
+      // Foto ÚNICA (carnet, tarjeta): se usa de inmediato (OCR/registro), así
+      // que sí esperamos el enderezado nativo — es rápido (~fracción de seg).
+      await ImgUtil.normalizarNativa(dest);
       Gallery.guardar(dest, album: widget.album);
-      if (!widget.multi) {
-        if (mounted) Navigator.pop(context, _fotos);
-        return;
-      }
-      // En modo multi: al llegar al mínimo requerido, se cierra solo.
-      if (widget.minFotos > 0 && _fotos.length >= widget.minFotos) {
-        if (mounted) Navigator.pop(context, _fotos);
-        return;
-      }
-      if (mounted) setState(() => _capturando = false);
+      if (mounted) Navigator.pop(context, _fotos);
     } catch (_) {
       if (mounted) setState(() => _capturando = false);
     }

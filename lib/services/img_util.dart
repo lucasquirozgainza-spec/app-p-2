@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as p;
 
 /// Corrige la orientación de una foto: algunos teléfonos guardan la imagen
 /// "de lado" con una marca EXIF de rotación que no todos los visores respetan
@@ -9,51 +11,33 @@ import 'package:image/image.dart' as img;
 /// falta (para no perder calidad en las que ya están bien). Corre en un
 /// isolate para no trabar la cámara.
 class ImgUtil {
+  /// Endereza la foto de forma NATIVA (rápida) y deja la imagen ya derecha, sin
+  /// EXIF, para que WhatsApp/galería/nube la vean bien en cualquier visor. Es
+  /// MUCHO más veloz que decodificar en Dart puro (no traba la cámara). Si el
+  /// plugin nativo falla, usa el respaldo en Dart.
+  static Future<void> normalizarNativa(String path) async {
+    try {
+      final tmp = p.join(File(path).parent.path, 'n_${DateTime.now().microsecondsSinceEpoch}.jpg');
+      final out = await FlutterImageCompress.compressAndGetFile(
+        path, tmp,
+        quality: 95,               // casi sin pérdida (rondas nítidas)
+        keepExif: false,           // quita el EXIF: la imagen queda "quemada" derecha
+        autoCorrectionAngle: true, // aplica la rotación EXIF a los píxeles
+      );
+      if (out != null) {
+        await File(out.path).rename(path); // reemplaza el original ya derecho
+      } else {
+        await compute(_bakeOrient, path); // respaldo Dart
+      }
+    } catch (_) {
+      try { await compute(_bakeOrient, path); } catch (_) {}
+    }
+  }
+
   static Future<void> normalizarOrientacion(String path) async {
     try {
       await compute(_bakeOrient, path);
     } catch (_) {}
-  }
-
-  /// Devuelve un puntaje de NITIDEZ (varianza del Laplaciano). Más alto = más
-  /// nítida; muy bajo = movida/borrosa/desenfocada. Corre en un isolate.
-  /// Ante cualquier error devuelve un valor alto (no bloquear al guardia).
-  static Future<double> nitidez(String path) async {
-    try {
-      return await compute(_scoreNitidez, path);
-    } catch (_) {
-      return 99999;
-    }
-  }
-}
-
-double _scoreNitidez(String path) {
-  try {
-    final f = File(path);
-    if (!f.existsSync()) return 99999;
-    final decoded = img.decodeImage(f.readAsBytesSync());
-    if (decoded == null) return 99999;
-    // Reducir y pasar a gris para que el cálculo sea rápido.
-    final g = img.grayscale(img.copyResize(decoded, width: 420));
-    final w = g.width, h = g.height;
-    final data = g.getBytes(order: img.ChannelOrder.rgba); // 4 bytes/píxel
-    int px(int x, int y) => data[(y * w + x) * 4]; // canal rojo = luminancia
-    double sum = 0, sumSq = 0;
-    int n = 0;
-    for (int y = 1; y < h - 1; y++) {
-      for (int x = 1; x < w - 1; x++) {
-        // Laplaciano 4-vecinos: resalta bordes. Foto nítida => bordes fuertes.
-        final lap = (4 * px(x, y) - px(x - 1, y) - px(x + 1, y) - px(x, y - 1) - px(x, y + 1)).toDouble();
-        sum += lap;
-        sumSq += lap * lap;
-        n++;
-      }
-    }
-    if (n == 0) return 99999;
-    final mean = sum / n;
-    return (sumSq / n) - (mean * mean); // varianza
-  } catch (_) {
-    return 99999;
   }
 }
 
