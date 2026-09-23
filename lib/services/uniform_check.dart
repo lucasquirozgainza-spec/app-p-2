@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
 class UniformeResultado {
@@ -12,11 +13,23 @@ class UniformeResultado {
 /// camisa ROJA o chaleco NEGRO en la zona del torso.
 /// Es una ayuda visual (best-effort), no un juicio infalible.
 class UniformeCheck {
+  /// Corre en un isolate: decodificar la foto no traba la pantalla.
   static Future<UniformeResultado> revisar(String path) async {
     try {
-      final bytes = await File(path).readAsBytes();
+      final r = await compute(_revisar, path);
+      return UniformeResultado(r[0] == 1, r[1], r[2]);
+    } catch (_) {
+      return UniformeResultado(true, 0, 0);
+    }
+  }
+}
+
+/// Devuelve [ok(1/0), rojo, negro] (tipos simples para pasar entre isolates).
+List<double> _revisar(String path) {
+    try {
+      final bytes = File(path).readAsBytesSync();
       final full = img.decodeImage(bytes);
-      if (full == null) return UniformeResultado(true, 0, 0); // no se pudo leer: no molestar
+      if (full == null) return [1, 0, 0]; // no se pudo leer: no molestar
       // Reducir para acelerar el analisis.
       final im = img.copyResize(full, width: 200);
       final w = im.width, h = im.height;
@@ -35,16 +48,15 @@ class UniformeCheck {
           if (r < 70 && g < 70 && b < 70) negros++;
         }
       }
-      if (total == 0) return UniformeResultado(true, 0, 0);
+      if (total == 0) return [1, 0, 0];
       final fr = rojos / total, fn = negros / total;
       // Regla: el pecho DEBE tener al menos 10% de ROJO (camisa del uniforme).
       // Una polera negra u otro color sin rojo se marca como SIN uniforme.
       // (No se puede distinguir un chaleco negro de una polera negra solo por
       //  color, por eso se exige el rojo.)
       final ok = fr >= 0.10;
-      return UniformeResultado(ok, fr, fn);
+      return [ok ? 1 : 0, fr, fn];
     } catch (_) {
-      return UniformeResultado(true, 0, 0); // ante cualquier error, no bloquear
+      return [1, 0, 0]; // ante cualquier error, no bloquear
     }
-  }
 }

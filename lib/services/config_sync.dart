@@ -35,37 +35,87 @@ class ConfigSync {
     }
   }
 
-  /// Trae los guardias que el admin registró (desde cualquier dispositivo) y
-  /// los guarda LOCALMENTE en este equipo, para que aparezcan al iniciar turno
-  /// aunque después se limpie la nube.
-  static Future<void> sincronizarGuardias() async {
+  static DateTime? _ultimaSyncGuardias;
+  static bool _syncGuardiasEnCurso = false;
+
+  /// Sincroniza el personal del edificio entre celulares: altas ("Guardia") y
+  /// bajas ("GuardiaBaja") que el admin hizo en cualquier equipo. Por cada
+  /// nombre manda el evento MÁS RECIENTE (así se puede dar de baja y volver a
+  /// registrar). Se guarda localmente para que funcione aunque se limpie la nube.
+  /// [forzar]=false: como máximo cada 10 min (el latido corre cada minuto).
+  static Future<void> sincronizarGuardias({bool forzar = false}) async {
+    final ahora = DateTime.now();
+    if (_syncGuardiasEnCurso) return;
+    if (!forzar && _ultimaSyncGuardias != null &&
+        ahora.difference(_ultimaSyncGuardias!) < const Duration(minutes: 10)) {
+      return;
+    }
+    _syncGuardiasEnCurso = true;
     try {
       final ed = AppState.instance.edificioId;
-      final nube = await Cloud.eventos(tipo: 'Guardia', edificio: ed, limit: 300);
-      if (nube.isEmpty) return;
-      final db = await DB.instance.database;
-      for (final e in nube) {
+      final res = await Future.wait([
+        Cloud.eventos(tipo: 'Guardia', edificio: ed, limit: 300),
+        Cloud.eventos(tipo: 'GuardiaBaja', edificio: ed, limit: 300),
+      ]);
+      _ultimaSyncGuardias = ahora;
+      // Último evento por nombre (clave en minúsculas).
+      final ultimo = <String, Map<String, dynamic>>{};
+      for (final e in [...res[0], ...res[1]]) {
         final det = e['detalle'];
         final d = det is Map ? det : const {};
-        final nombre = (d['nombre'] ?? e['guardia'] ?? '').toString().trim();
+        final nombre = (d['nombre'] ?? '').toString().trim();
         if (nombre.isEmpty) continue;
-        final ex = await db.query('usuarios',
-            where: "nombre=? AND (edificio=? OR edificio IS NULL OR edificio='')",
-            whereArgs: [nombre, ed], limit: 1);
-        if (ex.isNotEmpty) continue; // ya existe: no duplicar
-        await db.insert('usuarios', {
-          'usuario': 'gsync${DateTime.now().microsecondsSinceEpoch}_${nombre.hashCode}',
-          'nombre': nombre,
-          'cargo': (d['cargo'] ?? '').toString(),
-          'rol': (d['rol'] ?? 'guardia').toString(),
-          'pass_hash': 'sync',
-          'salt': 'sync',
-          'activo': 1,
-          'edificio': ed,
-          'created_at': DateTime.now().toIso8601String(),
-        });
+        final k = nombre.toLowerCase();
+        final prev = ultimo[k];
+        final t = (e['created_at'] ?? '').toString();
+        if (prev == null || t.compareTo((prev['created_at'] ?? '').toString()) > 0) {
+          ultimo[k] = {...e, '_nombre': nombre, '_det': d};
+        }
       }
-    } catch (_) {}
+      if (ultimo.isEmpty) return;
+      final db = await DB.instance.database;
+      // Nombres locales de una sola vez (antes: una consulta por evento).
+      final locales = await db.query('usuarios',
+          columns: ['nombre'],
+          where: "edificio=? OR edificio IS NULL OR edificio=''", whereArgs: [ed]);
+      final existentes = {for (final r in locales) (r['nombre'] ?? '').toString().trim().toLowerCase()};
+      final batch = db.batch();
+      for (final e in ultimo.values) {
+        final nombre = e['_nombre'] as String;
+        final k = nombre.toLowerCase();
+        final d = e['_det'] as Map;
+        if (e['tipo'] == 'GuardiaBaja') {
+          if (existentes.contains(k)) {
+            batch.delete('usuarios',
+                where: "LOWER(nombre)=? AND rol!='admin' AND (edificio=? OR edificio IS NULL OR edificio='')",
+                whereArgs: [k, ed]);
+          }
+        } else if (!existentes.contains(k)) {
+          batch.insert('usuarios', {
+            'usuario': 'gsync${DateTime.now().microsecondsSinceEpoch}_${nombre.hashCode}',
+            'nombre': nombre,
+            'cargo': (d['cargo'] ?? '').toString(),
+            'rol': (d['rol'] ?? 'guardia').toString(),
+            'pass_hash': 'sync',
+            'salt': 'sync',
+            'activo': 1,
+            'edificio': ed,
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        }
+      }
+      await batch.commit(noResult: true);
+    } catch (_) {
+    } finally {
+      _syncGuardiasEnCurso = false;
+    }
+  }
+
+  /// Da de baja a un guardia en ESTE celular y lo publica para los demás.
+  static Future<void> darDeBaja(int id, String nombre) async {
+    final db = await DB.instance.database;
+    await db.delete('usuarios', where: 'id=?', whereArgs: [id]);
+    Cloud.evento('GuardiaBaja', detalle: {'nombre': nombre});
   }
 
   /// Adopta la contraseña de admin publicada desde otro dispositivo.

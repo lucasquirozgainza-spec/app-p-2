@@ -1,37 +1,98 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
+import 'gallery.dart';
 
-/// Corrige la orientación de una foto: algunos teléfonos guardan la imagen
-/// "de lado" con una marca EXIF de rotación que no todos los visores respetan
-/// (WhatsApp, galería), y la foto se ve volteada. Aquí aplicamos esa rotación
-/// a los píxeles y reescribimos el archivo DERECHO. Solo reescribe si hace
-/// falta (para no perder calidad en las que ya están bien). Corre en un
-/// isolate para no trabar la cámara.
+/// Procesamiento de fotos, todo FUERA del disparo de la cámara:
+/// - Endereza la foto (aplica la rotación EXIF a los píxeles y quita el EXIF)
+///   para que WhatsApp/galería/nube la muestren igual que se tomó.
+/// - Usa compresión NATIVA (rápida, poca memoria). Si falla, respaldo en Dart.
+/// - Las fotos se procesan en una COLA de a una: la cámara queda libre al
+///   instante y no se juntan varias fotos grandes en memoria a la vez.
 class ImgUtil {
-  /// Endereza la foto de forma NATIVA (rápida) y deja la imagen ya derecha, sin
-  /// EXIF, para que WhatsApp/galería/nube la vean bien en cualquier visor. Es
-  /// MUCHO más veloz que decodificar en Dart puro (no traba la cámara). Si el
-  /// plugin nativo falla, usa el respaldo en Dart.
+  /// Lado máximo conservado. 4000 px ≈ 12 MP en 4:3: calidad completa de la
+  /// mayoría de cámaras. Solo se reduce si el sensor entrega algo más grande
+  /// (ej. 50 MP), que haría lento todo sin aportar para identificación.
+  static const int _ladoMax = 4000;
+
+  static Future<void> _cola = Future<void>.value();
+  static int _pendientes = 0;
+
+  /// Cantidad de fotos que todavía se están procesando.
+  static int get pendientes => _pendientes;
+
+  /// Encola una foto recién tomada: enderezar y luego copiar a la galería.
+  /// No bloquea: devuelve un Future por si alguien quiere esperarla.
+  static Future<void> encolar(String path, {String? album}) {
+    _pendientes++;
+    final tarea = _cola.then((_) async {
+      try {
+        await normalizarNativa(path);
+      } catch (_) {
+        // normalizarNativa ya tiene respaldo; nunca debe cortar la cola.
+      } finally {
+        _pendientes--;
+      }
+      // La galería no hace falta esperarla: va aparte.
+      unawaited(Gallery.guardar(path, album: album));
+    });
+    _cola = tarea;
+    return tarea;
+  }
+
+  /// Espera a que terminen las fotos en cola (antes de compartir o subir).
+  /// Tiene tope de tiempo para que nunca deje la pantalla colgada.
+  static Future<void> esperarPendientes({Duration tope = const Duration(seconds: 20)}) async {
+    if (_pendientes == 0) return;
+    try {
+      await _cola.timeout(tope);
+    } catch (_) {}
+  }
+
+  /// Endereza la foto de forma NATIVA y reemplaza el archivo (escritura atómica:
+  /// se escribe a un temporal y se renombra, nunca queda un archivo a medias).
   static Future<void> normalizarNativa(String path) async {
     try {
+      if (!await File(path).exists()) return;
       final tmp = p.join(File(path).parent.path, 'n_${DateTime.now().microsecondsSinceEpoch}.jpg');
       final out = await FlutterImageCompress.compressAndGetFile(
         path, tmp,
-        quality: 95,               // casi sin pérdida (rondas nítidas)
-        keepExif: false,           // quita el EXIF: la imagen queda "quemada" derecha
-        autoCorrectionAngle: true, // aplica la rotación EXIF a los píxeles
+        // IMPORTANTE: el plugin por defecto reduce a 1920x1080. Con _ladoMax
+        // se conserva la resolución completa de la foto.
+        minWidth: _ladoMax,
+        minHeight: _ladoMax,
+        quality: 92,               // visualmente igual al original, archivo menor
+        keepExif: false,           // la orientación queda "quemada" en los píxeles
+        autoCorrectionAngle: true, // aplica la rotación EXIF
       );
-      if (out != null) {
-        await File(out.path).rename(path); // reemplaza el original ya derecho
+      if (out != null && await File(out.path).length() > 0) {
+        await File(out.path).rename(path);
       } else {
-        await compute(_bakeOrient, path); // respaldo Dart
+        await compute(_bakeOrient, path);
       }
     } catch (_) {
       try { await compute(_bakeOrient, path); } catch (_) {}
     }
+  }
+
+  /// Versión chica para subir a la nube (~1080 px, ~100-200 KB). Nativa.
+  static Future<Uint8List?> miniaturaNube(String path) async {
+    try {
+      final b = await FlutterImageCompress.compressWithFile(
+        path,
+        minWidth: 1080,
+        minHeight: 1080,
+        quality: 60,
+        keepExif: false,
+        autoCorrectionAngle: true,
+      );
+      if (b != null && b.isNotEmpty) return b;
+    } catch (_) {}
+    return null;
   }
 
   static Future<void> normalizarOrientacion(String path) async {
@@ -47,18 +108,12 @@ bool _bakeOrient(String path) {
     if (!f.existsSync()) return false;
     final decoded = img.decodeImage(f.readAsBytesSync());
     if (decoded == null) return false;
-    // Leer la marca EXIF de orientación. 1 = derecha; 2..8 = girada o espejada.
     int orient = 1;
     try { orient = decoded.exif.imageIfd.orientation ?? 1; } catch (_) {}
-    // bakeOrientation aplica la rotación/espejo EXIF a los PÍXELES y deja la
-    // imagen derecha con la marca en 1 (así WhatsApp/galería la ven siempre
-    // bien, sin depender de que respeten el EXIF).
     final derecha = img.bakeOrientation(decoded);
     final cambioDim = derecha.width != decoded.width || derecha.height != decoded.height;
-    // Reescribir si hubo CUALQUIER orientación no-normal (incluye 180° y espejo,
-    // que no cambian el tamaño) o si cambiaron las dimensiones (90/270).
-    if (orient == 1 && !cambioDim) return false; // ya estaba derecha: no tocar
-    f.writeAsBytesSync(img.encodeJpg(derecha, quality: 95));
+    if (orient == 1 && !cambioDim) return false; // ya estaba derecha
+    f.writeAsBytesSync(img.encodeJpg(derecha, quality: 92));
     return true;
   } catch (_) {
     return false;

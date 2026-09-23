@@ -19,6 +19,12 @@ class _PropietariosScreenState extends State<PropietariosScreen> {
   List<Map<String, dynamic>> _rows = [];
 
   @override
+  void dispose() {
+    _q.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     _load();
@@ -194,6 +200,17 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
     }
   }
 
+  static const _etiquetas = {
+    'copropietario': 'Propietario',
+    'telefono': 'Teléfono propietario',
+    'inquilino': 'Inquilino',
+    'telefono_inq': 'Teléfono inquilino',
+    'vehiculo': 'Vehículo',
+    'placa': 'Placa',
+    'nro_parqueo': 'N° de parqueo',
+    'observaciones': 'Observaciones',
+  };
+
   Future<void> _editar() async {
     final ctrls = {
       'copropietario': TextEditingController(text: p['copropietario']?.toString()),
@@ -218,7 +235,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: TextField(
                     controller: e.value,
-                    decoration: InputDecoration(labelText: e.key, isDense: true),
+                    decoration: InputDecoration(labelText: _etiquetas[e.key] ?? e.key, isDense: true),
                   ),
                 ),
             ],
@@ -235,6 +252,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
       final data = {for (final e in ctrls.entries) e.key: e.value.text};
       await db.update('propietarios', data, where: 'id=?', whereArgs: [p['id']]);
       await Audit.log('EDITAR', 'propietarios', p['id'].toString());
+      if (!mounted) return;
       setState(() => p.addAll(data));
       widget.onChanged();
     }
@@ -354,6 +372,22 @@ class _PropietarioFormState extends State<PropietarioForm> {
   final _mascota = TextEditingController();
   final _obs = TextEditingController();
   bool _saving = false;
+
+  @override
+  void dispose() {
+    _depto.dispose();
+    _torre.dispose();
+    _copro.dispose();
+    _tel.dispose();
+    _inq.dispose();
+    _telInq.dispose();
+    _parqueo.dispose();
+    _vehiculo.dispose();
+    _placa.dispose();
+    _mascota.dispose();
+    _obs.dispose();
+    super.dispose();
+  }
 
   Future<void> _guardar() async {
     if (_depto.text.trim().isEmpty) {

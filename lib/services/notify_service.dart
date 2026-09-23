@@ -24,26 +24,28 @@ class NotifyService {
     final metodo = s.notifMetodo;
     if (metodo == 'ninguno') return;
 
-    // Correo automático
-    if ((metodo == 'email' || metodo == 'ambos') &&
-        s.adminEmail.isNotEmpty && s.senderEmail.isNotEmpty && s.senderPass.isNotEmpty) {
-      final ok = await _enviarEmail(
-        de: s.senderEmail, clave: s.senderPass, para: s.adminEmail,
-        asunto: 'Incidente - ${s.edificioNombre} ($tipo)', cuerpo: mensaje,
-      );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(ok ? 'Aviso enviado al correo del admin' : 'No se pudo enviar el correo (revisa internet/config)'),
-          backgroundColor: ok ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
-        ));
-      }
-    }
-
-    // WhatsApp de un toque
+    // WhatsApp de un toque (primero: es lo inmediato para el guardia).
     if ((metodo == 'whatsapp' || metodo == 'ambos') && s.adminWhatsapp.isNotEmpty) {
       if (context.mounted) {
         await Contacto.whatsapp(context, s.adminWhatsapp, mensaje: mensaje);
       }
+    }
+
+    // Correo automático EN SEGUNDO PLANO y con tope de tiempo: sin internet no
+    // deja el formulario colgado. El aviso sale en la barra inferior al terminar.
+    if ((metodo == 'email' || metodo == 'ambos') &&
+        s.adminEmail.isNotEmpty && s.senderEmail.isNotEmpty && s.senderPass.isNotEmpty) {
+      final messenger = context.mounted ? ScaffoldMessenger.maybeOf(context) : null;
+      () async {
+        final ok = await _enviarEmail(
+          de: s.senderEmail, clave: s.senderPass, para: s.adminEmail,
+          asunto: 'Incidente - ${s.edificioNombre} ($tipo)', cuerpo: mensaje,
+        ).timeout(const Duration(seconds: 25), onTimeout: () => false);
+        messenger?.showSnackBar(SnackBar(
+          content: Text(ok ? 'Aviso enviado al correo del admin' : 'No se pudo enviar el correo (revisa internet/config)'),
+          backgroundColor: ok ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+        ));
+      }();
     }
   }
 

@@ -53,9 +53,9 @@ class _MantenimientoScreenState extends State<MantenimientoScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: GestureDetector(
-                  onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto))))),
+                  onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto), cacheWidth: 2000)))),
                   child: ClipRRect(borderRadius: BorderRadius.circular(10),
-                      child: Image.file(File(foto), height: 180, width: double.infinity, fit: BoxFit.cover)),
+                      child: Image.file(File(foto), height: 180, width: double.infinity, fit: BoxFit.cover, cacheWidth: 1000)),
                 ),
               ),
             Text(x['observaciones']?.toString() ?? 'Sin observaciones', style: const TextStyle(fontSize: 15)),
@@ -142,6 +142,13 @@ class _MantenimientoFormState extends State<MantenimientoForm> {
   String _tipo = _tiposMant.first;
   String? _fotoAntes;
   bool _saving = false;
+
+  @override
+  void dispose() {
+    _lugar.dispose();
+    _obs.dispose();
+    super.dispose();
+  }
 
   Future<void> _guardar() async {
     setState(() => _saving = true);

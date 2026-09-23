@@ -68,9 +68,9 @@ class _IncidentesScreenState extends State<IncidentesScreen> {
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: GestureDetector(
-                            onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(f))))),
+                            onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(f), cacheWidth: 2000)))),
                             child: ClipRRect(borderRadius: BorderRadius.circular(8),
-                                child: Image.file(File(f), width: 160, height: 160, fit: BoxFit.cover)),
+                                child: Image.file(File(f), width: 160, height: 160, fit: BoxFit.cover, cacheWidth: 480)),
                           ),
                         ),
                   ],
@@ -161,6 +161,14 @@ class _IncidenteFormState extends State<IncidenteForm> {
   bool _saving = false;
 
   @override
+  void dispose() {
+    _lugar.dispose();
+    _desc.dispose();
+    _involucrados.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Reportar Incidente')),
@@ -219,7 +227,8 @@ class _IncidenteFormState extends State<IncidenteForm> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await Audit.log('CREAR', 'incidentes', '$id');
-    await Cloud.evento('Incidente',
+    // Nube en segundo plano: sin señal no demora el aviso al admin.
+    Cloud.evento('Incidente',
         detalle: {'tipo': _tipo, 'lugar': _lugar.text, 'descripcion': _desc.text});
     // Aviso automático al administrador (correo y/o WhatsApp según config).
     if (mounted) {

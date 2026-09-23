@@ -5,6 +5,7 @@ import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
 import '../services/device_context.dart';
+import '../services/turnos.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
 import '../widgets/photo_field.dart';
@@ -24,6 +25,12 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
   Map<String, dynamic>? _sel;
   String? _foto;
   bool _saving = false;
+
+  @override
+  void dispose() {
+    _obs.dispose();
+    super.dispose();
+  }
   final _ahora = DateTime.now();
 
   @override
@@ -74,22 +81,21 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
-  /// El guardia DECLARA que dobla el turno (24h) o lo triplica (36h). No cierra
-  /// el turno ni pide foto: solo deja registrado el nivel para que después el
-  /// conteo de 12h/24h/36h sea exacto (sin adivinar por horas).
-  Future<void> _doblar(int nuevoNivel) async {
-    if (_sel == null) return _snack('Selecciona el guardia');
-    setState(() => _saving = true);
-    final s = AppState.instance;
+  /// El guardia DECLARA el turno: 12 h (normal), 24 h (doblado) o 36 h
+  /// (triple). No cierra el turno ni pide foto; se puede corregir.
+  Future<void> _cambiarNivel(int nivel) async {
+    final sel = _sel;
+    if (sel == null) return _snack('Selecciona el guardia');
+    if (((sel['nivel'] as int?) ?? 12) == nivel) return;
     final db = await DB.instance.database;
-    await db.update('ingreso_turno', {'nivel': nuevoNivel}, where: 'id=?', whereArgs: [_sel!['id']]);
-    await Audit.log('DOBLAR_TURNO', 'ingreso_turno', '${_sel!['id']}', detalle: 'nivel=$nuevoNivel');
+    await db.update('ingreso_turno', {'nivel': nivel}, where: 'id=?', whereArgs: [sel['id']]);
+    await Audit.log('DOBLAR_TURNO', 'ingreso_turno', '${sel['id']}', detalle: 'nivel=$nivel');
     Cloud.evento('Doblar turno',
-        guardia: _sel!['guardia_nombre'] as String?,
-        detalle: {'nivel': nuevoNivel, 'edificio': s.edificioId});
+        guardia: sel['guardia_nombre'] as String?,
+        detalle: {'nivel': nivel, 'edificio': AppState.instance.edificioId});
     if (!mounted) return;
-    TopToast.show(context, 'Turno marcado como ${nuevoNivel}h', color: AppColors.verde, icon: Icons.check_circle);
-    Navigator.pop(context);
+    setState(() => sel['nivel'] = nivel);
+    TopToast.show(context, 'Turno de $nivel h registrado', color: AppColors.verde, icon: Icons.check_circle);
   }
 
   Future<void> _finalizar() async {
@@ -97,27 +103,33 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     if (_foto == null) return _snack('La foto de salida es obligatoria');
     setState(() => _saving = true);
     final s = AppState.instance;
-    final gps = await DeviceContext.gps();
+    final sel = _sel!;
     final db = await DB.instance.database;
     final id = await db.insert('salida_turno', {
-      'turno_id': _sel!['id'],
-      'guardia_id': _sel!['guardia_id'],
-      'guardia_nombre': _sel!['guardia_nombre'],
+      'turno_id': sel['id'],
+      'guardia_id': sel['guardia_id'],
+      'guardia_nombre': sel['guardia_nombre'],
       'foto': _foto,
       'observaciones': _obs.text,
       'edificio': s.edificioId,
       'created_at': DateTime.now().toIso8601String(),
     });
-    await db.update('ingreso_turno', {'activo': 0}, where: 'id=?', whereArgs: [_sel!['id']]);
+    await db.update('ingreso_turno', {'activo': 0}, where: 'id=?', whereArgs: [sel['id']]);
     await Audit.log('FIN_TURNO', 'salida_turno', '$id');
-    final nivel = (_sel!['nivel'] as int?) ?? 12;
-    Cloud.evento('Salida de turno',
-        guardia: _sel!['guardia_nombre'] as String?,
-        detalle: {
-          'nivel': nivel, // turno DECLARADO por el guardia (12/24/36)
-          'observaciones': _obs.text,
-          'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
-        });
+    final nivel = Turnos.nivelValido(sel['nivel']) ?? 12;
+    final obs = _obs.text;
+    // Nube y GPS en segundo plano: la salida es inmediata aunque no haya señal.
+    () async {
+      final gps = await DeviceContext.gps();
+      Cloud.evento('Salida de turno',
+          guardia: sel['guardia_nombre'] as String?,
+          detalle: {
+            'nivel': nivel, // turno DECLARADO por el guardia (12/24/36)
+            'observaciones': obs,
+            'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
+          });
+      Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+    }();
 
     // Advertencia: tarjetas de visita que NO fueron devueltas.
     final pend = await db.query('visitas',
@@ -126,7 +138,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     if (pend.isNotEmpty) {
       final deptos = pend.map((e) => e['depto']?.toString() ?? '?').join(', ');
       await db.insert('advertencias', {
-        'guardia_nombre': _sel!['guardia_nombre'],
+        'guardia_nombre': sel['guardia_nombre'],
         'mensaje': 'Al finalizar turno quedaron ${pend.length} tarjeta(s) sin devolver (deptos: $deptos)',
         'tipo': 'tarjeta_turno',
         'edificio': s.edificioId,
@@ -147,10 +159,53 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     }
 
     // Si el que sale es el operador actual, se limpia.
-    if (s.turnoActivoId == _sel!['id']) s.clearOperador();
-    Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+    if (s.turnoActivoId == sel['id']) s.clearOperador();
     if (!mounted) return;
     Navigator.pop(context);
+  }
+
+  /// Tarjeta del turno: ingreso, tiempo transcurrido, tipo 12/24/36 y fin previsto.
+  Widget _tarjetaTurno(Map<String, dynamic> sel) {
+    final nivel = Turnos.nivelValido(sel['nivel']) ?? 12;
+    final ini = DateTime.tryParse(sel['created_at']?.toString() ?? '');
+    final horarios = AppState.instance.horarios;
+    final hm = DateFormat('HH:mm');
+    final fin = ini == null ? null : Turnos.finPrevisto(ini, nivel, horarios);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            const Icon(Icons.login, size: 18, color: AppColors.verde),
+            const SizedBox(width: 6),
+            Text(ini == null ? 'Ingreso —' : 'Ingreso ${hm.format(ini)}',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const Spacer(),
+            if (ini != null)
+              Text('Lleva ${Turnos.duracion(DateTime.now().difference(ini))}',
+                  style: const TextStyle(color: Colors.black54)),
+          ]),
+          const SizedBox(height: 10),
+          SegmentedButton<int>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: 12, label: Text('12 h')),
+              ButtonSegment(value: 24, label: Text('24 h')),
+              ButtonSegment(value: 36, label: Text('36 h')),
+            ],
+            selected: {nivel},
+            onSelectionChanged: _saving ? null : (v) => _cambiarNivel(v.first),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            fin == null
+                ? 'Si el guardia se queda a doblar, marca 24 h o 36 h.'
+                : 'Fin previsto ${DateFormat('EEE d', 'es').format(fin)} ${hm.format(fin)} · si dobla, marca 24 h o 36 h',
+            style: const TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+        ]),
+      ),
+    );
   }
 
   @override
@@ -182,56 +237,11 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
               ],
             ),
           if (_sel != null) ...[
-            const SizedBox(height: 16),
-            Builder(builder: (_) {
-              final nivel = (_sel!['nivel'] as int?) ?? 12;
-              return Card(
-                color: const Color(0xFFF1F8E9),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [
-                      const Icon(Icons.timelapse, color: Color(0xFF33691E)),
-                      const SizedBox(width: 8),
-                      Text('Turno actual: ${nivel}h',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                    ]),
-                    const SizedBox(height: 4),
-                    const Text('¿El guardia se queda a doblar? Marca aquí (no cierra el turno). '
-                        'Si ya se va, usa Finalizar turno abajo.',
-                        style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      if (nivel < 24)
-                        Expanded(
-                          child: FilledButton.icon(
-                            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF2E7D32)),
-                            onPressed: _saving ? null : () => _doblar(24),
-                            icon: const Icon(Icons.replay, size: 20),
-                            label: const Text('Doblar a 24h'),
-                          ),
-                        ),
-                      if (nivel < 24 && nivel < 36) const SizedBox(width: 8),
-                      if (nivel < 36)
-                        Expanded(
-                          child: FilledButton.icon(
-                            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6A1B9A)),
-                            onPressed: _saving ? null : () => _doblar(36),
-                            icon: const Icon(Icons.replay_circle_filled, size: 20),
-                            label: const Text('Doblar a 36h'),
-                          ),
-                        ),
-                    ]),
-                  ]),
-                ),
-              );
-            }),
+            const SizedBox(height: 12),
+            _tarjetaTurno(_sel!),
           ],
           const SizedBox(height: 16),
-          const Divider(),
-          const SizedBox(height: 8),
-          const Text('Salida definitiva del guardia',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          const Text('Salida', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           PhotoField(label: 'Foto de salida', obligatoria: true, rapida: true, frontal: true, album: 'OSIRIS Turnos', onChanged: (v) => setState(() => _foto = v)),
           Row(children: [

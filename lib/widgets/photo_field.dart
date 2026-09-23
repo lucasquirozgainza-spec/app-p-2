@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import '../screens/camera_screen.dart';
+import '../services/camara.dart';
 import '../theme.dart';
 
 /// Campo de foto con vista previa. Captura rápida (sin pasos extra).
@@ -38,11 +38,9 @@ class _PhotoFieldState extends State<PhotoField> {
   }
 
   Future<void> _capturar() async {
-    // Cámara en la app (rápida, sin botón de aceptar).
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(builder: (_) => CameraScreen(multi: false, frontal: widget.frontal, album: widget.album, rapida: widget.rapida)),
-    );
+    // Cámara según la configuración (nativa del cel o la de la app).
+    final res = await Camara.tomar(context,
+        multi: false, frontal: widget.frontal, album: widget.album, rapida: widget.rapida);
     if (res != null && res.isNotEmpty) {
       setState(() => _path = res.first);
       widget.onChanged(res.first);

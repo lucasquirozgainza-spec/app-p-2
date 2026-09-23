@@ -10,7 +10,7 @@ import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/depto_field.dart';
 import '../widgets/toast.dart';
-import 'camera_screen.dart';
+import '../services/camara.dart';
 
 // WhatsApp es la forma mas comun de confirmar hospedaje -> por defecto.
 const _plataformas = ['WhatsApp', 'Airbnb', 'Booking', 'Directo', 'Otro'];
@@ -155,7 +155,7 @@ class _HospedajesScreenState extends State<HospedajesScreen> {
                             _load();
                           },
                           leading: (foto != null && foto.isNotEmpty && File(foto).existsSync())
-                              ? CircleAvatar(backgroundImage: FileImage(File(foto)))
+                              ? CircleAvatar(backgroundImage: ResizeImage(FileImage(File(foto)), width: 120))
                               : CircleAvatar(
                                   backgroundColor: (activo ? _tealC : Colors.grey).withOpacity(.15),
                                   child: Icon(Icons.hotel, color: activo ? _tealC : Colors.grey),
@@ -186,6 +186,7 @@ class _Huesped {
   String tipo = 'Carnet'; // Carnet (2 fotos) | Pasaporte (1 foto)
   List<String> fotos = [];
   bool leyendo = false;
+  bool eliminado = false; // quitado del formulario (el OCR pendiente no escribe)
 }
 
 class HospedajeForm extends StatefulWidget {
@@ -229,32 +230,32 @@ class _HospedajeFormState extends State<HospedajeForm> {
   Future<void> _fotosDoc(_Huesped h) async {
     final carnet = h.tipo == 'Carnet';
     // Cámara propia, sin confirmar cada foto. Carnet: 2 lados en una sesión.
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CameraScreen(multi: carnet, minFotos: carnet ? 2 : 0, album: 'OSIRIS Documentos'),
-      ),
-    );
+    final res = await Camara.tomar(context, multi: carnet, minFotos: carnet ? 2 : 0, album: 'OSIRIS Documentos');
     if (res == null || res.isEmpty) return;
     setState(() { h.fotos = res; h.leyendo = true; });
     // OCR en SEGUNDO PLANO: autocompleta nombre (y número si es pasaporte).
     () async {
+      final CarnetData d;
       if (carnet) {
-        final d = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
-        if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
-        if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
+        d = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
       } else {
         String texto = '';
         for (final f in res) {
           texto = '$texto\n${await OcrService.leerTexto(f)}';
         }
-        final d = OcrService.parsePasaporte(texto);
-        if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
-        if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
+        d = OcrService.parsePasaporte(texto);
       }
-      if (!mounted) return;
+      // Si se cerró el formulario o se quitó este huésped, no escribir.
+      if (!mounted || h.eliminado) return;
+      if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
+      if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
       setState(() => h.leyendo = false);
-      TopToast.show(context, 'Documento leído. Revisa el nombre.');
+      if (d.vacio) {
+        TopToast.show(context, 'No se leyó el documento con seguridad. Escribe los datos.',
+            color: AppColors.rojo, icon: Icons.error_outline);
+      } else {
+        TopToast.show(context, 'Documento leído. Revisa nombre y número.');
+      }
     }();
   }
 
@@ -411,10 +412,16 @@ class _HospedajeFormState extends State<HospedajeForm> {
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.delete_outline, color: AppColors.rojo),
-                  onPressed: () => setState(() {
-                    _huespedes[i].nombre.dispose();
-                    _huespedes.removeAt(i);
-                  }),
+                  onPressed: () {
+                    final quitado = _huespedes[i];
+                    quitado.eliminado = true;
+                    setState(() => _huespedes.removeAt(i));
+                    // Liberar después del cuadro: su TextField ya no está en pantalla.
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      quitado.nombre.dispose();
+                      quitado.doc.dispose();
+                    });
+                  },
                 ),
             ]),
             const SizedBox(height: 4),
@@ -463,7 +470,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
                 onPressed: () => _fotosDoc(h),
                 icon: const Icon(Icons.camera_alt, size: 18),
                 label: Text(h.fotos.isEmpty
-                    ? (carnet ? 'Fotos del carnet (2 lados)' : 'Foto del pasaporte')
+                    ? (carnet ? 'Carnet (2 lados)' : 'Pasaporte')
                     : 'Repetir fotos (${h.fotos.length})'),
               ),
             ),
@@ -479,7 +486,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
                         padding: const EdgeInsets.only(right: 6),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(6),
-                          child: Image.file(File(f), width: 70, height: 70, fit: BoxFit.cover),
+                          child: Image.file(File(f), width: 70, height: 70, fit: BoxFit.cover, cacheWidth: 210),
                         ),
                       ),
                   ],
@@ -602,11 +609,11 @@ class HospedajeDetalle extends StatelessWidget {
                           child: GestureDetector(
                             onTap: () => showDialog(
                               context: context,
-                              builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(f)))),
+                              builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(f), cacheWidth: 2000))),
                             ),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.file(File(f), width: 150, height: 110, fit: BoxFit.cover),
+                              child: Image.file(File(f), width: 150, height: 110, fit: BoxFit.cover, cacheWidth: 450),
                             ),
                           ),
                         ),

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:sqflite/sqflite.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/pdf_export.dart';
@@ -57,30 +56,34 @@ class _PanelScreenState extends State<PanelScreen> {
     final hoy = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final desde = _desde.toIso8601String();
 
-    Future<int> c(String sql, List a) async =>
-        Sqflite.firstIntValue(await db.rawQuery(sql, a)) ?? 0;
-    Future<int> periodo(String tabla) async => c(
-        "SELECT COUNT(*) FROM $tabla WHERE edificio=? AND created_at>=?", [ed, desde]);
-
-    final vivo = {
-      'dentro': await c("SELECT COUNT(*) FROM visitas WHERE edificio=? AND estado='dentro'", [ed]),
-      'encomiendas': await c("SELECT COUNT(*) FROM encomiendas WHERE edificio=? AND estado='pendiente'", [ed]),
-      'incidentes': await c("SELECT COUNT(*) FROM incidentes WHERE edificio=? AND estado='pendiente'", [ed]),
-      'mantenimiento': await c("SELECT COUNT(*) FROM mantenimiento WHERE edificio=? AND estado!='finalizado'", [ed]),
-      'hospedajes': await c("SELECT COUNT(*) FROM hospedajes WHERE edificio=? AND estado='activo'", [ed]),
-      'guardias': await c("SELECT COUNT(*) FROM ingreso_turno WHERE edificio=? AND activo=1", [ed]),
-      'rondas_hoy': await c("SELECT COUNT(*) FROM rondas WHERE edificio=? AND substr(created_at,1,10)=?", [ed, hoy]),
-      'vehiculos': await c("SELECT COUNT(*) FROM vehiculos WHERE edificio=?", [ed]),
-      'propietarios': await c("SELECT COUNT(*) FROM propietarios WHERE edificio=?", [ed]),
+    // UNA sola consulta con sub-consultas (antes 16 consultas una tras otra).
+    // ?1 = edificio, ?2 = hoy, ?3 = desde.
+    const vivoSql = {
+      'dentro': "SELECT COUNT(*) FROM visitas WHERE edificio=?1 AND estado='dentro'",
+      'encomiendas': "SELECT COUNT(*) FROM encomiendas WHERE edificio=?1 AND estado='pendiente'",
+      'incidentes': "SELECT COUNT(*) FROM incidentes WHERE edificio=?1 AND estado='pendiente'",
+      'mantenimiento': "SELECT COUNT(*) FROM mantenimiento WHERE edificio=?1 AND estado!='finalizado'",
+      'hospedajes': "SELECT COUNT(*) FROM hospedajes WHERE edificio=?1 AND estado='activo'",
+      'guardias': "SELECT COUNT(*) FROM ingreso_turno WHERE edificio=?1 AND activo=1",
+      'rondas_hoy': "SELECT COUNT(*) FROM rondas WHERE edificio=?1 AND substr(created_at,1,10)=?2",
+      'vehiculos': "SELECT COUNT(*) FROM vehiculos WHERE edificio=?1",
+      'propietarios': "SELECT COUNT(*) FROM propietarios WHERE edificio=?1",
     };
+    const perTablas = {
+      'Visitas': 'visitas', 'Rondas': 'rondas', 'Incidentes': 'incidentes',
+      'Encomiendas': 'encomiendas', 'Mantenimiento': 'mantenimiento',
+      'Hospedajes': 'hospedajes', 'Ingresos de turno': 'ingreso_turno',
+    };
+    final cols = <String>[
+      for (final e in vivoSql.entries) '(${e.value}) AS v_${e.key}',
+      for (int i = 0; i < perTablas.length; i++)
+        '(SELECT COUNT(*) FROM ${perTablas.values.elementAt(i)} WHERE edificio=?1 AND created_at>=?3) AS p_$i',
+    ];
+    final fila = (await db.rawQuery('SELECT ${cols.join(', ')}', [ed, hoy, desde])).first;
+    int n(String k) => (fila[k] as num?)?.toInt() ?? 0;
+    final vivo = {for (final k in vivoSql.keys) k: n('v_$k')};
     final per = {
-      'Visitas': await periodo('visitas'),
-      'Rondas': await periodo('rondas'),
-      'Incidentes': await periodo('incidentes'),
-      'Encomiendas': await periodo('encomiendas'),
-      'Mantenimiento': await periodo('mantenimiento'),
-      'Hospedajes': await periodo('hospedajes'),
-      'Ingresos de turno': await periodo('ingreso_turno'),
+      for (int i = 0; i < perTablas.length; i++) perTablas.keys.elementAt(i): n('p_$i'),
     };
     if (!mounted) return;
     setState(() {
@@ -156,16 +159,9 @@ class _PanelScreenState extends State<PanelScreen> {
           IconButton(
             icon: const Icon(Icons.picture_as_pdf),
             tooltip: 'Exportar PDF del periodo',
-            onPressed: () async {
-              final labels = {'dia': 'Hoy', 'semana': 'Semana', 'mes': 'Mes', 'anio': 'Ano'};
-              try {
-                await PdfExport.informe(desde: _desde, periodo: labels[_periodo] ?? '');
-              } catch (_) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('No se pudo generar el PDF')));
-                }
-              }
+            onPressed: () {
+              const labels = {'dia': 'Hoy', 'semana': 'Semana', 'mes': 'Mes', 'anio': 'Año'};
+              conEspera(context, () => PdfExport.informe(desde: _desde, periodo: labels[_periodo] ?? ''));
             },
           ),
         ],
@@ -200,12 +196,13 @@ class _PanelScreenState extends State<PanelScreen> {
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   SegmentedButton<String>(
+                    showSelectedIcon: false, // sin el check: el texto no se parte
                     style: SegmentedButton.styleFrom(backgroundColor: Colors.white),
                     segments: const [
                       ButtonSegment(value: 'dia', label: Text('Hoy')),
                       ButtonSegment(value: 'semana', label: Text('Semana')),
                       ButtonSegment(value: 'mes', label: Text('Mes')),
-                      ButtonSegment(value: 'anio', label: Text('Ano')),
+                      ButtonSegment(value: 'anio', label: Text('Año')),
                     ],
                     selected: {_periodo},
                     onSelectionChanged: (s) {
@@ -237,18 +234,10 @@ class _PanelScreenState extends State<PanelScreen> {
                     width: double.infinity,
                     child: FilledButton.icon(
                       style: FilledButton.styleFrom(backgroundColor: AppColors.rojo, minimumSize: const Size.fromHeight(48)),
-                      onPressed: () async {
-                        try {
-                          await PdfExport.informeMensual(mes: DateTime(DateTime.now().year, DateTime.now().month));
-                        } catch (_) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('No se pudo generar el PDF')));
-                          }
-                        }
-                      },
+                      onPressed: () => conEspera(context,
+                          () => PdfExport.informeMensual(mes: DateTime(DateTime.now().year, DateTime.now().month))),
                       icon: const Icon(Icons.description),
-                      label: const Text('Informe mensual del edificio (PDF)'),
+                      label: const Text('Informe mensual (PDF)'),
                     ),
                   ),
                   const SizedBox(height: 8),

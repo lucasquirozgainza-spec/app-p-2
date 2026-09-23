@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../widgets/common.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
@@ -85,8 +86,11 @@ class _EncomiendasScreenState extends State<EncomiendasScreen> {
               itemCount: _rows.length + 1,
               itemBuilder: (_, i) {
                 if (i == _rows.length) {
-                  return const EventosRemotos(tipo: 'Encomienda', icon: Icons.inventory_2,
-                      color: Color(0xFFEF6C00), tituloKeys: ['depto', 'destinatario']);
+                  return Column(children: [
+                    if (_rows.isEmpty) const Vacio('Sin encomiendas', icon: Icons.inventory_2_outlined),
+                    const EventosRemotos(tipo: 'Encomienda', icon: Icons.inventory_2,
+                        color: Color(0xFFEF6C00), tituloKeys: ['depto', 'destinatario']),
+                  ]);
                 }
                 final e = _rows[i];
                 final pend = e['estado'] == 'pendiente';
@@ -128,6 +132,14 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
   final _empresa = TextEditingController();
   String? _foto;
   bool _saving = false;
+
+  @override
+  void dispose() {
+    _depto.dispose();
+    _dest.dispose();
+    _empresa.dispose();
+    super.dispose();
+  }
 
   Future<void> _guardar() async {
     if (_foto == null) {
@@ -221,7 +233,7 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
                             }
                           },
                           icon: const Icon(Icons.photo_camera, size: 18),
-                          label: const Text('Enviar con foto'),
+                          label: const Text('Con foto'),
                         ),
                       ),
                     ]),

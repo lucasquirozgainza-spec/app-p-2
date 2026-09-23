@@ -9,10 +9,9 @@ import '../services/cloud.dart';
 import '../services/contact_launch.dart';
 import '../services/contactos_repo.dart';
 import '../services/ocr_service.dart';
-import 'camera_screen.dart';
+import '../services/camara.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
-import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
 import '../widgets/toast.dart';
 import '../widgets/eventos_remotos.dart';
@@ -26,6 +25,12 @@ class VisitasScreen extends StatefulWidget {
 class _VisitasScreenState extends State<VisitasScreen> {
   List<Map<String, dynamic>> _visitas = [];
   bool _soloDentro = true;
+
+  @override
+  void dispose() {
+    _q.dispose();
+    super.dispose();
+  }
   final _q = TextEditingController();
 
   @override
@@ -156,8 +161,9 @@ class _VisitasScreenState extends State<VisitasScreen> {
               itemCount: _visitas.length + 1,
               itemBuilder: (_, i) {
                 if (i == _visitas.length) {
-                  return Column(children: const [
-                    EventosRemotos(tipo: 'Visita', icon: Icons.badge, color: Color(0xFF00897B),
+                  return Column(children: [
+                    if (_visitas.isEmpty) const Vacio('Sin visitas registradas', icon: Icons.badge_outlined),
+                    const EventosRemotos(tipo: 'Visita', icon: Icons.badge, color: Color(0xFF00897B),
                         tituloKeys: ['nombre', 'depto']),
                   ]);
                 }
@@ -173,7 +179,7 @@ class _VisitasScreenState extends State<VisitasScreen> {
                           : Colors.grey.shade200,
                       backgroundImage: (v['foto_visitante'] != null &&
                               File(v['foto_visitante'] as String).existsSync())
-                          ? FileImage(File(v['foto_visitante'] as String))
+                          ? ResizeImage(FileImage(File(v['foto_visitante'] as String)), width: 120)
                           : null,
                       child: (v['foto_visitante'] == null)
                           ? Icon(Icons.person,
@@ -227,10 +233,10 @@ class VisitaDetalle extends StatelessWidget {
         const SizedBox(height: 6),
         GestureDetector(
           onTap: () => showDialog(context: context, builder: (_) => Dialog(
-              child: InteractiveViewer(child: Image.file(File(p))))),
+              child: InteractiveViewer(child: Image.file(File(p), cacheWidth: 2000)))),
           child: ClipRRect(borderRadius: BorderRadius.circular(10),
-              child: Image.file(File(p), height: 200, width: double.infinity, fit: BoxFit.cover,
-                  gaplessPlayback: true, cacheWidth: 1000,
+              child: Image.file(File(p), height: 200, width: double.infinity, fit: BoxFit.cover, cacheWidth: 1000,
+                  gaplessPlayback: true,
                   errorBuilder: (_, __, ___) => Container(height: 200, color: Colors.black12,
                       child: const Center(child: Icon(Icons.broken_image, color: Colors.grey, size: 40))))),
         ),
@@ -298,6 +304,7 @@ class _Acompanante {
   final ci = TextEditingController();
   List<String> fotos = [];
   bool leyendo = false;
+  bool eliminado = false; // quitado del formulario (el OCR pendiente no escribe)
 }
 
 class _VisitaFormScreenState extends State<VisitaFormScreen> {
@@ -316,28 +323,56 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   List<String> _deptoSug = [];
   String? _carnetAnverso;
   String? _carnetReverso;
-  String _carnetTexto = '';
+  // Datos llenados por el OCR: se marcan para que el guardia los revise.
+  bool _nombreOcr = false;
+  bool _ciOcr = false;
   bool _tieneVehiculo = false;
   bool _saving = false;
   final List<_Acompanante> _acomp = []; // visitantes adicionales
   final _ahora = DateTime.now();
 
   bool _recurrenteAvisado = false;
+  bool _consultandoRecurrente = false;
+
+  @override
+  void dispose() {
+    _nombre.dispose();
+    _depto.dispose();
+    _autoriza.dispose();
+    _ci.dispose();
+    _motivo.dispose();
+    _cantidad.dispose();
+    _placa.dispose();
+    _obs.dispose();
+    _tarjetaNum.dispose();
+    for (final a in _acomp) {
+      a.nombre.dispose();
+      a.ci.dispose();
+    }
+    super.dispose();
+  }
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
   /// Si el CI o el nombre coinciden con un recurrente ya registrado, ofrece
   /// marcar su ingreso directo (sin volver a llenar todo).
   Future<void> _chequearRecurrente() async {
-    if (_recurrenteAvisado) return;
+    if (_recurrenteAvisado || _consultandoRecurrente) return;
     final ci = _ci.text.trim();
     final nom = _nombre.text.trim();
-    if (ci.length < 5 && nom.length < 4) return;
+    // Solo comparar con datos suficientes (antes un CI vacío coincidía con
+    // TODOS los recurrentes sin CI y mostraba el aviso equivocado).
+    final conds = <String>[];
+    final args = <Object>[AppState.instance.edificioId];
+    if (ci.length >= 5) { conds.add('ci=?'); args.add(ci); }
+    if (nom.length >= 4) { conds.add('LOWER(nombre)=?'); args.add(nom.toLowerCase()); }
+    if (conds.isEmpty) return;
+    _consultandoRecurrente = true; // una consulta a la vez (se escribe rápido)
     final db = await DB.instance.database;
-    final ed = AppState.instance.edificioId;
     final rows = await db.query('recurrentes',
-        where: 'edificio=? AND (ci=? OR nombre=?)', whereArgs: [ed, ci, nom]);
-    if (rows.isEmpty || !mounted) return;
+        where: 'edificio=? AND (${conds.join(' OR ')})', whereArgs: args, limit: 1);
+    _consultandoRecurrente = false;
+    if (rows.isEmpty || !mounted || _recurrenteAvisado) return;
     final r = rows.first;
     _recurrenteAvisado = true;
     final ok = await showDialog<bool>(
@@ -389,8 +424,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   /// Captura la tarjeta (cámara propia, sin confirmar) y lee el número en
   /// SEGUNDO PLANO para no demorar. Si no lo lee, avisa para repetir manual.
   Future<void> _capturarTarjeta() async {
-    final res = await Navigator.push<List<String>>(
-        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Tarjetas')));
+    final res = await Camara.tomar(context, multi: false, album: 'OSIRIS Tarjetas');
     if (res == null || res.isEmpty) return;
     final path = res.first;
     final dig = AppState.instance.tarjetaDigitos;
@@ -412,26 +446,35 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   /// Captura los DOS lados del carnet en UNA sola sesión (sin reabrir) y lee
   /// CI+nombre en SEGUNDO PLANO para no demorar el registro.
   Future<void> _capturarCarnet() async {
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
-    );
+    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
     if (res == null || res.isEmpty) return;
     setState(() {
       _carnetAnverso = res.isNotEmpty ? res[0] : null;
       _carnetReverso = res.length > 1 ? res[1] : null;
+      _ocrLeyendo = true;
     });
-    // OCR en segundo plano: no bloquea el formulario. Lee según el tipo de
-    // carnet (nuevo: nombre al frente; antiguo: nombre al reverso).
+    // OCR en segundo plano: el formulario sigue usable. Solo llena campos
+    // vacíos (o que el mismo OCR llenó antes): nunca pisa lo que escribió el
+    // guardia. Lo llenado queda marcado para revisar antes de guardar.
     () async {
       final data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
       if (!mounted) return;
       setState(() {
-        if (data.ci != null) _ci.text = data.ci!;
-        if (data.nombre != null) _nombre.text = data.nombre!;
+        _ocrLeyendo = false;
+        if (data.nombre != null && (_nombre.text.trim().isEmpty || _nombreOcr)) {
+          _nombre.text = data.nombre!;
+          _nombreOcr = true;
+        }
+        if (data.ci != null && (_ci.text.trim().isEmpty || _ciOcr)) {
+          _ci.text = data.ci!;
+          _ciOcr = true;
+        }
       });
-      if (data.ci != null || data.nombre != null) {
-        TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
+      if (data.vacio) {
+        TopToast.show(context, 'No se leyó el carnet con seguridad. Escribe nombre y CI.',
+            color: AppColors.rojo, icon: Icons.error_outline);
+      } else {
+        TopToast.show(context, 'Carnet leído. Revisa nombre y CI.');
       }
       _chequearRecurrente();
     }();
@@ -439,45 +482,18 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
 
   /// Carnet de un visitante ADICIONAL: toma los 2 lados y llena su nombre/CI.
   Future<void> _carnetAcompanante(_Acompanante a) async {
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
-    );
+    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
     if (res == null || res.isEmpty) return;
     setState(() { a.fotos = res; a.leyendo = true; });
     () async {
       final data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
-      if (!mounted) return;
+      if (!mounted || a.eliminado) return;
       setState(() {
         a.leyendo = false;
         if (data.nombre != null && a.nombre.text.trim().isEmpty) a.nombre.text = data.nombre!;
         if (data.ci != null && a.ci.text.trim().isEmpty) a.ci.text = data.ci!;
       });
     }();
-  }
-
-  /// Lee el carnet (anverso o reverso), acumula el texto y llena CI y nombre.
-  Future<void> _procesarCarnet(String? path, bool anverso) async {
-    if (anverso) {
-      _carnetAnverso = path;
-    } else {
-      _carnetReverso = path;
-    }
-    if (path == null) return;
-    setState(() => _ocrLeyendo = true);
-    final t = await OcrService.leerTexto(path);
-    _carnetTexto = '$_carnetTexto\n$t';
-    final data = OcrService.parseCarnet(_carnetTexto);
-    if (!mounted) return;
-    setState(() {
-      _ocrLeyendo = false;
-      // Se rellena con lo detectado (el guardia puede corregir despues).
-      if (data.ci != null) _ci.text = data.ci!;
-      if (data.nombre != null) _nombre.text = data.nombre!;
-    });
-    if (data.ci != null || data.nombre != null) {
-      TopToast.show(context, 'Detectado: ${data.nombre ?? ''} ${data.ci ?? ''}'.trim());
-    }
   }
 
   Future<void> _sugerirDeptos() async {
@@ -762,11 +778,15 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
             IconButton(
               visualDensity: VisualDensity.compact,
               icon: const Icon(Icons.delete_outline, color: AppColors.rojo),
-              onPressed: () => setState(() {
-                _acomp[i].nombre.dispose();
-                _acomp[i].ci.dispose();
-                _acomp.removeAt(i);
-              }),
+              onPressed: () {
+                final quitado = _acomp[i];
+                quitado.eliminado = true;
+                setState(() => _acomp.removeAt(i));
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  quitado.nombre.dispose();
+                  quitado.ci.dispose();
+                });
+              },
             ),
           ]),
           SizedBox(
@@ -775,7 +795,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
               style: FilledButton.styleFrom(backgroundColor: const Color(0xFF00838F)),
               onPressed: () => _carnetAcompanante(a),
               icon: const Icon(Icons.camera_alt, size: 18),
-              label: Text(a.fotos.isEmpty ? 'Foto del carnet (2 lados)' : 'Repetir carnet (${a.fotos.length})'),
+              label: Text(a.fotos.isEmpty ? 'Carnet (2 lados)' : 'Repetir carnet'),
             ),
           ),
           if (a.leyendo)
@@ -787,7 +807,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
                 for (final f in a.fotos)
                   Padding(padding: const EdgeInsets.only(right: 6),
                       child: ClipRRect(borderRadius: BorderRadius.circular(6),
-                          child: Image.file(File(f), width: 100, height: 70, fit: BoxFit.cover))),
+                          child: Image.file(File(f), width: 100, height: 70, fit: BoxFit.cover, cacheWidth: 300))),
               ])),
             ),
           const SizedBox(height: 8),
@@ -889,7 +909,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: const Color(0xFF00838F)),
               onPressed: _capturarCarnet,
               icon: const Icon(Icons.camera_alt),
-              label: Text(_carnetAnverso == null ? 'Foto del carnet (2 lados)' : 'Repetir carnet'),
+              label: Text(_carnetAnverso == null ? 'Carnet (2 lados)' : 'Repetir carnet'),
             ),
           ),
           const SizedBox(height: 8),
@@ -914,12 +934,24 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           const SizedBox(height: 8),
         ],
         TextField(controller: _nombre, textCapitalization: TextCapitalization.words,
-            onChanged: (_) => _chequearRecurrente(),
-            decoration: const InputDecoration(labelText: 'Nombre *', prefixIcon: Icon(Icons.person))),
+            onChanged: (_) {
+              if (_nombreOcr) setState(() => _nombreOcr = false); // ya lo revisó
+              _chequearRecurrente();
+            },
+            decoration: InputDecoration(
+                labelText: 'Nombre *', prefixIcon: const Icon(Icons.person),
+                helperText: _nombreOcr ? 'Leído del carnet · revisa' : null,
+                helperStyle: const TextStyle(color: Color(0xFFEF6C00), fontWeight: FontWeight.w600))),
         const SizedBox(height: 12),
         TextField(controller: _ci, keyboardType: TextInputType.number,
-            onChanged: (_) => _chequearRecurrente(),
-            decoration: const InputDecoration(labelText: 'CI / documento', prefixIcon: Icon(Icons.badge))),
+            onChanged: (_) {
+              if (_ciOcr) setState(() => _ciOcr = false);
+              _chequearRecurrente();
+            },
+            decoration: InputDecoration(
+                labelText: 'CI / documento', prefixIcon: const Icon(Icons.badge),
+                helperText: _ciOcr ? 'Leído del carnet · revisa' : null,
+                helperStyle: const TextStyle(color: Color(0xFFEF6C00), fontWeight: FontWeight.w600))),
         const SizedBox(height: 12),
         // Visitantes adicionales: cada uno solo con su foto de carnet.
         if (s.campoVisita('v_carnet')) ...[
@@ -932,7 +964,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
           const SizedBox(height: 12),
         ],
         // PASO 4: Vehiculo, motivo, observaciones
-        _paso('4', 'Detalles', const Color(0xFF6A1B9A)),
+        _paso(s.campoVisita('v_tarjeta') ? '4' : '3', 'Detalles', const Color(0xFF6A1B9A)),
         if (s.campoVisita('v_vehiculo')) ...[
           SwitchListTile(
             value: _tieneVehiculo,

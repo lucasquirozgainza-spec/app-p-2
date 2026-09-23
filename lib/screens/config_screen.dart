@@ -9,6 +9,7 @@ import '../services/cloud.dart';
 import '../services/excel_import.dart';
 import '../services/notifications_service.dart';
 import '../services/retention.dart';
+import '../services/turnos.dart';
 import '../theme.dart';
 import 'puntos_control_screen.dart';
 
@@ -19,20 +20,18 @@ class ConfigScreen extends StatefulWidget {
   State<ConfigScreen> createState() => _ConfigScreenState();
 }
 
+// Solo módulos que realmente muestran u ocultan algo en la app.
 const _modLabels = {
   'visitas': 'Visitas',
   'visitas_recu': 'Visitas recurrentes',
   'hospedajes': 'Hospedajes',
   'rondas': 'Rondas',
   'propietarios': 'Propietarios',
-  'residentes': 'Residentes',
   'vehiculos': 'Vehiculos',
   'incidentes': 'Incidentes',
   'encomiendas': 'Encomiendas',
   'mantenimiento': 'Mantenimiento',
-  'contactos': 'Contactos',
   'normativas': 'Normativas',
-  'reportes': 'Reportes',
 };
 
 class _ConfigScreenState extends State<ConfigScreen> {
@@ -62,6 +61,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   Future<void> _selectEdificio(String id) async {
     final db = await DB.instance.database;
     final e = (await db.query('edificios', where: 'id=?', whereArgs: [id])).first;
+    if (!mounted) return;
     setState(() {
       _selId = id;
       _modulos = Map<String, dynamic>.from(jsonDecode((e['modulos'] as String?) ?? '{}'));
@@ -179,7 +179,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Edificio activo: ${AppState.instance.edificioNombre}'),
         backgroundColor: AppColors.verde));
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _nuevoEdificio() async {
@@ -361,18 +361,93 @@ class _ConfigScreenState extends State<ConfigScreen> {
     );
   }
 
-  Future<void> _pickHora(bool ingreso) async {
-    final actual = ingreso ? AppState.instance.turnoIngreso : AppState.instance.turnoSalida;
-    TimeOfDay inicial = const TimeOfDay(hour: 8, minute: 0);
-    if (actual.contains(':')) {
-      final parts = actual.split(':');
-      inicial = TimeOfDay(hour: int.tryParse(parts[0]) ?? 8, minute: int.tryParse(parts[1]) ?? 0);
+  /// Resumen del horario de relevo de este celular.
+  String _resumenHorario() {
+    final h = AppState.instance.horarios;
+    if (h.isEmpty) return 'Sin horario (no se marcan atrasos)';
+    if (h.length == 1) return 'Relevo ${h[0]} · turnos de 24 h';
+    final d1 = Turnos.entre(h[0], h[1]), d2 = Turnos.entre(h[1], h[0]);
+    return d1 == d2
+        ? '${h[0]} y ${h[1]} · turnos de ${Turnos.duracion(d1)}'
+        : '${h[0]} y ${h[1]} · ${Turnos.duracion(d1)} / ${Turnos.duracion(d2)}';
+  }
+
+  /// Horario de relevo de ESTE celular: una o dos horas de cambio de turno.
+  /// Muestra inicio, fin y duración de cada turno y valida antes de guardar.
+  Future<void> _editarHorario() async {
+    final s = AppState.instance;
+    final l1 = Turnos.limpiar([s.turnoIngreso]), l2 = Turnos.limpiar([s.turnoSalida]);
+    String? r1 = l1.isEmpty ? null : l1.first;
+    String? r2 = l2.isEmpty ? null : l2.first;
+
+    Future<String?> elegir(String? actual) async {
+      final p = Turnos.parseHora(actual) ?? const [8, 0];
+      final t = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay(hour: p[0], minute: p[1]),
+        builder: (ctx, child) => MediaQuery(
+            data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: true), child: child!),
+      );
+      return t == null ? null : Turnos.fmtHora(t.hour, t.minute);
     }
-    final t = await showTimePicker(context: context, initialTime: inicial);
-    if (t == null) return;
-    final hhmm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-    await AppState.instance.setOperacion(
-        turnoIngreso: ingreso ? hhmm : null, turnoSalida: ingreso ? null : hhmm);
+
+    final res = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setD) {
+        final lista = Turnos.limpiar([r1, r2]);
+        String detalle;
+        String? error;
+        if (lista.isEmpty) {
+          detalle = 'Sin horario: no se marcan atrasos y cada turno se toma de 12 h.';
+        } else if (lista.length == 1) {
+          detalle = 'Un solo relevo a las ${lista[0]}: turnos de 24 h.';
+        } else {
+          final d1 = Turnos.entre(lista[0], lista[1]), d2 = Turnos.entre(lista[1], lista[0]);
+          detalle = 'Turno 1: ${lista[0]} → ${lista[1]} (${Turnos.duracion(d1)})\n'
+              'Turno 2: ${lista[1]} → ${lista[0]} (${Turnos.duracion(d2)})';
+          if (d1.inHours < 6 || d2.inHours < 6) {
+            error = 'Un turno quedaría de menos de 6 h. Revisa las horas.';
+          }
+        }
+        Widget fila(String titulo, String? valor, VoidCallback onTap) => ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(titulo),
+              trailing: OutlinedButton(onPressed: onTap, child: Text(valor ?? '— : —')),
+            );
+        return AlertDialog(
+          title: const Text('Horario de relevo'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            fila('Relevo 1 (ej. día)', r1, () async {
+              final v = await elegir(r1);
+              if (v != null) setD(() => r1 = v);
+            }),
+            fila('Relevo 2 (ej. noche)', r2, () async {
+              final v = await elegir(r2 ?? r1);
+              if (v != null) setD(() => r2 = v);
+            }),
+            const SizedBox(height: 8),
+            Text(detalle, style: const TextStyle(fontSize: 13)),
+            if (error != null) ...[
+              const SizedBox(height: 8),
+              Text(error, style: const TextStyle(color: AppColors.rojo, fontWeight: FontWeight.w600)),
+            ],
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, 'quitar'), child: const Text('Quitar')),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+            FilledButton(onPressed: error == null ? () => Navigator.pop(ctx, 'ok') : null, child: const Text('Guardar')),
+          ],
+        );
+      }),
+    );
+    if (res == null) return;
+    if (res == 'quitar') {
+      await s.setOperacion(turnoIngreso: '', turnoSalida: '');
+    } else {
+      final lista = Turnos.limpiar([r1, r2]);
+      await s.setOperacion(
+          turnoIngreso: lista.isNotEmpty ? lista[0] : '', turnoSalida: lista.length > 1 ? lista[1] : '');
+    }
     if (mounted) setState(() {});
   }
 
@@ -431,6 +506,29 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
   }
 
+  Future<void> _editarBloque() async {
+    final c = TextEditingController(text: AppState.instance.bloque);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Bloque de este celular'),
+        content: TextField(
+          controller: c,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Ej. Bloque A', prefixIcon: Icon(Icons.account_tree)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Guardar')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await AppState.instance.setBloque(c.text);
+      if (mounted) setState(() {});
+    }
+  }
+
   /// Sección plegable (acordeón) para dejar la configuración más limpia: cada
   /// bloque se abre solo cuando el admin lo necesita, en vez de un scroll largo.
   Widget _seccion(String title, IconData icon, Color color, List<Widget> children, {bool abierta = false}) {
@@ -484,7 +582,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
               child: OutlinedButton.icon(
                 onPressed: _nuevoEdificio,
                 icon: const Icon(Icons.add_business),
-                label: const Text('Agregar edificio'),
+                label: const Text('Nuevo'),
               ),
             ),
             const SizedBox(width: 8),
@@ -492,7 +590,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
               child: OutlinedButton.icon(
                 onPressed: _importarExcel,
                 icon: const Icon(Icons.upload_file),
-                label: const Text('Importar Excel'),
+                label: const Text('Excel'),
               ),
             ),
           ]),
@@ -520,6 +618,33 @@ class _ConfigScreenState extends State<ConfigScreen> {
               title: const Text('Trabajar sin conexión'),
               subtitle: const Text('Edificio de una torre: registros instantáneos, no usa la nube.'),
               activeColor: AppColors.verde,
+            ),
+          ]),
+          _seccion('Cámara', Icons.photo_camera, const Color(0xFF283593), [
+            SwitchListTile(
+              dense: true,
+              value: AppState.instance.camaraNativa,
+              onChanged: (v) async {
+                await AppState.instance.setCamaraNativa(v);
+                if (mounted) setState(() {});
+              },
+              secondary: const Icon(Icons.camera, color: Color(0xFF283593)),
+              title: const Text('Usar la cámara del celular'),
+              subtitle: const Text('Usa la cámara nativa del teléfono (respeta las proporciones y '
+                  'confirma cada foto). Apagado: cámara de la app (instantánea, sin confirmar). '
+                  'Este ajuste es de ESTE celular.'),
+              activeColor: AppColors.verde,
+            ),
+          ]),
+          _seccion('Bloque de este celular', Icons.account_tree, const Color(0xFF00695C), [
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.account_tree, color: Color(0xFF00695C)),
+              title: Text(AppState.instance.bloque.isEmpty ? 'Sin bloque asignado' : AppState.instance.bloque),
+              subtitle: const Text('Nombre de este celular dentro del edificio (ej. "Bloque A"). '
+                  'Los dos bloques cruzan datos igual; solo sirve para saber de dónde vino cada registro.'),
+              trailing: const Icon(Icons.edit),
+              onTap: _editarBloque,
             ),
           ]),
           _seccion('Campos de Visitas', Icons.badge, const Color(0xFF00897B), [
@@ -579,7 +704,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(rondas: v);
                   await Notificaciones.programarRecordatorios();
-                  setState(() {});
+                  if (mounted) setState(() {});
                 },
               ),
               if (AppState.instance.notifRondas)
@@ -592,7 +717,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       onPressed: () async {
                         await AppState.instance.setRecordatorios(rondaHoras: AppState.instance.rondaHoras - 1);
                         await Notificaciones.programarRecordatorios();
-                        setState(() {});
+                        if (mounted) setState(() {});
                       },
                     ),
                     Text('${AppState.instance.rondaHoras} h', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -601,7 +726,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       onPressed: () async {
                         await AppState.instance.setRecordatorios(rondaHoras: AppState.instance.rondaHoras + 1);
                         await Notificaciones.programarRecordatorios();
-                        setState(() {});
+                        if (mounted) setState(() {});
                       },
                     ),
                   ]),
@@ -615,7 +740,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(candados: v);
                   await Notificaciones.programarRecordatorios();
-                  setState(() {});
+                  if (mounted) setState(() {});
                 },
               ),
               const Divider(height: 1),
@@ -626,7 +751,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 title: const Text('Controlar uniforme'),
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(uniforme: v);
-                  setState(() {});
+                  if (mounted) setState(() {});
                 },
               ),
               const Divider(height: 1),
@@ -650,7 +775,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     icon: const Icon(Icons.remove_circle_outline),
                     onPressed: () async {
                       await AppState.instance.setOperacion(rondaFotos: AppState.instance.rondaFotos - 1);
-                      setState(() {});
+                      if (mounted) setState(() {});
                     },
                   ),
                   Text('${AppState.instance.rondaFotos}',
@@ -659,7 +784,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     icon: const Icon(Icons.add_circle_outline),
                     onPressed: () async {
                       await AppState.instance.setOperacion(rondaFotos: AppState.instance.rondaFotos + 1);
-                      setState(() {});
+                      if (mounted) setState(() {});
                     },
                   ),
                 ]),
@@ -667,20 +792,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
               const Divider(height: 1),
               ListTile(
                 dense: true,
-                leading: const Icon(Icons.login, color: AppColors.verde),
-                title: const Text('Horario de ingreso'),
-                subtitle: Text(AppState.instance.turnoIngreso.isEmpty ? 'Sin definir' : AppState.instance.turnoIngreso),
-                trailing: const Icon(Icons.schedule),
-                onTap: () => _pickHora(true),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                dense: true,
-                leading: const Icon(Icons.logout, color: AppColors.rojo),
-                title: const Text('Horario de salida'),
-                subtitle: Text(AppState.instance.turnoSalida.isEmpty ? 'Sin definir' : AppState.instance.turnoSalida),
-                trailing: const Icon(Icons.schedule),
-                onTap: () => _pickHora(false),
+                leading: const Icon(Icons.schedule, color: AppColors.verde),
+                title: const Text('Horario de relevo'),
+                subtitle: Text(_resumenHorario()),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _editarHorario,
               ),
               const Divider(height: 1),
               ListTile(
@@ -703,7 +819,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   onPressed: () async {
                     final meses = (AppState.instance.retencionDias / 30).round();
                     await AppState.instance.setOperacion(retencionDias: ((meses - 1).clamp(1, 24)) * 30);
-                    setState(() {});
+                    if (mounted) setState(() {});
                   },
                 ),
                 Text('${(AppState.instance.retencionDias / 30).round()}m',
@@ -713,7 +829,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   onPressed: () async {
                     final meses = (AppState.instance.retencionDias / 30).round();
                     await AppState.instance.setOperacion(retencionDias: ((meses + 1).clamp(1, 24)) * 30);
-                    setState(() {});
+                    if (mounted) setState(() {});
                   },
                 ),
               ]),

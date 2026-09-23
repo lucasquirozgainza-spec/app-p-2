@@ -8,7 +8,7 @@ import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/depto_field.dart';
 import '../widgets/toast.dart';
-import 'camera_screen.dart';
+import '../services/camara.dart';
 
 const _colorRecu = Color(0xFF00695C);
 
@@ -25,6 +25,7 @@ class RecurrentesScreen extends StatefulWidget {
 class _RecurrentesScreenState extends State<RecurrentesScreen> {
   List<Map<String, dynamic>> _rows = [];
   final _buscar = TextEditingController();
+  bool _ocupado = false;
 
   bool get _porDepto => widget.deptoFiltro == null;
 
@@ -56,6 +57,16 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
   /// Marca ingreso o salida. [deptoOverride] permite, por excepción, enviar la
   /// visita a otro depto sin cambiar el depto habitual del recurrente.
   Future<void> _marcar(Map<String, dynamic> r, {String? deptoOverride}) async {
+    if (_ocupado) return; // evita doble registro por doble toque
+    _ocupado = true;
+    try {
+      await _marcarInterno(r, deptoOverride: deptoOverride);
+    } finally {
+      _ocupado = false;
+    }
+  }
+
+  Future<void> _marcarInterno(Map<String, dynamic> r, {String? deptoOverride}) async {
     final db = await DB.instance.database;
     final s = AppState.instance;
     final dentro = (r['dentro'] ?? 0) == 1;
@@ -233,7 +244,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             (foto.isNotEmpty && File(foto).existsSync())
-                ? CircleAvatar(backgroundImage: FileImage(File(foto)))
+                ? CircleAvatar(backgroundImage: ResizeImage(FileImage(File(foto)), width: 120))
                 : CircleAvatar(backgroundColor: (dentro ? AppColors.verde : Colors.grey).withOpacity(.15),
                     child: Icon(Icons.person, color: dentro ? AppColors.verde : Colors.grey)),
             const SizedBox(width: 10),
@@ -260,7 +271,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
                 style: FilledButton.styleFrom(backgroundColor: AppColors.rojo, minimumSize: const Size.fromHeight(46)),
                 onPressed: () => _marcar(r),
                 icon: const Icon(Icons.logout),
-                label: const Text('Marcar SALIDA'),
+                label: const Text('Salida'),
               ),
             )
           else
@@ -270,7 +281,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
                   style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(46)),
                   onPressed: () => _marcar(r),
                   icon: const Icon(Icons.login),
-                  label: const Text('Marcar INGRESO'),
+                  label: const Text('Ingreso'),
                 ),
               ),
               const SizedBox(width: 8),
@@ -329,10 +340,7 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
   }
 
   Future<void> _fotoCarnet() async {
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(builder: (_) => const CameraScreen(multi: true, minFotos: 2, album: 'OSIRIS Carnet')),
-    );
+    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
     if (res == null || res.isEmpty) return;
     setState(() { _fotosCarnet = res; _leyendo = true; });
     () async {
@@ -343,6 +351,8 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
         if (d.nombre != null && _nombre.text.trim().isEmpty) _nombre.text = d.nombre!;
         if (d.ci != null && _ci.text.trim().isEmpty) _ci.text = d.ci!;
       });
+      TopToast.show(context, d.vacio ? 'No se leyó el carnet con seguridad. Escribe los datos.' : 'Carnet leído. Revisa nombre y CI.',
+          color: d.vacio ? AppColors.rojo : AppColors.verde, icon: d.vacio ? Icons.error_outline : Icons.check_circle);
     }();
   }
 
@@ -385,7 +395,7 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
               style: FilledButton.styleFrom(backgroundColor: _colorRecu, minimumSize: const Size.fromHeight(48)),
               onPressed: _fotoCarnet,
               icon: const Icon(Icons.camera_alt),
-              label: Text(_fotosCarnet.isEmpty ? 'Foto del carnet (2 lados)' : 'Repetir carnet (${_fotosCarnet.length})'),
+              label: Text(_fotosCarnet.isEmpty ? 'Carnet (2 lados)' : 'Repetir carnet'),
             ),
           ),
           if (_leyendo)
@@ -400,7 +410,7 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
                 for (final f in _fotosCarnet)
                   Padding(padding: const EdgeInsets.only(right: 8),
                       child: ClipRRect(borderRadius: BorderRadius.circular(8),
-                          child: Image.file(File(f), width: 110, height: 80, fit: BoxFit.cover))),
+                          child: Image.file(File(f), width: 110, height: 80, fit: BoxFit.cover, cacheWidth: 330))),
               ])),
             ),
           const SizedBox(height: 12),

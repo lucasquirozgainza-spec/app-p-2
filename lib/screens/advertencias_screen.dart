@@ -5,6 +5,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/pdf_export.dart';
 import '../theme.dart';
+import '../widgets/common.dart';
 
 /// Historial de advertencias (tarjetas no devueltas, guardias sin uniforme, etc.).
 class AdvertenciasScreen extends StatefulWidget {
@@ -85,9 +86,9 @@ class _AdvertenciasScreenState extends State<AdvertenciasScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: GestureDetector(
-                  onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto))))),
+                  onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto), cacheWidth: 2000)))),
                   child: ClipRRect(borderRadius: BorderRadius.circular(10),
-                      child: Image.file(File(foto), height: 180, width: double.infinity, fit: BoxFit.cover)),
+                      child: Image.file(File(foto), height: 180, width: double.infinity, fit: BoxFit.cover, cacheWidth: 1000)),
                 ),
               ),
             Text(a['mensaje']?.toString() ?? '', style: const TextStyle(fontSize: 15)),
@@ -112,16 +113,7 @@ class _AdvertenciasScreenState extends State<AdvertenciasScreen> {
             tooltip: 'Descargar PDF',
             onPressed: _rows.isEmpty
                 ? null
-                : () async {
-                    try {
-                      await PdfExport.advertencias();
-                    } catch (_) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('No se pudo generar el PDF')));
-                      }
-                    }
-                  },
+                : () => conEspera(context, PdfExport.advertencias),
           ),
         ],
       ),
@@ -140,7 +132,7 @@ class _AdvertenciasScreenState extends State<AdvertenciasScreen> {
                   child: ListTile(
                     onTap: () => _detalle(a),
                     leading: tieneFoto
-                        ? CircleAvatar(backgroundImage: FileImage(File(foto)))
+                        ? CircleAvatar(backgroundImage: ResizeImage(FileImage(File(foto)), width: 120))
                         : CircleAvatar(
                             backgroundColor: color.withOpacity(.15),
                             child: Icon(_icono(a['tipo']?.toString()), color: color)),

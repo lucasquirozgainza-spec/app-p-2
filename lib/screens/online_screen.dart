@@ -32,7 +32,10 @@ class _OnlineScreenState extends State<OnlineScreen> {
   String? _filtro; // null = todos
   bool _loading = true;
 
-  static const _tipos = ['SOS', 'Ingreso de turno', 'Salida de turno', 'Visita', 'Ronda', 'Incidente', 'Encomienda', 'Hospedaje', 'Guardia sin uniforme'];
+  // Solo tipos que la app realmente publica.
+  static const _tipos = ['Ingreso de turno', 'Salida de turno', 'Doblar turno', 'Visita', 'Ronda', 'Incidente',
+      'Encomienda', 'Hospedaje', 'Advertencia', 'Guardia sin uniforme'];
+  bool _cargando = false; // evita cargas superpuestas (red lenta + timer)
 
   Timer? _auto;
 
@@ -74,26 +77,34 @@ class _OnlineScreenState extends State<OnlineScreen> {
   }
 
   Future<void> _cargar({bool silencioso = false}) async {
-    if (!silencioso) setState(() => _loading = true);
-    // Cargar todo EN PARALELO para que no tarde (antes iban una tras otra).
-    Cloud.heartbeat(); // en segundo plano, no bloquea la carga
-    final res = await Future.wait([
-      Cloud.presencia(),
-      Cloud.eventos(tipo: _filtro, edificio: _edFiltro),
-      widget.soloEdificio ? Future.value(<Map<String, dynamic>>[]) : Cloud.eventosTurnoMes(),
-    ]);
-    final pres = res[0];
-    final evs = res[1];
-    // Eventos internos de sincronización no se muestran en la actividad.
-    evs.removeWhere((e) => e['tipo'] == 'Config' || e['tipo'] == 'AdminPass' || e['tipo'] == 'Guardia');
-    final turnos = res[2];
-    if (!mounted) return;
-    setState(() {
-      _presencia = pres;
-      _eventos = evs;
-      _turnos = turnos;
-      _loading = false;
-    });
+    if (_cargando) return;
+    _cargando = true;
+    if (!silencioso && mounted) setState(() => _loading = true);
+    try {
+      // En PARALELO. Los turnos del mes (pesado) solo al abrir o al refrescar a
+      // mano, no en cada actualización automática de 15 s.
+      Cloud.heartbeat(); // en segundo plano, no bloquea la carga
+      final conTurnos = !widget.soloEdificio && (!silencioso || _turnos.isEmpty);
+      final res = await Future.wait([
+        Cloud.presencia(),
+        Cloud.eventos(tipo: _filtro, edificio: _edFiltro),
+        conTurnos ? Cloud.eventosTurnoMes() : Future.value(_turnos),
+      ]);
+      final pres = res[0];
+      final evs = res[1];
+      // Eventos internos de sincronización no se muestran en la actividad.
+      evs.removeWhere((e) => e['tipo'] == 'Config' || e['tipo'] == 'AdminPass' || e['tipo'] == 'Guardia' || e['tipo'] == 'GuardiaBaja');
+      final turnos = res[2];
+      if (!mounted) return;
+      setState(() {
+        _presencia = pres;
+        _eventos = evs;
+        _turnos = turnos;
+        _loading = false;
+      });
+    } finally {
+      _cargando = false;
+    }
   }
 
   bool _online(Map<String, dynamic> p) {
@@ -153,7 +164,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
     final borrado = await Cloud.borrarEventos(edificio: _edFiltro);
     if (!mounted) return;
@@ -191,6 +202,8 @@ class _OnlineScreenState extends State<OnlineScreen> {
       case 'Hospedaje': return Icons.hotel;
       case 'Guardia sin uniforme': return Icons.checkroom;
       case 'SOS': return Icons.sos;
+      case 'Doblar turno': return Icons.timelapse;
+      case 'Advertencia': return Icons.report_problem_outlined;
       default: return Icons.event_note;
     }
   }
@@ -407,10 +420,12 @@ class _OnlineScreenState extends State<OnlineScreen> {
   Widget _eventoTile(Map<String, dynamic> e) {
     final detalle = e['detalle'];
     String sub = '';
+    String bloque = '';
     try {
       final m = detalle is String ? jsonDecode(detalle) : detalle;
       if (m is Map) {
-        sub = m.entries.where((x) => '${x.value}'.trim().isNotEmpty)
+        bloque = (m['bloque'] ?? '').toString();
+        sub = m.entries.where((x) => x.key != 'bloque' && '${x.value}'.trim().isNotEmpty)
             .map((x) => '${x.value}').join(' · ');
       }
     } catch (_) {}
@@ -421,9 +436,23 @@ class _OnlineScreenState extends State<OnlineScreen> {
           backgroundColor: AppColors.azulMarino.withOpacity(.1),
           child: Icon(_icono(e['tipo']?.toString()), color: AppColors.azulMarino, size: 20),
         ),
-        title: Text('${e['tipo']} · ${e['guardia'] ?? ''}',
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Row(children: [
+          if (bloque.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(right: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00695C).withOpacity(.14),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(bloque, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF00695C))),
+            ),
+          Expanded(
+            child: Text('${e['tipo']} · ${e['guardia'] ?? ''}',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+          ),
+        ]),
         subtitle: Text('${e['edificio'] ?? ''}${sub.isNotEmpty ? ' · $sub' : ''}',
             maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: const Icon(Icons.chevron_right, color: Colors.black26),

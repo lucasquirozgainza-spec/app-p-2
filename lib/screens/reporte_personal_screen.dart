@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
+import '../services/turnos.dart';
 import '../services/pdf_export.dart';
 import '../theme.dart';
+import '../widgets/common.dart';
 
 /// Reporte de personal por mes: días trabajados, horas totales,
 /// turnos de 24h (doble turno) y horas extra (más de 12h por turno).
@@ -69,12 +71,12 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
       if (salStr != null) {
         final fin = DateTime.parse(salStr);
         final horas = fin.difference(inicio).inMinutes / 60.0;
-        if (horas > 0 && horas < 48) {
+        if (horas > 0 && horas < 60) {
+          // Regla única (Turnos): turno declarado 12/24/36; si falta, por horas.
+          final nivel = Turnos.nivelValido(ing['nivel']) ?? Turnos.nivelPorHoras(horas);
           r.horas += horas;
-          if (horas >= 20) r.dobles++;
-          // Hora extra = tiempo que se quedó pasada su hora de relevo (llegar
-          // temprano no da extra). Ver AppState.horasExtra.
-          r.extra += AppState.instance.horasExtra(inicio, fin);
+          r.dobles += Turnos.dobles(nivel);
+          r.extra += AppState.instance.horasExtra(inicio, fin, nivel: nivel);
         }
       } else {
         r.abiertos++;
@@ -95,32 +97,14 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
         title: const Text('Reporte de personal'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.schedule),
-            tooltip: 'Ingresos y salidas (PDF)',
-            onPressed: () async {
-              try {
-                await PdfExport.reporteIngresoSalida(mes: _mes);
-              } catch (_) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('No se pudo generar el PDF')));
-                }
-              }
-            },
+            icon: const Icon(Icons.balance),
+            tooltip: 'Panel de horas: ingresos, salidas, 24/36 h y beneficiario (PDF)',
+            onPressed: () => conEspera(context, () => PdfExport.panelHorasLocal(mes: _mes)),
           ),
           IconButton(
             icon: const Icon(Icons.picture_as_pdf),
             tooltip: 'Resumen del mes (PDF)',
-            onPressed: () async {
-              try {
-                await PdfExport.reporteGuardias(mes: _mes);
-              } catch (_) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('No se pudo generar el PDF')));
-                }
-              }
-            },
+            onPressed: () => conEspera(context, () => PdfExport.reporteGuardias(mes: _mes)),
           ),
         ],
       ),

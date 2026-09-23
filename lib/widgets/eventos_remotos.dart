@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
-import '../theme.dart';
 
 /// Muestra los registros de OTROS equipos (celulares) del mismo edificio, en
 /// línea desde la nube. Así el historial se comparte entre los guardias del
@@ -24,9 +23,13 @@ class EventosRemotos extends StatefulWidget {
   State<EventosRemotos> createState() => _EventosRemotosState();
 }
 
-class _EventosRemotosState extends State<EventosRemotos> {
+class _EventosRemotosState extends State<EventosRemotos> with AutomaticKeepAliveClientMixin {
   List<Map<String, dynamic>> _rows = [];
   bool _cargando = true;
+
+  // Se conserva al hacer scroll: no vuelve a descargar cada vez que reaparece.
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -120,6 +123,7 @@ class _EventosRemotosState extends State<EventosRemotos> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     if (_cargando || _rows.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -128,8 +132,11 @@ class _EventosRemotosState extends State<EventosRemotos> {
         Row(children: [
           const Icon(Icons.wifi_tethering, color: Color(0xFF0277BD), size: 18),
           const SizedBox(width: 6),
-          Text('De otros equipos del edificio (${_rows.length})',
-              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0277BD))),
+          Flexible(
+            child: Text('De otros equipos del edificio (${_rows.length})',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0277BD))),
+          ),
         ]),
         const SizedBox(height: 6),
         for (final e in _rows)

@@ -5,52 +5,15 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/auth_service.dart';
 import '../services/cloud.dart';
+import '../services/config_sync.dart';
+import '../services/turnos.dart';
+import '../widgets/common.dart';
+import '../services/pdf_export.dart';
+import '../services/panel_horas.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
 import 'reporte_personal_screen.dart';
 import 'advertencias_screen.dart';
-
-/// Un turno emparejado (ingreso -> salida) con su duración.
-class _Turno {
-  final DateTime inicio;   // hora de ingreso
-  final DateTime fin;      // hora de salida
-  final double horas;      // horas reales trabajadas
-  final int? nivelDeclarado; // 12/24/36 si el guardia lo marcó (fuente de verdad)
-  _Turno(this.inicio, this.fin, this.horas, {this.nivelDeclarado});
-  // Tolerancia: diferencias de pocos minutos (ej. 8:00 vs 8:08) NO cuentan.
-  static const double _tol = 0.5; // 30 min
-  static const List<int> _esperados = [12, 24, 36];
-  // Tipo de turno: si el guardia lo DECLARÓ (doblar 24/36) se usa eso; si no,
-  // se estima por la duración más cercana (turnos viejos sin declarar).
-  int get tipo {
-    if (nivelDeclarado != null && _esperados.contains(nivelDeclarado)) return nivelDeclarado!;
-    int best = _esperados.first;
-    double bestD = (horas - best).abs();
-    for (final e in _esperados) {
-      final d = (horas - e).abs();
-      if (d < bestD) { bestD = d; best = e; }
-    }
-    return best;
-  }
-  double get extra => horas > tipo + _tol ? horas - tipo : 0; // se quedó más
-  double get falta => horas < tipo - _tol ? tipo - horas : 0; // hizo menos (salió antes)
-}
-
-/// Resumen de un guardia (horas del mes) calculado desde la nube.
-class _ResG {
-  final String guardia;
-  final Set<String> dias = {};
-  final List<_Turno> turnos = [];
-  DateTime? abierto;
-  _ResG(this.guardia);
-  double get horas => turnos.fold(0.0, (a, t) => a + t.horas);
-  double get extra => turnos.fold(0.0, (a, t) => a + t.extra);
-  int get n12 => turnos.where((t) => t.tipo == 12).length;
-  int get n24 => turnos.where((t) => t.tipo == 24).length;
-  int get n36 => turnos.where((t) => t.tipo == 36).length;
-  // Veces que dobló: 24h = 1 doblada, 36h = 2 dobladas (triple).
-  int get dobles => turnos.fold(0, (a, t) => a + (t.tipo == 24 ? 1 : t.tipo == 36 ? 2 : 0));
-}
 
 class GuardiasScreen extends StatefulWidget {
   const GuardiasScreen({super.key});
@@ -62,7 +25,9 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
   List<Map<String, dynamic>> _activosLocal = [];
   List<Map<String, dynamic>> _presencia = []; // en linea desde la nube (todos los celulares)
   List<Map<String, dynamic>> _personal = [];
-  Map<String, Map<String, _ResG>> _horas = {}; // edificio -> guardia -> resumen (nube)
+  Map<String, List<PanelPuesto>> _panel = {}; // edificio -> puestos (nube)
+  bool _cargandoNube = false;
+  DateTime _mes = DateTime(DateTime.now().year, DateTime.now().month);
 
   @override
   void initState() {
@@ -80,89 +45,177 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
             "AND (edificio=? OR edificio IS NULL OR edificio='')",
         whereArgs: [ed],
         orderBy: 'nombre');
-    // Presencia + horas del mes de TODOS los celulares (Supabase).
-    Cloud.heartbeat();
-    final res = await Future.wait([Cloud.presencia(), Cloud.eventosTurnoMes()]);
-    final pres = res[0];
-    final horas = _calcularHoras(res[1]);
+    // Lo local se muestra YA; la nube llega después (sin señal no deja la
+    // pantalla vacía esperando).
     if (!mounted) return;
     setState(() {
       _activosLocal = activos;
       _personal = personal;
+      _cargandoNube = !AppState.instance.soloLocal;
+    });
+    if (AppState.instance.soloLocal) return;
+    Cloud.heartbeat();
+    final res = await Future.wait([Cloud.presencia(), Cloud.eventosTurnoMes(mes: _mes)]);
+    final pres = res[0];
+    final panel = _calcularPanel(res[1]);
+    if (!mounted) return;
+    setState(() {
       _presencia = pres;
-      _horas = horas;
+      _panel = panel;
+      _cargandoNube = false;
     });
   }
 
-  /// Empareja ingreso->salida por guardia y edificio para sacar horas/turnos.
-  Map<String, Map<String, _ResG>> _calcularHoras(List<Map<String, dynamic>> eventos) {
+  /// Cambia el mes del panel de horas (solo recarga las horas).
+  Future<void> _cambiarMes(int delta) async {
+    setState(() {
+      _mes = DateTime(_mes.year, _mes.month + delta);
+      _cargandoNube = true;
+      _panel = {};
+    });
+    final ev = await Cloud.eventosTurnoMes(mes: _mes);
+    if (!mounted) return;
+    setState(() {
+      _panel = _calcularPanel(ev);
+      _cargandoNube = false;
+    });
+  }
+
+  Future<void> _descargarPanel() async {
+    final periodo = DateFormat('MMMM yyyy', 'es').format(_mes);
+    await conEspera(context, () => PdfExport.panelHoras(porEdificio: _panel, periodo: periodo));
+  }
+
+  /// Arma el panel de horas desde los ingresos/salidas de la nube: turnos por
+  /// puesto (celular), quién relevó a quién y la cuenta entre guardias.
+  Map<String, List<PanelPuesto>> _calcularPanel(List<Map<String, dynamic>> eventos) {
     eventos.sort((a, b) => (a['created_at'] ?? '').toString().compareTo((b['created_at'] ?? '').toString()));
-    final data = <String, Map<String, _ResG>>{};
+    final porEd = <String, List<RegistroTurno>>{};
+    final abiertos = <String, Map<String, dynamic>>{}; // edificio|guardia -> ingreso
+    final nombres = <String, String>{}; // puesto -> "Bloque A"
     for (final e in eventos) {
       final ed = (e['edificio'] ?? 'Sin edificio').toString();
       final g = (e['guardia'] ?? 'Sin nombre').toString();
       final tipo = (e['tipo'] ?? '').toString();
       DateTime? t;
       try { t = DateTime.parse(e['created_at'].toString()).toLocal(); } catch (_) {}
-      final r = data.putIfAbsent(ed, () => {}).putIfAbsent(g, () => _ResG(g));
+      if (t == null) continue;
+      var det = e['detalle'];
+      if (det is String && det.isNotEmpty) {
+        try { det = jsonDecode(det); } catch (_) {}
+      }
+      final d = det is Map ? det : const {};
+      final puesto = (e['device_id'] ?? 'sin-celular').toString();
+      final bloque = (d['bloque'] ?? '').toString().trim();
+      if (bloque.isNotEmpty) nombres[puesto] = bloque;
+      final k = '$ed|$g';
       if (tipo == 'Ingreso de turno') {
-        if (t != null) { r.dias.add(DateFormat('yyyy-MM-dd').format(t)); r.abierto = t; }
+        abiertos[k] = {
+          'inicio': t,
+          'puesto': puesto,
+          'relevos': Turnos.limpiar((d['relevos'] ?? '').toString().split(',')),
+        };
       } else if (tipo == 'Salida de turno') {
-        if (t != null && r.abierto != null) {
-          final h = t.difference(r.abierto!).inMinutes / 60.0;
-          if (h > 0 && h < 60) {
-            // Nivel declarado por el guardia (doblar 24/36), si viene.
-            int? nivel;
-            var det = e['detalle'];
-            if (det is String && det.isNotEmpty) {
-              try { det = jsonDecode(det); } catch (_) {}
-            }
-            if (det is Map && det['nivel'] != null) nivel = int.tryParse('${det['nivel']}');
-            r.turnos.add(_Turno(r.abierto!, t, h, nivelDeclarado: nivel));
-          }
-          r.abierto = null;
-        }
+        final a = abiertos.remove(k);
+        if (a == null) continue;
+        final ini = a['inicio'] as DateTime;
+        final h = t.difference(ini).inMinutes / 60.0;
+        if (h <= 0 || h >= 60) continue;
+        porEd.putIfAbsent(ed, () => []).add(RegistroTurno(
+              guardia: g,
+              puesto: a['puesto'] as String,
+              inicio: ini,
+              fin: t,
+              nivelDeclarado: Turnos.nivelValido(d['nivel']),
+              relevos: a['relevos'] as List<String>,
+            ));
       }
     }
-    return data;
+    // Turnos aún abiertos (en turno ahora), si empezaron hace menos de 40 h.
+    final ahora = DateTime.now();
+    for (final e in abiertos.entries) {
+      final ini = e.value['inicio'] as DateTime;
+      if (ahora.difference(ini).inHours > 40) continue; // olvidó marcar salida
+      final ed = e.key.substring(0, e.key.indexOf('|'));
+      porEd.putIfAbsent(ed, () => []).add(RegistroTurno(
+            guardia: e.key.substring(e.key.indexOf('|') + 1),
+            puesto: e.value['puesto'] as String,
+            inicio: ini,
+            relevos: e.value['relevos'] as List<String>,
+          ));
+    }
+    final desde = DateTime(_mes.year, _mes.month), hasta = DateTime(_mes.year, _mes.month + 1);
+    return {
+      for (final e in porEd.entries)
+        e.key: PanelHoras.calcular(e.value, nombres: nombres, desde: desde, hasta: hasta),
+    }..removeWhere((_, v) => v.isEmpty);
   }
 
-  /// Panel de detalle de un guardia: turnos de 24h/36h, extras y cada turno.
-  void _detalleGuardia(_ResG r) {
+  /// Detalle de un guardia: resumen y cada turno del mes (día por día).
+  void _detalleGuardia(PanelPuesto pu, ResumenGuardia r) {
+    final dia = DateFormat('EEE dd/MM', 'es');
+    final hm = DateFormat('HH:mm');
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(r.guardia),
-        content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(shrinkWrap: true, children: [
+            Text(pu.nombre, style: const TextStyle(color: Colors.black54)),
+            const SizedBox(height: 8),
             Wrap(spacing: 8, runSpacing: 8, children: [
-              _chip('Días', '${r.dias.length}', AppColors.azulMarino),
-              _chip('Turnos 12h', '${r.n12}', const Color(0xFF1565C0)),
-              _chip('Turnos 24h', '${r.n24}', AppColors.verde),
-              _chip('Turnos 36h', '${r.n36}', const Color(0xFF6A1B9A)),
-              _chip('Veces que dobló', '${r.dobles}', const Color(0xFFC2185B)),
-              _chip('Horas extra', r.extra.toStringAsFixed(1), const Color(0xFFEF6C00)),
-              _chip('Horas total', r.horas.toStringAsFixed(1), Colors.teal),
+              _chip('Días', '${r.dias}', AppColors.azulMarino),
+              _chip('12 h', '${r.n12}', const Color(0xFF1565C0)),
+              _chip('24 h', '${r.n24}', AppColors.verde),
+              _chip('36 h', '${r.n36}', const Color(0xFF6A1B9A)),
+              _chip('Extra', r.extra.toStringAsFixed(1), const Color(0xFFEF6C00)),
+              _chip('Tarde', '${r.vecesTarde}', AppColors.rojo),
             ]),
             const Divider(height: 20),
-            const Text('Turnos del mes (ingreso → salida)', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            if (r.turnos.isEmpty) const Text('Sin turnos cerrados este mes.'),
             for (final t in r.turnos)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Text(
-                    'Ingreso ${DateFormat('dd/MM HH:mm').format(t.inicio)}  →  '
-                    'Salida ${DateFormat('dd/MM HH:mm').format(t.fin)}\n'
-                    'Turno ${t.tipo}h · ${t.horas.toStringAsFixed(1)} h reales'
-                    '${t.extra > 0 ? ' · +${t.extra.toStringAsFixed(1)} h extra' : ''}'
-                    '${t.falta > 0 ? ' · ${t.falta.toStringAsFixed(1)} h menos' : ''}',
-                    style: const TextStyle(fontSize: 13)),
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${dia.format(t.inicio)} · turno ${t.nivel} h',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    'Ingreso ${hm.format(t.inicio)}${t.atraso > 0 ? ' (tarde ${t.atraso.toStringAsFixed(1)} h)' : ''}'
+                    '  →  ${t.fin == null ? 'en turno' : 'Salida ${DateFormat('dd/MM HH:mm').format(t.fin!)}'}'
+                    '${t.extra > 0 ? '\n+${t.extra.toStringAsFixed(1)} h extra · esperó a ${t.relevadoPor ?? 'su relevo'}' : ''}',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ]),
               ),
           ]),
         ),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
       ),
+    );
+  }
+
+  /// Frase de la cuenta entre dos guardias.
+  Widget _balance(BalancePar b) {
+    final h = b.horas.toStringAsFixed(1);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: b.aMano ? const Color(0xFFE8F5E9) : const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(children: [
+        Icon(b.aMano ? Icons.handshake_outlined : Icons.balance, color: b.aMano ? AppColors.verde : const Color(0xFFEF6C00)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            b.aMano
+                ? '${b.a} y ${b.b} están a mano'
+                : 'Beneficiario: ${b.beneficiario} con $h h\n(le debe a ${b.acreedor})',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ]),
     );
   }
 
@@ -210,8 +263,8 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
       ),
     );
     if (ok != true) return;
-    final db = await DB.instance.database;
-    await db.delete('usuarios', where: 'id=?', whereArgs: [p['id']]);
+    // Baja en este celular y en los demás del edificio (sincronizado).
+    await ConfigSync.darDeBaja(p['id'] as int, (p['nombre'] ?? '').toString());
     if (!mounted) return;
     TopToast.show(context, 'Personal eliminado');
     _load();
@@ -266,7 +319,8 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
     final admin = AppState.instance.isAdmin;
     // "En linea" preferimos la nube (todos los celulares); si no hay, lo local.
     final enTurnoNube = _enTurnoNube;
-    final usarNube = enTurnoNube.isNotEmpty || Cloud.enabled;
+    // Sin conexión (edificio "solo local") se muestran los turnos de este celular.
+    final usarNube = !AppState.instance.soloLocal;
 
     return Scaffold(
       appBar: AppBar(
@@ -357,10 +411,14 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
               Row(children: [
                 const Icon(Icons.groups, color: AppColors.azulMarino),
                 const SizedBox(width: 8),
-                Text('Personal registrado (${_personal.length})',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                Expanded(
+                  child: Text('Personal registrado (${_personal.length})',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
               ]),
               const SizedBox(height: 8),
+              if (_personal.isEmpty)
+                const Card(child: ListTile(title: Text('Sin personal registrado. Usa "Registrar guardia".'))),
               for (final p in _personal)
                 Card(
                   child: ListTile(
@@ -369,7 +427,9 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                         child: Icon(Icons.person, color: AppColors.azulMarino)),
                     title: Text(p['nombre']?.toString() ?? '—',
                         style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text('${p['cargo'] ?? ''} · Usuario: ${p['usuario']} · ${p['rol']}'),
+                    subtitle: Text([p['cargo'], p['rol']]
+                        .where((x) => (x ?? '').toString().trim().isNotEmpty)
+                        .join(' · ')),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, color: AppColors.rojo),
                       tooltip: 'Eliminar',
@@ -377,40 +437,60 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
                     ),
                   ),
                 ),
-              // Horas del mes (todos los edificios) desde la nube — tocable.
+              // PANEL DE HORAS (todos los edificios, por puesto) desde la nube.
               const SizedBox(height: 20),
               Row(children: [
                 const Icon(Icons.query_stats, color: Color(0xFF00838F)),
                 const SizedBox(width: 8),
-                const Text('Horas del mes (todos los edificios)',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Expanded(
+                  child: Text('Panel de horas', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.picture_as_pdf),
+                  tooltip: 'Descargar panel (PDF)',
+                  onPressed: _panel.isEmpty ? null : _descargarPanel,
+                ),
               ]),
-              const Text('Toca un guardia para ver sus turnos de 24h/36h y horas extra.',
-                  style: TextStyle(fontSize: 12, color: Colors.black54)),
-              const SizedBox(height: 8),
-              if (_horas.isEmpty)
-                const Card(child: ListTile(title: Text('Sin turnos este mes en la nube')))
+              Row(children: [
+                IconButton(icon: const Icon(Icons.chevron_left), onPressed: () => _cambiarMes(-1)),
+                Expanded(
+                  child: Text(DateFormat('MMMM yyyy', 'es').format(_mes),
+                      textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: _mes.isBefore(DateTime(DateTime.now().year, DateTime.now().month)) ? () => _cambiarMes(1) : null,
+                ),
+              ]),
+              if (_cargandoNube && _panel.isEmpty)
+                const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
+              else if (_panel.isEmpty)
+                const Card(child: ListTile(title: Text('Sin turnos en este mes')))
               else
-                for (final ed in (_horas.keys.toList()..sort())) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
-                    child: Text(ed, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.azulMarino)),
-                  ),
-                  for (final r in (_horas[ed]!.values.toList()..sort((a, b) => b.horas.compareTo(a.horas))))
-                    Card(
-                      child: ListTile(
-                        onTap: () => _detalleGuardia(r),
-                        leading: CircleAvatar(
-                          backgroundColor: AppColors.verde.withOpacity(.12),
-                          child: Text('${r.dias.length}', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.verde)),
-                        ),
-                        title: Text(r.guardia, style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Text('${r.n12} de 12h · ${r.n24} de 24h · ${r.n36} de 36h · dobló ${r.dobles} · ${r.horas.toStringAsFixed(1)} h'
-                            '${r.extra > 0 ? ' · +${r.extra.toStringAsFixed(1)} extra' : ''}'),
-                        trailing: const Icon(Icons.chevron_right),
-                      ),
+                for (final ed in (_panel.keys.toList()..sort()))
+                  for (final pu in _panel[ed]!) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
+                      child: Text('$ed · ${pu.nombre}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.azulMarino)),
                     ),
-                ],
+                    for (final b in pu.balances) _balance(b),
+                    for (final r in (pu.guardias.values.toList()..sort((a, b) => a.guardia.compareTo(b.guardia))))
+                      Card(
+                        child: ListTile(
+                          onTap: () => _detalleGuardia(pu, r),
+                          leading: CircleAvatar(
+                            backgroundColor: AppColors.verde.withOpacity(.12),
+                            child: Text('${r.dias}', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.verde)),
+                          ),
+                          title: Text(r.guardia, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text('12 h: ${r.n12} · 24 h: ${r.n24} · 36 h: ${r.n36}\n'
+                              'Extra ${r.extra.toStringAsFixed(1)} h · tarde ${r.vecesTarde} ${r.vecesTarde == 1 ? 'vez' : 'veces'}'),
+                          isThreeLine: true,
+                          trailing: const Icon(Icons.chevron_right),
+                        ),
+                      ),
+                  ],
             ] else ...[
               const SizedBox(height: 24),
               const Card(

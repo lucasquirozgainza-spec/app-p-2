@@ -10,6 +10,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
+import '../services/turnos.dart';
+import '../services/panel_horas.dart';
 
 /// Construye el PDF de actividad en un ISOLATE aparte (compute), para que la
 /// interfaz NUNCA se congele aunque haya cientos de filas. Recibe datos ya
@@ -347,10 +349,13 @@ class PdfExport {
       final salStr = salMap[ing['id']];
       if (salStr != null) {
         final horas = DateTime.parse(salStr).difference(inicio).inMinutes / 60.0;
-        if (horas > 0 && horas < 48) {
+        if (horas > 0 && horas < 60) {
+          // Regla única (Turnos): turno declarado 12/24/36; si falta, por horas.
+          final nivel = Turnos.nivelValido(ing['nivel']) ?? Turnos.nivelPorHoras(horas);
           m['horas'] = (m['horas'] as double) + horas;
-          if (horas >= 20) m['dobles'] = (m['dobles'] as int) + 1;
-          m['extra'] = (m['extra'] as double) + AppState.instance.horasExtra(inicio, DateTime.parse(salStr));
+          m['dobles'] = (m['dobles'] as int) + Turnos.dobles(nivel);
+          m['extra'] = (m['extra'] as double) +
+              AppState.instance.horasExtra(inicio, DateTime.parse(salStr), nivel: nivel);
         }
       }
     }
@@ -395,37 +400,6 @@ class PdfExport {
     await Share.shareXFiles([XFile(file.path)], text: 'Reporte de guardias OSIRIS - ${AppState.instance.edificioNombre} - $periodo');
   }
 
-  /// Comparte las fotos de una ronda SIN perder calidad. WhatsApp recomprime
-  /// las imágenes que se envían como "foto", pero NO toca los documentos: por
-  /// eso se arma un PDF con cada foto a resolución completa (una por página) y
-  /// se comparte como documento. Así se conservan todos los detalles.
-  static Future<void> fotosRondaAltaCalidad(List<String> fotos, String titulo, String mensaje) async {
-    final doc = pw.Document();
-    for (int i = 0; i < fotos.length; i++) {
-      try {
-        final bytes = await File(fotos[i]).readAsBytes();
-        final imagen = pw.MemoryImage(bytes); // conserva el JPEG original
-        doc.addPage(pw.Page(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(16),
-          build: (ctx) => pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text('$titulo  ·  Foto ${i + 1}/${fotos.length}',
-                  style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: _navy)),
-              pw.SizedBox(height: 8),
-              pw.Expanded(child: pw.Center(child: pw.Image(imagen, fit: pw.BoxFit.contain))),
-            ],
-          ),
-        ));
-      } catch (_) {}
-    }
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dir.path, 'Ronda_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
-    await file.writeAsBytes(await doc.save());
-    await Share.shareXFiles([XFile(file.path)], text: mensaje);
-  }
-
   /// Reporte detallado de INGRESOS y SALIDAS del mes: cada turno con su hora de
   /// entrada, salida, horas trabajadas y horas extra. Las horas extra solo
   /// cuentan el tiempo que el guardia se quedó pasada su hora de relevo (llegar
@@ -461,8 +435,9 @@ class PdfExport {
       if (salStr != null) {
         final fin = DateTime.parse(salStr);
         horas = fin.difference(inicio).inMinutes / 60.0;
-        if (horas > 0 && horas < 48) {
-          extra = s.horasExtra(inicio, fin);
+        if (horas > 0 && horas < 60) {
+          final nivel = Turnos.nivelValido(ing['nivel']) ?? Turnos.nivelPorHoras(horas);
+          extra = s.horasExtra(inicio, fin, nivel: nivel);
           salTxt = hm.format(fin.toLocal());
           trabTxt = horas.toStringAsFixed(1);
           extraTxt = extra > 0 ? extra.toStringAsFixed(1) : '0';
@@ -470,7 +445,7 @@ class PdfExport {
       }
       filas.add([nombre, hm.format(inicio.toLocal()), salTxt, trabTxt, extraTxt]);
       final r = resumen.putIfAbsent(nombre, () => {'horas': 0.0, 'extra': 0.0, 'turnos': 0.0});
-      r['horas'] = r['horas']! + (horas > 0 && horas < 48 ? horas : 0);
+      r['horas'] = r['horas']! + (horas > 0 && horas < 60 ? horas : 0);
       r['extra'] = r['extra']! + extra;
       r['turnos'] = r['turnos']! + 1;
     }
@@ -480,8 +455,8 @@ class PdfExport {
     final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
     final horario = (s.turnoIngreso.isNotEmpty || s.turnoSalida.isNotEmpty)
         ? 'Relevos configurados: ${s.turnoIngreso.isEmpty ? "?" : s.turnoIngreso} y ${s.turnoSalida.isEmpty ? "?" : s.turnoSalida}. '
-            'Las horas extra cuentan solo el tiempo pasado la hora de relevo.'
-        : 'Sin horario de relevo configurado: se toma cada turno como 12 h.';
+            'Horas extra = horas trabajadas − turno declarado (12/24/36 h); llegar antes del relevo no suma.'
+        : 'Horas extra = horas trabajadas − turno declarado (12/24/36 h).';
     doc.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(28),
@@ -604,6 +579,127 @@ class PdfExport {
     final file = File(p.join(dir.path, 'Puntos_Ronda_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
     await file.writeAsBytes(await doc.save());
     await Share.shareXFiles([XFile(file.path)], text: 'Puntos de control OSIRIS - ${AppState.instance.edificioNombre}');
+  }
+
+  /// Panel de horas con los turnos guardados en ESTE celular (sirve también
+  /// para edificios "sin conexión").
+  static Future<void> panelHorasLocal({required DateTime mes}) async {
+    final db = await DB.instance.database;
+    final s = AppState.instance;
+    // 1 día a cada lado para saber quién relevó a quién en los bordes del mes.
+    final di = DateTime(mes.year, mes.month, 1).subtract(const Duration(days: 1)).toIso8601String();
+    final ha = DateTime(mes.year, mes.month + 1, 2).toIso8601String();
+    final ingresos = await db.query('ingreso_turno',
+        where: 'edificio=? AND created_at>=? AND created_at<?', whereArgs: [s.edificioId, di, ha], orderBy: 'created_at');
+    final salidas = await db.query('salida_turno', where: 'edificio=?', whereArgs: [s.edificioId]);
+    final salMap = <int, String>{};
+    for (final x in salidas) {
+      if (x['turno_id'] != null) salMap[x['turno_id'] as int] = x['created_at'] as String;
+    }
+    final regs = <RegistroTurno>[];
+    for (final ing in ingresos) {
+      final ini = DateTime.tryParse(ing['created_at']?.toString() ?? '');
+      if (ini == null) continue;
+      final fin = salMap[ing['id']] == null ? null : DateTime.tryParse(salMap[ing['id']]!);
+      if (fin != null && (fin.difference(ini).inMinutes <= 0 || fin.difference(ini).inHours >= 60)) continue;
+      if (fin == null && (ing['activo'] ?? 0) != 1) continue; // turno viejo sin salida
+      regs.add(RegistroTurno(
+        guardia: (ing['guardia_nombre'] ?? 'Sin nombre').toString(),
+        puesto: 'local',
+        inicio: ini,
+        fin: fin,
+        nivelDeclarado: Turnos.nivelValido(ing['nivel']),
+        relevos: s.horarios,
+      ));
+    }
+    final panel = PanelHoras.calcular(regs,
+        nombres: {'local': s.bloque.isNotEmpty ? s.bloque : 'Este celular'},
+        desde: DateTime(mes.year, mes.month), hasta: DateTime(mes.year, mes.month + 1));
+    await panelHoras(
+        porEdificio: {s.edificioNombre: panel}, periodo: DateFormat('MMMM yyyy', 'es').format(mes));
+  }
+
+  /// PANEL DE HORAS del mes: por edificio y puesto (celular), cada guardia con
+  /// días, turnos de 12/24/36 h, horas, extra y atrasos; la cuenta entre los
+  /// guardias que se relevan (beneficiario) y el detalle día por día.
+  static Future<void> panelHoras({
+    required Map<String, List<PanelPuesto>> porEdificio,
+    required String periodo,
+  }) async {
+    await _ensureLogo();
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    final dia = DateFormat('EEE dd/MM', 'es');
+    final hm = DateFormat('HH:mm');
+    String h1(double v) => v.toStringAsFixed(1);
+
+    final cuerpo = <pw.Widget>[_portada(periodo, fecha), pw.SizedBox(height: 8)];
+    cuerpo.add(pw.Text(
+        _safe('Hora extra = tiempo que el guardia se quedo pasada su hora de relevo esperando al '
+            'siguiente. La debe quien llego tarde. Beneficiario = el que hizo esperar mas al otro '
+            '(diferencia del mes). Diferencias de hasta 30 min no cuentan.'),
+        style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey700)));
+
+    for (final ed in porEdificio.entries) {
+      for (final pu in ed.value) {
+        cuerpo.add(pw.SizedBox(height: 14));
+        cuerpo.add(_titulo(_safe('${ed.key} - ${pu.nombre}')));
+        // Cuenta entre guardias
+        for (final b in pu.balances) {
+          final txt = b.aMano
+              ? '${b.a} y ${b.b}: estan a mano (${h1(b.aEsperoPorB)} h / ${h1(b.bEsperoPorA)} h de espera).'
+              : 'BENEFICIARIO: ${b.beneficiario} con ${h1(b.horas)} h '
+                  '(le debe a ${b.acreedor}). Espera: ${b.a} ${h1(b.aEsperoPorB)} h, ${b.b} ${h1(b.bEsperoPorA)} h.';
+          cuerpo.add(pw.Container(
+            margin: const pw.EdgeInsets.only(top: 6),
+            padding: const pw.EdgeInsets.all(8),
+            decoration: pw.BoxDecoration(
+                color: b.aMano ? _gris : PdfColor.fromInt(0xFFFFF3E0), borderRadius: pw.BorderRadius.circular(6)),
+            child: pw.Text(_safe(txt),
+                style: pw.TextStyle(fontSize: 9.5, fontWeight: b.aMano ? pw.FontWeight.normal : pw.FontWeight.bold)),
+          ));
+        }
+        // Resumen por guardia
+        final res = pu.guardias.values.toList()..sort((a, b) => a.guardia.compareTo(b.guardia));
+        cuerpo.add(_tabla('Resumen', ['Guardia', 'Dias', '12 h', '24 h', '36 h', 'Horas', 'Extra', 'Tarde'], [
+          for (final r in res)
+            [_s(r.guardia), '${r.dias}', '${r.n12}', '${r.n24}', '${r.n36}', h1(r.horas), h1(r.extra), '${r.vecesTarde}'],
+        ]));
+        // Detalle día por día
+        cuerpo.add(_tabla('Detalle', ['Dia', 'Guardia', 'Ingreso', 'Salida', 'Turno', 'Horas', 'Extra', 'Relevado por'], [
+          for (final t in pu.turnos)
+            [
+              _safe(dia.format(t.inicio)),
+              _s(t.guardia),
+              hm.format(t.inicio) + (t.atraso > 0 ? ' (tarde)' : ''),
+              t.fin == null ? 'En turno' : _safe(DateFormat('dd/MM HH:mm').format(t.fin!)),
+              '${t.nivel} h',
+              t.fin == null ? '-' : h1(t.horas),
+              t.extra > 0 ? h1(t.extra) : '0',
+              _s(t.relevadoPor ?? '-'),
+            ],
+        ]));
+      }
+    }
+    if (porEdificio.values.every((l) => l.isEmpty)) {
+      cuerpo.add(pw.Padding(padding: const pw.EdgeInsets.all(20), child: pw.Text('Sin turnos en este periodo.')));
+    }
+
+    final doc = pw.Document();
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(28),
+      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
+      footer: (ctx) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        child: pw.Text('Pagina ${ctx.pageNumber} de ${ctx.pagesCount}',
+            style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+      ),
+      build: (_) => cuerpo,
+    ));
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'Panel_Horas_OSIRIS_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'Panel de horas OSIRIS - $periodo');
   }
 
   static pw.Widget _portada(String periodo, String fecha) {

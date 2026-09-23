@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
+import 'turnos.dart';
 
 /// Estado global. La app queda SIEMPRE abierta (sin login diario).
 /// - "operador" = guardia que está usando el equipo (se selecciona al iniciar turno).
@@ -20,7 +21,6 @@ class AppState {
 
   // Elevación de administrador
   bool isAdmin = false;
-  bool get isSupervisor => isAdmin;
 
   // Edificio activo
   String edificioId = 'LIMCO II';
@@ -46,70 +46,25 @@ class AppState {
   int rondaFotos = 10;          // fotos obligatorias por ronda (configurable)
   String turnoIngreso = '';     // horario de ingreso esperado (HH:mm) de ESTE dispositivo
   String turnoSalida = '';      // horario de salida esperado (HH:mm) de ESTE dispositivo
-  static const int horasTurno = 12; // los turnos son de 12 horas
+  bool camaraNativa = false;    // true = usar la cámara NATIVA del celular (por dispositivo)
+  String bloque = '';           // etiqueta de este celular dentro del edificio (ej. "Bloque A")
 
-  bool get hayOperador => userId != null;
   bool modulo(String key) => modulos[key] == true;
 
   /// Edificio de UNA torre que trabaja SIN conexión: no cruza info con nadie,
   /// así los registros y fotos son instantáneos (no esperan a internet).
   bool get soloLocal => modulos['solo_local'] == true;
 
-  /// Fin de turno ESPERADO para un ingreso dado, según los horarios de relevo
-  /// configurados (ingreso y salida). Los dos horarios (ej. 08:30 y 20:30) son
-  /// las horas de cambio de turno; se toma el próximo relevo que caiga al menos
-  /// ~11 h después del ingreso (el turno dura 12 h). Sin horario => ingreso+12h.
-  DateTime finEsperado(DateTime inicio) {
-    final horas = <String>[turnoIngreso, turnoSalida].where((h) => h.contains(':')).toList();
-    if (horas.isEmpty) return inicio.add(const Duration(hours: horasTurno));
-    final minFin = inicio.add(const Duration(hours: 11));
-    DateTime? mejor;
-    for (final h in horas) {
-      final pz = h.split(':');
-      final hh = int.tryParse(pz[0]) ?? 0;
-      final mm = pz.length > 1 ? (int.tryParse(pz[1]) ?? 0) : 0;
-      for (int addDay = 0; addDay <= 2; addDay++) {
-        final c = DateTime(inicio.year, inicio.month, inicio.day, hh, mm).add(Duration(days: addDay));
-        if (!c.isBefore(minFin)) {
-          if (mejor == null || c.isBefore(mejor!)) mejor = c;
-          break;
-        }
-      }
-    }
-    return mejor ?? inicio.add(const Duration(hours: horasTurno));
-  }
+  /// Horarios de relevo válidos de ESTE celular (ej. ["08:30", "20:30"]).
+  List<String> get horarios => Turnos.limpiar([turnoIngreso, turnoSalida]);
 
-  /// Minutos de atraso al INICIAR turno respecto al horario de relevo más
-  /// cercano (ingreso/salida configurados). Positivo = llegó tarde; negativo =
-  /// llegó antes; null si no hay horarios configurados. Se usa para avisar al
-  /// guardia y registrar la advertencia por entrar tarde.
-  int? minutosTardeIngreso(DateTime llegada) {
-    final horas = <String>[turnoIngreso, turnoSalida].where((h) => h.contains(':')).toList();
-    if (horas.isEmpty) return null;
-    int? mejor; // minutos de diferencia (llegada - programado) del relevo más cercano
-    for (final h in horas) {
-      final pz = h.split(':');
-      final hh = int.tryParse(pz[0]) ?? 0;
-      final mm = pz.length > 1 ? (int.tryParse(pz[1]) ?? 0) : 0;
-      for (int addDay = -1; addDay <= 1; addDay++) {
-        final prog = DateTime(llegada.year, llegada.month, llegada.day, hh, mm).add(Duration(days: addDay));
-        final diff = llegada.difference(prog).inMinutes;
-        if (diff.abs() <= 6 * 60) {
-          if (mejor == null || diff.abs() < mejor!.abs()) mejor = diff;
-        }
-      }
-    }
-    return mejor;
-  }
+  /// Minutos de atraso al iniciar turno respecto al relevo más cercano de este
+  /// celular (positivo = tarde; null = sin horario configurado).
+  int? minutosTardeIngreso(DateTime llegada) => Turnos.minutosTarde(llegada, horarios);
 
-  /// Horas extra de un turno: SOLO cuenta el tiempo que el guardia se quedó
-  /// DESPUÉS de su hora de relevo (porque el otro guardia llegó tarde). Llegar
-  /// temprano NO da horas extra (fue su decisión).
-  double horasExtra(DateTime inicio, DateTime fin) {
-    final esperado = finEsperado(inicio);
-    final min = fin.difference(esperado).inMinutes;
-    return min > 0 ? min / 60.0 : 0.0;
-  }
+  /// Horas extra de un turno con la regla única (ver Turnos).
+  double horasExtra(DateTime inicio, DateTime fin, {int nivel = 12, List<String>? horariosTurno}) =>
+      Turnos.horasExtra(inicio: inicio, fin: fin, nivel: nivel, horarios: horariosTurno ?? horarios);
 
   /// Campo de visita habilitado (por defecto SI, salvo que el admin lo apague).
   bool campoVisita(String key) => modulos[key] != false;
@@ -137,6 +92,8 @@ class AppState {
     retencionDias = prefs.getInt('retencion_dias') ?? 90;
     turnoIngreso = prefs.getString('turno_ingreso') ?? '';
     turnoSalida = prefs.getString('turno_salida') ?? '';
+    camaraNativa = prefs.getBool('camara_nativa') ?? false;
+    bloque = prefs.getString('bloque') ?? '';
     final db = await DB.instance.database;
     final rows = await db.query('edificios', where: 'id = ?', whereArgs: [edificioId]);
     if (rows.isEmpty) {
@@ -235,6 +192,21 @@ class AppState {
       this.turnoSalida = turnoSalida;
       await prefs.setString('turno_salida', turnoSalida);
     }
+  }
+
+  /// Elige la cámara: nativa del celular (true) o la de la app (false).
+  Future<void> setCamaraNativa(bool v) async {
+    camaraNativa = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('camara_nativa', v);
+  }
+
+  /// Nombre del bloque/torre de ESTE celular (ej. "Bloque A"). Se adjunta a los
+  /// registros para distinguir de qué bloque vino, sin separar el edificio.
+  Future<void> setBloque(String v) async {
+    bloque = v.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('bloque', bloque);
   }
 
   /// Selecciona el guardia operador (al iniciar turno). Se guarda en el

@@ -3,7 +3,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/pdf_export.dart';
 import '../theme.dart';
-import '../widgets/toast.dart';
+import '../widgets/common.dart';
 
 /// Admin: puntos de control para rondas con QR (OPCIONAL por edificio).
 /// Si un edificio no tiene puntos, la ronda funciona normal (solo fotos).
@@ -90,13 +90,7 @@ class _PuntosControlScreenState extends State<PuntosControlScreen> {
             IconButton(
               icon: const Icon(Icons.print),
               tooltip: 'Imprimir QRs',
-              onPressed: () async {
-                try {
-                  await PdfExport.puntosControl(_puntos);
-                } catch (_) {
-                  if (mounted) TopToast.show(context, 'No se pudo generar el PDF', color: AppColors.rojo, icon: Icons.error_outline);
-                }
-              },
+              onPressed: () => conEspera(context, () => PdfExport.puntosControl(_puntos)),
             ),
         ],
       ),

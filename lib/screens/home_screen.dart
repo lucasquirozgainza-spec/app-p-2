@@ -54,16 +54,24 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  bool _latiendo = false;
+
   /// Latido de presencia con ubicacion (monitoreo constante del celular).
+  /// Nunca se superpone (con red lenta un latido podía tardar más de 60 s).
   Future<void> _latido() async {
-    final g = await DeviceContext.gps();
-    await Cloud.heartbeat(lat: g?['lat'], lng: g?['lng']);
-    // Aplicar config remota si el admin cambió algo (refresca la pantalla).
+    if (_latiendo || AppState.instance.soloLocal) return;
+    _latiendo = true;
     try {
+      final g = await DeviceContext.gps();
+      await Cloud.heartbeat(lat: g?['lat'], lng: g?['lng']);
+      // Aplicar config remota si el admin cambió algo (refresca la pantalla).
       if (await ConfigSync.aplicarRemota() && mounted) setState(() {});
       await ConfigSync.aplicarAdminPassRemota();
-      await ConfigSync.sincronizarGuardias();
-    } catch (_) {}
+      await ConfigSync.sincronizarGuardias(); // como máximo cada 10 min
+    } catch (_) {
+    } finally {
+      _latiendo = false;
+    }
   }
 
   Future<void> _open(Widget screen) async {
@@ -196,8 +204,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: const TextStyle(color: Colors.white70, fontSize: 13)),
             ),
           ]),
-          const SizedBox(height: 10),
-          if (s.turnoActivoId != null)
+          // Estado del turno (la acción está en el botón grande de abajo).
+          if (s.turnoActivoId != null) ...[
+            const SizedBox(height: 10),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(color: AppColors.verde, borderRadius: BorderRadius.circular(20)),
@@ -206,20 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(width: 5),
                 Text('Turno activo', style: TextStyle(color: Colors.white, fontSize: 12)),
               ]),
-            )
-          else
-            InkWell(
-              onTap: () => _open(const InicioTurnoScreen()),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.play_arrow, color: AppColors.azulMarino, size: 18),
-                  SizedBox(width: 5),
-                  Text('Iniciar turno', style: TextStyle(color: AppColors.azulMarino, fontWeight: FontWeight.bold)),
-                ]),
-              ),
             ),
+          ],
         ],
       ),
     );
@@ -358,6 +355,9 @@ class _HomeScreenState extends State<HomeScreen> {
           item(Icons.dashboard, 'Panel y Reportes', const PanelScreen(), color: const Color(0xFF1565C0)),
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
+          // Guardias: ven la actividad de TODO su edificio (los dos bloques),
+          // así el bloque B ve las visitas/recados que entraron por el bloque A.
+          item(Icons.sync_alt, 'Actividad del edificio', const OnlineScreen(soloEdificio: true), color: const Color(0xFF00695C), show: !s.isAdmin),
           const Divider(height: 1),
           item(Icons.apartment, 'Condominios', const OnlineScreen(soloEdificio: false), color: const Color(0xFF00695C), show: s.isAdmin),
           item(Icons.warning_amber, 'Advertencias', const AdvertenciasScreen(), color: const Color(0xFFEF6C00), show: s.isAdmin),

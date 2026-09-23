@@ -17,6 +17,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   bool _obscure = true;
   String? _error;
 
+  @override
+  void dispose() {
+    _user.dispose();
+    _pass.dispose();
+    super.dispose();
+  }
+
   Future<void> _ingresar() async {
     setState(() {
       _loading = true;

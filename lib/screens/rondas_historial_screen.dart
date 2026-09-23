@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../widgets/common.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
-import '../theme.dart';
 import '../widgets/eventos_remotos.dart';
 
 /// Historial de rondas: lista de rondas guardadas; al tocar una se ven las fotos.
@@ -49,8 +49,11 @@ class _RondasHistorialScreenState extends State<RondasHistorialScreen> {
               itemCount: _rows.length + 1,
               itemBuilder: (_, i) {
                 if (i == _rows.length) {
-                  return const EventosRemotos(tipo: 'Ronda', icon: Icons.directions_walk,
-                      color: Color(0xFF6A1B9A), tituloKeys: ['fotos', 'puntos']);
+                  return Column(children: [
+                    if (_rows.isEmpty) const Vacio('Sin rondas registradas', icon: Icons.directions_walk),
+                    const EventosRemotos(tipo: 'Ronda', icon: Icons.directions_walk,
+                        color: Color(0xFF6A1B9A), tituloKeys: ['fotos', 'puntos']),
+                  ]);
                 }
                 final r = _rows[i];
                 final fotos = _fotosDe(r);
@@ -109,10 +112,10 @@ class _RondaDetalle extends StatelessWidget {
                 if (File(f).existsSync())
                   GestureDetector(
                     onTap: () => showDialog(context: context, builder: (_) => Dialog(
-                      child: InteractiveViewer(child: Image.file(File(f))))),
+                      child: InteractiveViewer(child: Image.file(File(f), cacheWidth: 2000)))),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(10),
-                      child: Image.file(File(f), fit: BoxFit.cover),
+                      child: Image.file(File(f), fit: BoxFit.cover, cacheWidth: 400),
                     ),
                   ),
             ],

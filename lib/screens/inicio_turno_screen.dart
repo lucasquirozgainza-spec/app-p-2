@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
+import '../services/config_sync.dart';
 import '../services/device_context.dart';
 import '../services/uniform_check.dart';
 import '../services/notifications_service.dart';
@@ -29,6 +30,12 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
   int _fotoKey = 0;
   bool _sinUniforme = false; // el guardia declaro que no trajo uniforme
   bool _revisando = false;
+
+  @override
+  void dispose() {
+    _obs.dispose();
+    super.dispose();
+  }
   final _ahora = DateTime.now();
 
   @override
@@ -38,51 +45,28 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
   }
 
   Future<void> _load() async {
+    await _cargarLocales();
+    // Altas/bajas hechas por el admin en otros celulares: se sincronizan a la
+    // base local y se recarga la lista (sin internet, queda la lista local).
+    await ConfigSync.sincronizarGuardias(forzar: true);
+    await _cargarLocales();
+  }
+
+  Future<void> _cargarLocales() async {
     final db = await DB.instance.database;
-    final ed = AppState.instance.edificioId;
     final rows = await db.query('usuarios',
         where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1 "
             "AND (edificio=? OR edificio IS NULL OR edificio='')",
-        whereArgs: [ed],
-        orderBy: 'nombre');
-    // Lista combinada: guardias locales + guardias registrados en OTROS
-    // dispositivos (llegan por la nube). Asi los 4 guardias que registra el
-    // administrador aparecen en todos los equipos para iniciar turno.
-    final merged = <Map<String, dynamic>>[
-      for (final r in rows) Map<String, dynamic>.from(r)
-    ];
+        whereArgs: [AppState.instance.edificioId],
+        orderBy: 'nombre COLLATE NOCASE');
     if (!mounted) return;
-    setState(() => _guardias = merged);
-    // La nube en segundo plano (no bloquea si no hay internet).
-    try {
-      final nube = await Cloud.eventos(tipo: 'Guardia', edificio: ed, limit: 200);
-      if (!mounted) return;
-      final vistos = merged
-          .map((g) => (g['nombre'] ?? '').toString().trim().toLowerCase())
-          .toSet();
-      int fake = -1;
-      for (final e in nube) {
-        final det = e['detalle'];
-        final d = det is Map ? Map<String, dynamic>.from(det) : <String, dynamic>{};
-        final nombre = (d['nombre'] ?? e['guardia'] ?? '').toString().trim();
-        if (nombre.isEmpty) continue;
-        final key = nombre.toLowerCase();
-        if (vistos.contains(key)) continue; // ya esta (evita duplicados)
-        vistos.add(key);
-        merged.add({
-          'id': fake--, // id sintetico (no existe localmente)
-          'nombre': nombre,
-          'cargo': (d['cargo'] ?? '').toString(),
-          'rol': (d['rol'] ?? 'guardia').toString(),
-        });
-      }
-      merged.sort((a, b) => (a['nombre'] ?? '')
-          .toString()
-          .toLowerCase()
-          .compareTo((b['nombre'] ?? '').toString().toLowerCase()));
-      if (!mounted) return;
-      setState(() => _guardias = merged);
-    } catch (_) {}
+    setState(() {
+      _guardias = [for (final r in rows) Map<String, dynamic>.from(r)];
+      // Mantener la selección si sigue existiendo.
+      final selId = _sel?['id'];
+      final m = _guardias.where((g) => g['id'] == selId).toList();
+      _sel = m.isEmpty ? null : m.first;
+    });
   }
 
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
@@ -118,7 +102,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, 'repetir'),
-            child: const Text('Repetir foto con uniforme'),
+            child: const Text('Repetir foto'),
           ),
         ],
       ),
@@ -142,9 +126,12 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     if (_foto == null) return _snack('La foto del guardia es obligatoria');
     setState(() => _saving = true);
     final s = AppState.instance;
-    final gps = await DeviceContext.gps();
-    final bat = await DeviceContext.bateria();
-    final disp = await DeviceContext.dispositivo();
+    // GPS, batería y modelo EN PARALELO (antes uno tras otro).
+    final ctx = await Future.wait<Object?>(
+        [DeviceContext.gps(), DeviceContext.bateria(), DeviceContext.dispositivo()]);
+    final gps = ctx[0] as Map<String, double>?;
+    final bat = ctx[1] as int?;
+    final disp = ctx[2] as String;
     final db = await DB.instance.database;
     final id = await db.insert('ingreso_turno', {
       'guardia_id': _sel!['id'],
@@ -177,7 +164,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
         'edificio': s.edificioId,
         'created_at': DateTime.now().toIso8601String(),
       });
-      await Cloud.evento('Guardia sin uniforme', guardia: _sel!['nombre'] as String?);
+      Cloud.evento('Guardia sin uniforme', guardia: _sel!['nombre'] as String?); // segundo plano
     }
     // Aviso por ENTRAR TARDE: si hay horario de relevo configurado y el guardia
     // ingresa con retraso, se le avisa y se guarda la advertencia para llevar la
@@ -209,6 +196,9 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
         guardia: _sel!['nombre'] as String?,
         detalle: {
           'cargo': _sel!['cargo'],
+          // Horarios de relevo de ESTE celular: el admin calcula las horas
+          // extra con el horario del puesto donde marcó (bloques distintos).
+          if (s.horarios.isNotEmpty) 'relevos': s.horarios.join(','),
           'observaciones': _obs.text,
           'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
         });

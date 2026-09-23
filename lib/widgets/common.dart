@@ -198,3 +198,57 @@ class StatTile extends StatelessWidget {
     );
   }
 }
+
+/// Ejecuta una tarea larga (PDF, exportación) mostrando "Generando…" y
+/// bloqueando toques repetidos. Si falla, avisa. Nunca deja el diálogo abierto.
+Future<void> conEspera(BuildContext context, Future<void> Function() tarea,
+    {String mensaje = 'Generando PDF…', String error = 'No se pudo generar el PDF'}) async {
+  final nav = Navigator.of(context, rootNavigator: true);
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    useRootNavigator: true,
+    builder: (_) => PopScope(
+      canPop: false,
+      child: Center(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
+              const SizedBox(width: 16),
+              Text(mensaje),
+            ]),
+          ),
+        ),
+      ),
+    ),
+  );
+  try {
+    await tarea();
+  } catch (_) {
+    messenger?.showSnackBar(SnackBar(content: Text(error)));
+  } finally {
+    nav.pop();
+  }
+}
+
+/// Mensaje simple para listas vacías (en vez de una pantalla en blanco).
+class Vacio extends StatelessWidget {
+  final String texto;
+  final IconData icon;
+  const Vacio(this.texto, {super.key, this.icon = Icons.inbox_outlined});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 44, color: Colors.black26),
+        const SizedBox(height: 10),
+        Text(texto, textAlign: TextAlign.center, style: const TextStyle(color: Colors.black54)),
+      ]),
+    );
+  }
+}

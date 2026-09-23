@@ -38,6 +38,7 @@ class Contacto {
   }
 
   static void _aviso(BuildContext context, String m) {
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(m)));
   }

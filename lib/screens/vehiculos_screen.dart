@@ -8,7 +8,7 @@ import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/toast.dart';
-import 'camera_screen.dart';
+import '../services/camara.dart';
 
 class VehiculosScreen extends StatefulWidget {
   const VehiculosScreen({super.key});
@@ -19,6 +19,12 @@ class VehiculosScreen extends StatefulWidget {
 class _VehiculosScreenState extends State<VehiculosScreen> {
   final _q = TextEditingController();
   List<Map<String, dynamic>> _rows = [];
+
+  @override
+  void dispose() {
+    _q.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -82,7 +88,7 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
                         child: ListTile(
                           leading: CircleAvatar(
                               backgroundColor: const Color(0x1A283593),
-                              backgroundImage: tieneFoto ? FileImage(File(foto)) : null,
+                              backgroundImage: tieneFoto ? ResizeImage(FileImage(File(foto)), width: 120) : null,
                               child: tieneFoto ? null : const Icon(Icons.directions_car, color: Color(0xFF283593))),
                           title: Text(depto.isNotEmpty ? 'Depto $depto' : 'Sin depto',
                               style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -143,6 +149,20 @@ class _VehiculoFormState extends State<VehiculoForm> {
   bool get _editando => widget.existente != null;
 
   @override
+  void dispose() {
+    _placa.dispose();
+    _marca.dispose();
+    _modelo.dispose();
+    _color.dispose();
+    _depto.dispose();
+    _prop.dispose();
+    _parqueo.dispose();
+    _tel.dispose();
+    _obs.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     final e = widget.existente;
@@ -161,8 +181,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
   }
 
   Future<void> _escanearPlaca() async {
-    final res = await Navigator.push<List<String>>(
-        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false, album: 'OSIRIS Placas')));
+    final res = await Camara.tomar(context, multi: false, album: 'OSIRIS Placas');
     if (res == null || res.isEmpty) return;
     final placa = await OcrService.leerPlaca(res.first);
     if (!mounted) return;
@@ -320,7 +339,7 @@ class _VehiculoDetalleState extends State<VehiculoDetalle> {
         children: [
           if (tieneFoto)
             GestureDetector(
-              onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto))))),
+              onTap: () => showDialog(context: context, builder: (_) => Dialog(child: InteractiveViewer(child: Image.file(File(foto), cacheWidth: 2000)))),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.file(File(foto), height: 220, width: double.infinity, fit: BoxFit.cover, cacheWidth: 900),

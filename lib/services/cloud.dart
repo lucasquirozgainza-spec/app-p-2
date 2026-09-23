@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_state.dart';
+import 'img_util.dart';
 
 /// Comprime una foto para la nube: máx 1080 px y JPEG calidad 55 (~80-150 KB).
 /// Se ejecuta en un isolate (compute) para no trabar la interfaz.
@@ -82,7 +83,7 @@ class Cloud {
           'detalle': {'device': deviceId},
           'device_id': deviceId,
         }),
-      );
+      ).timeout(const Duration(seconds: 15));
       if (r.statusCode >= 200 && r.statusCode < 300) {
         await heartbeat();
         return 'OK · La nube respondió (código ${r.statusCode}). Los datos deberían cruzarse entre celulares.';
@@ -106,7 +107,12 @@ class Cloud {
           'tipo': tipo,
           'edificio': AppState.instance.edificioId,
           'guardia': guardia ?? AppState.instance.userNombre,
-          'detalle': detalle ?? {},
+          // Se adjunta el bloque de este celular para distinguir el origen
+          // dentro del mismo edificio (los dos bloques cruzan datos igual).
+          'detalle': {
+            ...(detalle ?? const {}),
+            if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
+          },
           'device_id': deviceId,
         }),
       ).timeout(const Duration(seconds: 12));
@@ -259,19 +265,26 @@ class Cloud {
   }
 
   /// Eventos de turno (ingreso/salida) del mes actual, de TODOS los edificios.
-  static Future<List<Map<String, dynamic>>> eventosTurnoMes() async {
+  /// Ingresos/salidas de un mes ([mes] = cualquier día de ese mes; por defecto
+  /// el actual). Incluye 1 día antes para no perder turnos que cruzan de mes.
+  static Future<List<Map<String, dynamic>>> eventosTurnoMes({DateTime? mes}) async {
+    if (AppState.instance.soloLocal) return [];
     try {
-      final now = DateTime.now();
-      final desde = DateTime(now.year, now.month, 1).toUtc().toIso8601String();
+      final m = mes ?? DateTime.now();
+      final desde = DateTime(m.year, m.month, 1).subtract(const Duration(days: 1)).toUtc().toIso8601String();
+      final hasta = DateTime(m.year, m.month + 1, 1).add(const Duration(days: 2)).toUtc().toIso8601String();
       final inval = '("Ingreso de turno","Salida de turno")';
       final params = [
         'select=*',
         'tipo=in.${Uri.encodeComponent(inval)}',
         'created_at=gte.${Uri.encodeComponent(desde)}',
+        'created_at=lt.${Uri.encodeComponent(hasta)}',
         'order=created_at.asc',
-        'limit=2000',
+        'limit=5000',
       ];
-      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h);
+      final r = await http
+          .get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+          .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) {
         lastError = 'turnos ${r.statusCode}: ${r.body}';
         return [];
@@ -347,10 +360,16 @@ class Cloud {
   static Future<String?> subirFoto(String path, {String sufijo = ''}) async {
     if (AppState.instance.soloLocal) return null; // edificio sin conexión
     try {
+      // Si la foto aún se está enderezando en la cola, esperar (tope corto).
+      await ImgUtil.esperarPendientes();
       final f = File(path);
       if (!await f.exists()) return null;
-      final raw = await f.readAsBytes();
-      final small = await compute(_comprimirFotoBytes, raw) ?? raw;
+      // Miniatura NATIVA (rápida, poca memoria). Respaldo: Dart en isolate.
+      Uint8List? small = await ImgUtil.miniaturaNube(path);
+      if (small == null) {
+        final raw = await f.readAsBytes();
+        small = await compute(_comprimirFotoBytes, raw) ?? raw;
+      }
       final name = '${_edSafe()}/${DateTime.now().millisecondsSinceEpoch}_$deviceId$sufijo.jpg';
       final r = await http
           .post(Uri.parse('$_storage/object/$bucket/$name'),

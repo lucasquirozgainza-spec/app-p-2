@@ -1,43 +1,61 @@
+import 'dart:io';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 class CarnetData {
   final String? ci;
   final String? nombre;
   CarnetData(this.ci, this.nombre);
+  bool get vacio => ci == null && nombre == null;
 }
 
-/// OCR: lee texto de fotos para detectar numero de tarjeta, CI y nombre.
+/// OCR de documentos (ML Kit, en el dispositivo, sin internet).
+///
+/// Cédulas bolivianas:
+/// - NUEVA: frente con etiquetas APELLIDOS / NOMBRES; reverso con zona MRZ
+///   (3 líneas con "<"). La MRZ es lo más confiable y se usa primero.
+/// - ANTIGUA: número en el frente ("N° 1234567 LP"); el nombre en el reverso,
+///   después de "...pertenecen a:" y antes de "Nacido(a) el...".
+///
+/// Regla de confianza: un dato solo se devuelve si pasa validaciones (formato,
+/// letras, vocales, sin palabras de etiqueta). Las correcciones de caracteres
+/// (0→O, 5→S, «→<<...) solo se aplican donde el tipo de dato no deja duda
+/// (letras en un nombre, dígitos en un número). Si no hay seguridad, se
+/// devuelve null y el guardia lo escribe.
 class OcrService {
   /// Texto completo reconocido en la imagen.
   static Future<String> leerTexto(String path) async {
     final rec = TextRecognizer(script: TextRecognitionScript.latin);
     try {
-      final r = await rec.processImage(InputImage.fromFilePath(path));
-      return r.text;
-    } catch (_) {
-      return '';
+      return await _texto(rec, path);
     } finally {
       await rec.close();
     }
   }
 
-  /// Numero de la tarjeta de acceso. Por defecto busca [digitos]=10 digitos
-  /// (configurable por edificio). Devuelve la secuencia de esa longitud; si no
-  /// la encuentra, devuelve null para que se repita la foto.
+  static Future<String> _texto(TextRecognizer rec, String path) async {
+    try {
+      final r = await rec.processImage(InputImage.fromFilePath(path));
+      return r.text;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Número de la tarjeta de acceso ([digitos] configurable por edificio).
   static Future<String?> leerNumero(String path, {int digitos = 10}) async {
     final texto = await leerTexto(path);
-    // Unir digitos separados por espacios (a veces el OCR los parte).
     final limpio = texto.replaceAll(RegExp(r'(?<=\d)[ \-](?=\d)'), '');
-    // Secuencia de exactamente [digitos] digitos aislada.
-    final exacto = RegExp(r'(?<!\d)(\d{' + '$digitos' + r'})(?!\d)').firstMatch(limpio);
+    final exacto = RegExp(r'(?<!\d)(\d{' '$digitos' r'})(?!\d)').firstMatch(limpio);
     if (exacto != null) return exacto.group(1);
-    // Si aparece una corrida mas larga, tomar sus primeros [digitos].
-    final larga = RegExp(r'\d{' + '$digitos' + r',}').firstMatch(limpio);
+    final larga = RegExp(r'\d{' '$digitos' r',}').firstMatch(limpio);
     if (larga != null) return larga.group(0)!.substring(0, digitos);
     return null;
   }
 
-  /// Lee la placa de un vehiculo (Bolivia): 3-4 digitos + 3 letras, o al reves.
+  /// Placa boliviana: 3-4 dígitos + 3 letras (o al revés).
   static Future<String?> leerPlaca(String path) async {
     final texto = (await leerTexto(path)).toUpperCase();
     final limpio = texto.replaceAll(RegExp(r'[^A-Z0-9\n ]'), ' ');
@@ -48,281 +66,333 @@ class OcrService {
     return null;
   }
 
-  /// Analiza el texto de un carnet boliviano (nuevo o antiguo) y devuelve CI y nombre.
-  static CarnetData parseCarnet(String texto) {
-    final up = texto.toUpperCase();
-    String? ci;
-    String? nombre;
-
-    // --- CI ---
-    // 1) MRZ:  I<BOL8161022<<8
-    final mrz = RegExp(r'BOL[<]*?(\d{6,9})').firstMatch(up);
-    if (mrz != null) ci = mrz.group(1);
-    // 2) Etiqueta No / N°  8161022
-    if (ci == null) {
-      final m = RegExp(r'N[°O\.\s]{0,4}(\d{6,9})').firstMatch(up);
-      if (m != null) ci = m.group(1);
+  /// Lee un carnet desde sus dos fotos (frente y reverso). Si una foto quedó
+  /// girada y no se lee nada útil, reintenta rotándola (90°, 270°, 180°).
+  static Future<CarnetData> leerCarnetDosLados(String frontPath, String? backPath) async {
+    final rec = TextRecognizer(script: TextRecognitionScript.latin);
+    try {
+      final t1 = await _textoUtil(rec, frontPath);
+      final t2 = (backPath != null && backPath.isNotEmpty) ? await _textoUtil(rec, backPath) : '';
+      return parseDosLados(t1, t2);
+    } finally {
+      await rec.close();
     }
-    // 3) Cualquier numero de 6-8 digitos (se descarta serie/seccion de 5)
-    if (ci == null) {
-      final nums = RegExp(r'(?<!\d)(\d{6,8})(?!\d)').allMatches(up).map((e) => e.group(1)!).toList();
-      if (nums.isNotEmpty) {
-        nums.sort((a, b) => b.length.compareTo(a.length));
-        ci = nums.first;
-      }
-    }
-
-    // --- Nombre ---
-    // 1) MRZ:  QUIROZ<GAINZA<<LUCAS<JOSUE
-    final mrzName = RegExp(r'([A-Z]+(?:<[A-Z]+)*)<<([A-Z<]+)').firstMatch(up);
-    if (mrzName != null) {
-      final ape = mrzName.group(1)!.replaceAll('<', ' ').trim();
-      final nom = mrzName.group(2)!.replaceAll('<', ' ').trim();
-      if (ape.isNotEmpty && nom.isNotEmpty) nombre = '$nom $ape';
-    }
-    final lines = texto.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
-    // 2) Carnet nuevo:  APELLIDOS: ...   NOMBRES: ...
-    //    Combinamos SIEMPRE nombres + apellidos para armar el nombre completo.
-    if (nombre == null) {
-      String? nom, ape;
-      for (int i = 0; i < lines.length; i++) {
-        final L = lines[i].toUpperCase();
-        if (nom == null && L.contains('NOMBRE')) nom = _valorLabel(lines, i);
-        if (ape == null && L.contains('APELLIDO')) ape = _valorLabel(lines, i);
-      }
-      final full = [nom, ape].where((e) => e != null && e.trim().isNotEmpty).join(' ');
-      if (full.trim().isNotEmpty) nombre = full;
-    }
-    // 3) Carnet antiguo (reverso): tras PERTENECE A: / A NOMBRE DE: viene el nombre.
-    if (nombre == null) {
-      for (int i = 0; i < lines.length; i++) {
-        final L = lines[i].toUpperCase();
-        if (L.contains('PERTENECE') || L.contains('NOMBRE DE') || L.contains('A NOMBRE')) {
-          for (int j = i; j < lines.length && j < i + 4; j++) {
-            var cand = lines[j]
-                .replaceAll(RegExp(r'pertenece|a\s+nombre\s+de|nombre\s+de|^A\s*:?\s*', caseSensitive: false), '')
-                .trim();
-            if (_pareceNombre(cand)) {
-              nombre = cand;
-              break;
-            }
-          }
-          if (nombre != null) break;
-        }
-      }
-    }
-    // 4) Ultimo recurso: cualquier linea que parezca un nombre completo
-    //    (2 a 4 palabras, solo letras, sin etiquetas) -> nombre y apellido.
-    if (nombre == null) {
-      String? mejor;
-      for (final l in lines) {
-        final u = l.toUpperCase().trim();
-        if (RegExp(r'\d').hasMatch(u)) continue;
-        if (!RegExp(r'^[A-ZÁÉÍÓÚÑ ]+$').hasMatch(u)) continue;
-        final palabras = u.split(RegExp(r'\s+')).where((w) => w.length >= 2).toList();
-        if (palabras.length < 2 || palabras.length > 4) continue;
-        if (palabras.any((w) => _stop.contains(w))) continue;
-        if (mejor == null || u.length > mejor.length) mejor = u;
-      }
-      if (mejor != null) nombre = mejor;
-    }
-
-    if (nombre != null) nombre = _limpiarNombre(nombre);
-    return CarnetData(ci, (nombre != null && nombre.trim().isNotEmpty) ? nombre : null);
   }
 
-  /// Lee un carnet de sus DOS fotos, respetando dónde está cada dato:
-  /// - Carnet NUEVO: el nombre está en la 1ra foto (frente).
-  /// - Carnet ANTIGUO: el nombre está en la 2da foto (reverso), tras "A:".
-  /// - El NÚMERO de carnet siempre está en la 1ra foto (frente).
-  static Future<CarnetData> leerCarnetDosLados(String frontPath, String? backPath) async {
-    final t1 = await leerTexto(frontPath);
-    final t2 = (backPath != null && backPath.isNotEmpty) ? await leerTexto(backPath) : '';
-    // Número: SOLO del frente (así no confunde con el CI de padre/madre del reverso).
-    final ci = _ciDe(t1);
-    // Nombre: nuevo (frente) -> antiguo (reverso) -> antiguo (frente) -> nuevo (reverso).
-    final nombre = _nombreNuevoDe(t1) ?? _nombreAntiguoDe(t2) ?? _nombreAntiguoDe(t1) ?? _nombreNuevoDe(t2);
+  /// Combina el texto de frente y reverso respetando dónde está cada dato.
+  static CarnetData parseDosLados(String frente, String reverso) {
+    // Número: MRZ (cualquier lado) → etiqueta "N°" del frente → número suelto
+    // del frente. Nunca un número suelto del reverso (fechas, series).
+    final ci = _ciMrz(frente) ?? _ciMrz(reverso) ?? _ciEtiqueta(frente) ?? _ciSuelto(frente);
+    // Nombre: MRZ → etiquetas (nuevo) → "pertenecen a:" (antiguo).
+    final nombre = _nombreMrz(frente) ??
+        _nombreMrz(reverso) ??
+        _nombreEtiquetas(frente) ??
+        _nombreAntiguo(reverso) ??
+        _nombreAntiguo(frente) ??
+        _nombreEtiquetas(reverso);
     return CarnetData(ci, nombre);
   }
 
-  /// Número de carnet a partir del texto del FRENTE (N° / No. / 6-9 dígitos).
-  static String? _ciDe(String texto) {
-    final up = texto.toUpperCase();
-    final mrz = RegExp(r'BOL[<]*?(\d{6,9})').firstMatch(up);
-    if (mrz != null) return mrz.group(1);
-    // Prioridad: la etiqueta "No." / "N°" (evita serie/seccion de 5 y series largas).
-    final etiqueta = RegExp(r'N[O°\.\s]{0,4}(\d{6,9})').firstMatch(up);
-    if (etiqueta != null) return etiqueta.group(1);
-    // Respaldo: número aislado de 6-8 dígitos.
-    final nums = RegExp(r'(?<!\d)(\d{6,8})(?!\d)').allMatches(up).map((e) => e.group(1)!).toList();
-    if (nums.isNotEmpty) {
-      nums.sort((a, b) => b.length.compareTo(a.length));
-      return nums.first;
-    }
-    return null;
+  /// Carnet leído desde un texto ya reconocido (uno o ambos lados juntos).
+  static CarnetData parseCarnet(String texto) => parseDosLados(texto, '');
+
+  /// ¿El texto trae algo útil (número o nombre)?
+  static bool _util(String t) {
+    // Si el OCR ya leyó varias palabras reales, la foto está derecha: no rotar.
+    if (RegExp(r'[A-Za-zÁÉÍÓÚÑáéíóúñ]{4,}').allMatches(t).length >= 8) return true;
+    return _ciMrz(t) != null || _ciEtiqueta(t) != null || _ciSuelto(t) != null ||
+        _nombreMrz(t) != null || _nombreEtiquetas(t) != null || _nombreAntiguo(t) != null;
   }
 
-  /// Nombre en carnet NUEVO: por MRZ o por etiquetas NOMBRES/APELLIDOS.
-  static String? _nombreNuevoDe(String texto) {
-    final up = texto.toUpperCase();
-    final mrzName = RegExp(r'([A-Z]+(?:<[A-Z]+)*)<<([A-Z<]+)').firstMatch(up);
-    if (mrzName != null) {
-      final ape = mrzName.group(1)!.replaceAll('<', ' ').trim();
-      final nom = mrzName.group(2)!.replaceAll('<', ' ').trim();
-      if (ape.isNotEmpty && nom.isNotEmpty) return _limpiarNombre('$nom $ape');
-    }
-    final lines = texto.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
-    String? nom, ape;
-    for (int i = 0; i < lines.length; i++) {
-      final L = lines[i].toUpperCase();
-      if (nom == null && L.contains('NOMBRE')) nom = _valorLabel(lines, i);
-      if (ape == null && L.contains('APELLIDO')) ape = _valorLabel(lines, i);
-    }
-    final full = [nom, ape].where((e) => e != null && e.trim().isNotEmpty).join(' ');
-    if (full.trim().isNotEmpty) return _limpiarNombre(full);
-    return null;
-  }
-
-  /// Nombre en carnet ANTIGUO (reverso): tras "PERTENECE ... A:" hasta "NACIDO".
-  static String? _nombreAntiguoDe(String texto) {
-    final plana = texto.toUpperCase().replaceAll('\n', ' ').replaceAll(RegExp(r'\s+'), ' ');
-    // "...PERTENECE A: NOMBRE COMPLETO NACIDO EL..."
-    var m = RegExp(r'PERTENECE.{0,12}?A\s*:?\s*([A-ZÁÉÍÓÚÑ ]{6,60}?)\s+NACID').firstMatch(plana);
-    m ??= RegExp(r'\bA\s*:\s*([A-ZÁÉÍÓÚÑ ]{6,60}?)\s+NACID').firstMatch(plana);
-    if (m != null) {
-      final cand = m.group(1)!.trim();
-      if (_pareceNombre(cand)) return _limpiarNombre(cand);
-    }
-    // Respaldo: línea siguiente a "A:" / "PERTENECE" que parezca nombre.
-    final lines = texto.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
-    for (int i = 0; i < lines.length; i++) {
-      final L = lines[i].toUpperCase();
-      if (L.contains('PERTENECE') || RegExp(r'^A\s*:').hasMatch(L)) {
-        for (int j = i; j < lines.length && j < i + 4; j++) {
-          final cand = lines[j]
-              .replaceAll(RegExp(r'^.*?A\s*:\s*'), '')
-              .replaceAll(RegExp(r'PERTENECE|CERTIFICA|IMPRESI|FOTOGRAF|FIRMA', caseSensitive: false), '')
-              .trim();
-          if (_pareceNombre(cand)) return _limpiarNombre(cand);
-        }
+  /// Texto de la foto; si no sirve, prueba la foto rotada.
+  static Future<String> _textoUtil(TextRecognizer rec, String path) async {
+    final t = await _texto(rec, path);
+    if (_util(t)) return t;
+    for (final grados in const [90, 270, 180]) {
+      final rot = await _rotada(path, grados);
+      if (rot == null) continue;
+      try {
+        final tr = await _texto(rec, rot);
+        if (_util(tr)) return tr;
+      } finally {
+        try { await File(rot).delete(); } catch (_) {}
       }
     }
+    return t;
+  }
+
+  static Future<String?> _rotada(String path, int grados) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final out = p.join(dir.path, 'ocr_${grados}_${DateTime.now().microsecondsSinceEpoch}.jpg');
+      final f = await FlutterImageCompress.compressAndGetFile(path, out,
+          rotate: grados, quality: 90, minWidth: 2400, minHeight: 2400);
+      return f?.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------- número CI
+
+  /// CI desde la MRZ: "IDBOL1234567<..." / "I<BOL1234567...".
+  static String? _ciMrz(String texto) {
+    for (final l in texto.split('\n')) {
+      final u = _normMrz(l);
+      final m = RegExp(r'BOL<?([0-9O]{5,9})(?![0-9O])').firstMatch(u);
+      if (m == null) continue;
+      final raw = m.group(1)!;
+      final digitos = raw.replaceAll(RegExp(r'[^0-9]'), '').length;
+      if (digitos < raw.length - 1) continue; // demasiadas letras: no confiable
+      final n = raw.replaceAll('O', '0');
+      if (n.length >= 5) return n;
+    }
     return null;
   }
 
-  // Palabras que NO forman parte de un nombre (etiquetas del carnet).
+  /// CI tras la etiqueta "N°", "No.", "Nro". Corrige O→0, I/l→1, S→5, B→8
+  /// solo dentro de ese número y si casi todo ya son dígitos.
+  static String? _ciEtiqueta(String texto) {
+    final up = texto.toUpperCase();
+    final m = RegExp(r'\bN(?:RO|O|°|º|\.)?\s*[°º\.:]?\s*([0-9OILSB]{5,11})(?![0-9])').firstMatch(up);
+    if (m == null) return null;
+    // Quitar letras finales pegadas (extensión LP, SC, CB, BE...).
+    final raw = m.group(1)!.replaceFirst(RegExp(r'[^0-9]+$'), '');
+    if (raw.length < 5 || raw.length > 9) return null;
+    final digitos = raw.replaceAll(RegExp(r'[^0-9]'), '').length;
+    if (digitos < raw.length * 0.75) return null;
+    final n = raw
+        .replaceAll('O', '0')
+        .replaceAll('I', '1')
+        .replaceAll('L', '1')
+        .replaceAll('S', '5')
+        .replaceAll('B', '8');
+    return RegExp(r'^\d{5,9}$').hasMatch(n) ? n : null;
+  }
+
+  /// Número suelto de 6 a 8 dígitos (no parte de una fecha).
+  static String? _ciSuelto(String texto) {
+    final nums = RegExp(r'(?<![\d/\-.])(\d{6,8})(?![\d/\-.])')
+        .allMatches(texto)
+        .map((e) => e.group(1)!)
+        .toList();
+    if (nums.isEmpty) return null;
+    nums.sort((a, b) => b.length.compareTo(a.length));
+    return nums.first;
+  }
+
+  // ---------------------------------------------------------------- nombres
+
+  /// Normaliza una línea para leer MRZ: sin espacios y con los "<" que el OCR
+  /// suele confundir («, ‹, (, [, {).
+  static String _normMrz(String l) => l
+      .toUpperCase()
+      .replaceAll(RegExp(r'\s+'), '')
+      .replaceAll('«', '<<')
+      .replaceAll('»', '<<')
+      .replaceAll(RegExp(r'[‹(\[{]'), '<');
+
+  /// Nombre desde la línea 3 de la MRZ: APELLIDOS<<NOMBRES<<<<.
+  static String? _nombreMrz(String texto) {
+    for (final l in texto.split('\n')) {
+      var u = _normMrz(l);
+      if (u.length < 12 || !u.contains('<<')) continue;
+      if (!RegExp(r'^[A-Z0-9<]+$').hasMatch(u)) continue;
+      // Pasaporte/documento: quitar prefijo "P<BOL", "I<BOL", "IDBOL".
+      u = u.replaceFirst(RegExp(r'^[PI][<D][A-Z]{3}'), '');
+      // Las líneas 1 y 2 tienen muchos dígitos; la de nombres, ninguno.
+      final nDig = u.replaceAll(RegExp(r'[^0-9]'), '').length;
+      if (nDig > 2) continue;
+      u = _digitosALetras(u);
+      u = u.replaceAll(RegExp(r'<+$'), '');
+      u = u.replaceAll(RegExp(r'K{3,}$'), ''); // relleno "<<<" leído como KKK
+      final i = u.indexOf('<<');
+      if (i <= 0) continue;
+      // Más de un "<<" entre palabras = lectura ambigua: no adivinar.
+      if (u.indexOf('<<', i + 2) >= 0) continue;
+      final ape = u.substring(0, i).split('<').where((e) => e.isNotEmpty).toList();
+      final nom = u.substring(i + 2).split('<').where((e) => e.isNotEmpty).toList();
+      if (ape.isEmpty || nom.isEmpty) continue;
+      final r = _validar([...nom, ...ape]);
+      if (r != null) return r;
+    }
+    return null;
+  }
+
+  /// Carnet NUEVO: etiquetas APELLIDOS (o paterno/materno) y NOMBRES.
+  static String? _nombreEtiquetas(String texto) {
+    final lines = _lineas(texto);
+    final nombres = <String>[];
+    final apellidos = <String>[];
+    for (int i = 0; i < lines.length; i++) {
+      final l = _letrasEnEtiqueta(lines[i]);
+      if (l.contains('NOMBRE DE') || l.contains('A NOMBRE')) continue; // texto, no etiqueta
+      if (RegExp(r'PADRE|MADRE|CONYUG|CÓNYUG|ESPOS').hasMatch(l)) continue; // no es el titular
+      if (l.contains('APELLID') || l.contains('APELID')) {
+        if (apellidos.length < 3) apellidos.addAll(_valorEtiqueta(lines, i));
+      } else if (l.contains('NOMBRE') && nombres.isEmpty) {
+        nombres.addAll(_valorEtiqueta(lines, i));
+      }
+    }
+    if (nombres.isEmpty || apellidos.isEmpty) return null;
+    return _validar([...nombres, ...apellidos]);
+  }
+
+  /// Carnet ANTIGUO (reverso): "...pertenecen a: NOMBRE COMPLETO Nacido el...".
+  static String? _nombreAntiguo(String texto) {
+    final plana = texto.toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
+    final fin = r'\s*,?\s*NAC[I1L|]D[OA0]';
+    final pats = [
+      RegExp(r'PERTENEC\w*\s*A\s*[:;.]?\s*(.{5,70}?)' + fin),
+      RegExp(r'\bA\s*:\s*(.{5,70}?)' + fin),
+    ];
+    for (final re in pats) {
+      final m = re.firstMatch(plana);
+      if (m == null) continue;
+      final cand = m.group(1)!;
+      if (RegExp(r'\d').allMatches(cand).length > 2) continue; // basura
+      final r = _validar(_tokens(cand));
+      if (r != null) return r;
+    }
+    // Respaldo por líneas: la(s) línea(s) siguiente(s) a "pertenecen a:".
+    final lines = _lineas(texto);
+    for (int i = 0; i < lines.length; i++) {
+      final u = lines[i].toUpperCase();
+      if (!u.contains('PERTENEC')) continue;
+      final tras = u.replaceFirst(RegExp(r'^.*PERTENEC\w*\s*A?\s*[:;.]?'), '');
+      final toks = <String>[..._tokens(tras)];
+      for (int j = i + 1; j < lines.length && j <= i + 2 && toks.length < 6; j++) {
+        final lj = lines[j].toUpperCase();
+        if (RegExp(r'NAC[I1L]D').hasMatch(lj)) break;
+        toks.addAll(_tokens(lj));
+      }
+      final r = _validar(toks);
+      if (r != null) return r;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- utilidades
+
+  static List<String> _lineas(String t) =>
+      t.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+
+  /// Línea en mayúsculas con 5→S, 0→O, 1→I (solo para RECONOCER etiquetas).
+  static String _letrasEnEtiqueta(String l) =>
+      l.toUpperCase().replaceAll('5', 'S').replaceAll('0', 'O').replaceAll('1', 'I');
+
+  static final RegExp _corte = RegExp(
+      r'APELLID|APELID|NOMBRE|FECHA|NACIM|SERIE|SECC|EMISI|EXPIRA|VENCE|FIRMA|IDENTIDAD|CEDULA|CÉDULA|'
+      r'ESTADO|PLURINACIONAL|SERVICIO|DOMICILIO|LUGAR|OCUPAC|PROFESI|TITULAR|SEXO|NACIONAL|SURNAME|GIVEN');
+
+  /// Valor de una etiqueta: lo que sigue a ":" en la misma línea y/o las
+  /// líneas siguientes (hasta 2), cortando en otra etiqueta o en dígitos.
+  static List<String> _valorEtiqueta(List<String> lines, int i) {
+    final out = <String>[];
+    final l = lines[i];
+    final idx = l.indexOf(':');
+    if (idx >= 0) out.addAll(_tokens(l.substring(idx + 1)));
+    if (out.isEmpty) {
+      // Etiqueta sin ":" con el valor en la misma línea ("APELLIDOS PEREZ LOPEZ").
+      final lu = _letrasEnEtiqueta(l); // "APELLID0S" también cuenta
+      final resto = lu.replaceFirst(
+          RegExp(r'^.*?(APELLIDOS?|APELIDOS?|NOMBRES?)\b\s*(/\s*(SURNAMES?|GIVEN\s+NAMES?|NAMES?)\b)?'), '');
+      if (resto != lu) out.addAll(_tokens(resto));
+    }
+    for (int j = i + 1; j < lines.length && j <= i + 2 && out.length < 3; j++) {
+      final lj = lines[j];
+      if (RegExp(r'\d{2,}').hasMatch(lj)) break;
+      if (_corte.hasMatch(_letrasEnEtiqueta(lj))) break;
+      out.addAll(_tokens(lj));
+    }
+    return out.where((t) => !_stop.contains(t)).take(3).toList();
+  }
+
+  /// Palabras de un fragmento de nombre, con correcciones seguras dentro de
+  /// palabras que son casi todo letras (ej. "L0PEZ" → "LOPEZ").
+  static List<String> _tokens(String s) {
+    final out = <String>[];
+    for (var w in s.toUpperCase().split(RegExp(r"[\s,;:./\-_'’`]+"))) {
+      w = w.replaceAll('|', 'I').replaceAll('€', 'E');
+      if (w.isEmpty) continue;
+      final letras = RegExp(r'[A-ZÁÉÍÓÚÑÜ]').allMatches(w).length;
+      final digitos = RegExp(r'\d').allMatches(w).length;
+      if (digitos > 0) {
+        // Solo corregir si la palabra es mayormente letras (≤1 dígito cada 4).
+        if (letras < 3 || digitos * 4 > w.length) continue;
+        w = _digitosALetras(w);
+      }
+      w = w.replaceAll(RegExp(r'[^A-ZÁÉÍÓÚÑÜ]'), '');
+      if (w.isNotEmpty) out.add(w);
+    }
+    return out;
+  }
+
+  static String _digitosALetras(String s) => s
+      .replaceAll('0', 'O')
+      .replaceAll('1', 'I')
+      .replaceAll('5', 'S')
+      .replaceAll('8', 'B')
+      .replaceAll('2', 'Z')
+      .replaceAll('6', 'G')
+      .replaceAll('4', 'A')
+      .replaceAll('3', 'E')
+      .replaceAll('7', 'T');
+
+  // Palabras que nunca son parte de un nombre (etiquetas y textos del carnet).
   static const _stop = {
-    'FECHA', 'NACIMIENTO', 'EMISION', 'EMISIÓN', 'EXPIRACION', 'EXPIRACIÓN',
-    'SERIE', 'SECCION', 'SECCIÓN', 'NOMBRES', 'APELLIDOS', 'CEDULA', 'CÉDULA',
-    'IDENTIDAD', 'ESTADO', 'PLURINACIONAL', 'BOLIVIA', 'FIRMA', 'TITULAR',
-    'SERVICIO', 'GENERAL', 'IDENTIFICACION', 'IDENTIFICACIÓN', 'PERSONAL',
-    'DOMICILIO', 'OCUPACION', 'OCUPACIÓN', 'CIVIL', 'LUGAR', 'BIO', 'NO', 'N',
-    'CERTIFICA', 'IMPRESION', 'IMPRESIÓN', 'PERTENECE', 'DOCUMENTOS', 'REGISTRADOS',
+    'FECHA', 'NACIMIENTO', 'EMISION', 'EMISIÓN', 'EXPIRACION', 'EXPIRACIÓN', 'VENCIMIENTO',
+    'SERIE', 'SECCION', 'SECCIÓN', 'NOMBRE', 'NOMBRES', 'APELLIDO', 'APELLIDOS', 'PATERNO', 'MATERNO',
+    'CEDULA', 'CÉDULA', 'IDENTIDAD', 'ESTADO', 'PLURINACIONAL', 'BOLIVIA', 'FIRMA', 'TITULAR',
+    'SERVICIO', 'GENERAL', 'IDENTIFICACION', 'IDENTIFICACIÓN', 'PERSONAL', 'SEGIP',
+    'DOMICILIO', 'OCUPACION', 'OCUPACIÓN', 'PROFESION', 'PROFESIÓN', 'CIVIL', 'LUGAR', 'SEXO',
+    'CERTIFICA', 'IMPRESION', 'IMPRESIÓN', 'DIGITAL', 'FOTOGRAFIA', 'FOTOGRAFÍA', 'REGISTRAN',
+    'PERTENECE', 'PERTENECEN', 'DOCUMENTOS', 'REGISTRADOS', 'NACIDO', 'NACIDA', 'NACIONALIDAD',
+    'BOLIVIANA', 'BOLIVIANO', 'SURNAME', 'SURNAMES', 'GIVEN', 'NAMES', 'NAME', 'DATE', 'BIRTH',
+    'EXPIRY', 'DOCUMENT', 'VALIDO', 'VÁLIDO', 'HASTA', 'REPUBLICA', 'REPÚBLICA', 'QUE',
+    'SOLTERO', 'SOLTERA', 'CASADO', 'CASADA', 'EL', 'EN',
   };
 
-  /// Deja solo palabras alfabeticas del nombre, quita numeros y etiquetas.
-  static String _limpiarNombre(String s) {
-    final tokens = s.toUpperCase().split(RegExp(r'[^A-ZÁÉÍÓÚÑ]+')).where((w) => w.length >= 2).toList();
-    final keep = <String>[];
-    for (final t in tokens) {
-      if (_stop.contains(t)) continue;
-      keep.add(t);
-      if (keep.length >= 5) break;
+  // Partículas válidas de 1-3 letras en nombres/apellidos.
+  static const _particulas = {'DE', 'DEL', 'LA', 'LAS', 'LOS', 'Y', 'SAN', 'VON', 'DA', 'DI'};
+
+  /// Valida y arma el nombre. Devuelve null si no es suficientemente confiable.
+  static String? _validar(List<String> toks) {
+    final t = toks.where((w) => !_stop.contains(w)).toList();
+    if (t.length < 2 || t.length > 7) return null;
+    int fuertes = 0;
+    for (final w in t) {
+      if (w.length == 1 && w != 'Y') return null;
+      if (w.length >= 3 && !_particulas.contains(w)) {
+        if (!RegExp(r'[AEIOUÁÉÍÓÚÜY]').hasMatch(w)) return null; // sin vocal: basura
+        if (RegExp(r'(.)\1\1').hasMatch(w)) return null;          // "KKK", "III"
+        fuertes++;
+      }
     }
-    return _titulo(keep.join(' '));
+    if (fuertes < 2) return null;
+    final s = t.join(' ');
+    if (s.length < 6 || s.length > 60) return null;
+    return _titulo(s);
   }
 
-  /// Lee el valor de una etiqueta (NOMBRES/APELLIDOS). El valor puede estar en
-  /// la misma línea (tras ':') o en la(s) siguiente(s). Devuelve hasta 3
-  /// palabras alfabéticas, sin etiquetas ni números.
-  // Palabras de etiqueta: al toparse con una, se corta la acumulación del valor.
-  static final RegExp _corte = RegExp(
-      r'APELLIDO|NOMBRE|FECHA|NACIMIENTO|SERIE|SECC|EMISI|EXPIRA|FIRMA|IDENTIDAD|CEDULA|CÉDULA|ESTADO|PLURINACIONAL|SERVICIO|DOMICILIO|LUGAR|OCUPAC|TITULAR');
-
-  /// Lee el valor de una etiqueta (NOMBRES/APELLIDOS). El valor puede estar en
-  /// la misma línea (tras ':') y/o en la(s) siguiente(s) — se acumulan hasta
-  /// toparse con otra etiqueta o un número. Así no se pierde un apellido que el
-  /// OCR partió en dos líneas (ej. QUIROZ / GAINZA).
-  static String? _valorLabel(List<String> lines, int i) {
-    String limpiar(String s) =>
-        (RegExp(r'[A-Za-zÁÉÍÓÚÑ ]+').firstMatch(s)?.group(0) ?? '').trim();
-
-    final parts = <String>[];
-    final line = lines[i];
-    final idx = line.indexOf(':');
-    final same = (idx >= 0 && idx < line.length - 1) ? limpiar(line.substring(idx + 1)) : '';
-    if (same.length >= 2) parts.add(same);
-
-    // Acumular líneas siguientes que parezcan nombre (hasta 3), cortando en la
-    // primera etiqueta o línea con dígitos.
-    for (int j = i + 1; j < lines.length && j <= i + 3; j++) {
-      if (RegExp(r'\d').hasMatch(lines[j])) break;
-      if (_corte.hasMatch(lines[j].toUpperCase())) break;
-      final cand = limpiar(lines[j]);
-      if (cand.length >= 2) parts.add(cand);
-    }
-
-    final toks = parts.join(' ').toUpperCase()
-        .split(RegExp(r'\s+'))
-        .where((w) => w.length >= 2 && !_stop.contains(w))
-        .toList();
-    if (toks.isEmpty) return null;
-    return toks.take(4).join(' ');
-  }
-
-  /// Lee un PASAPORTE por su MRZ (2 líneas al pie). Devuelve número + nombre.
-  /// Línea 1: P<BOLQUIROZ<GAINZA<<LUCAS<JOSUE<<<...
-  /// Línea 2: AB1234567 <número de documento al inicio>.
+  /// Pasaporte por su MRZ (2 líneas al pie) o por etiquetas.
   static CarnetData parsePasaporte(String texto) {
     final up = texto.toUpperCase();
+    final nombre = _nombreMrz(texto) ?? _nombreEtiquetas(texto) ?? _nombreAntiguo(texto);
     String? numero;
-    String? nombre;
-
-    // Nombre por MRZ (apellidos<<nombres).
-    final mrz = RegExp(r'P[<K][A-Z<]{0,3}([A-Z]+(?:<[A-Z]+)*)<<([A-Z<]+)').firstMatch(up.replaceAll(' ', ''));
-    if (mrz != null) {
-      final ape = mrz.group(1)!.replaceAll('<', ' ').trim();
-      final nom = mrz.group(2)!.replaceAll('<', ' ').trim();
-      if (ape.isNotEmpty && nom.isNotEmpty) nombre = _limpiarNombre('$nom $ape');
-    }
-    // Nombre por etiquetas si no hubo MRZ.
-    if (nombre == null) {
-      final data = parseCarnet(texto);
-      nombre = data.nombre;
-    }
-
-    // Número de documento: en la 2da línea del MRZ (primeros 6-9 caracteres) o
-    // una etiqueta "Pasaporte No / Passport No".
     final et = RegExp(r'(?:PASAPORTE|PASSPORT|DOCUMENT[O]?)\s*(?:N[O°º.]*|NO|#)?\s*[:.]?\s*([A-Z0-9]{6,9})').firstMatch(up);
     if (et != null) numero = et.group(1);
-    if (numero == null) {
-      // Buscar una corrida alfanumérica típica de pasaporte (empieza por letra).
-      final m = RegExp(r'\b([A-Z]{1,2}\d{6,7})\b').firstMatch(up.replaceAll(' ', ''));
-      if (m != null) numero = m.group(1);
-    }
-    if (numero == null) {
-      // Cualquier corrida de 7-9 dígitos como respaldo.
-      final m = RegExp(r'(?<!\d)(\d{7,9})(?!\d)').firstMatch(up);
-      if (m != null) numero = m.group(1);
-    }
+    numero ??= RegExp(r'\b([A-Z]{1,2}\d{6,7})\b').firstMatch(up.replaceAll(' ', ''))?.group(1);
+    numero ??= RegExp(r'(?<!\d)(\d{7,9})(?!\d)').firstMatch(up)?.group(1);
     return CarnetData(numero, nombre);
-  }
-
-  static bool _pareceNombre(String s) {
-    final u = s.toUpperCase();
-    if (u.length < 6) return false;
-    if (!RegExp(r'^[A-ZÁÉÍÓÚÑ ]+$').hasMatch(u)) return false;
-    if (s.trim().split(RegExp(r'\s+')).length < 2) return false;
-    const bloqueadas = ['SANTA', 'NACIDO', 'DOMICILIO', 'BOLIVIA', 'CERTIFICA', 'SERVICIO', 'IDENTIFICACION', 'PADRE', 'MADRE'];
-    for (final b in bloqueadas) {
-      if (u.contains(b)) return false;
-    }
-    return true;
   }
 
   static String _titulo(String s) => s
       .split(' ')
       .where((w) => w.isNotEmpty)
-      .map((w) => w[0].toUpperCase() + w.substring(1).toLowerCase())
+      .map((w) => _particulas.contains(w) && w.length <= 3 && w != 'SAN'
+          ? w.toLowerCase()
+          : w[0] + w.substring(1).toLowerCase())
       .join(' ');
 }

@@ -11,7 +11,7 @@ import '../services/dvr.dart';
 import '../services/notifications_service.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
-import 'camera_screen.dart';
+import '../services/camara.dart';
 
 class RondaScreen extends StatefulWidget {
   const RondaScreen({super.key});
@@ -33,6 +33,12 @@ class _RondaScreenState extends State<RondaScreen> {
   int get _min => AppState.instance.rondaFotos;
 
   @override
+  void dispose() {
+    _obs.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     _cargarPuntos();
@@ -47,8 +53,7 @@ class _RondaScreenState extends State<RondaScreen> {
   }
 
   Future<void> _escanearPunto() async {
-    final res = await Navigator.push<List<String>>(
-        context, MaterialPageRoute(builder: (_) => const CameraScreen(multi: false)));
+    final res = await Camara.tomar(context, multi: false);
     if (res == null || res.isEmpty) return;
     final raw = await Dvr.leerQr(res.first);
     if (!mounted) return;
@@ -68,10 +73,7 @@ class _RondaScreenState extends State<RondaScreen> {
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
   Future<void> _tomarFotos() async {
-    final res = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(builder: (_) => CameraScreen(multi: true, minFotos: _min, album: 'OSIRIS Rondas')),
-    );
+    final res = await Camara.tomar(context, multi: true, minFotos: _min, album: 'OSIRIS Rondas');
     if (res != null && res.isNotEmpty) setState(() => _fotos.addAll(res));
   }
 
@@ -245,7 +247,7 @@ class _RondaScreenState extends State<RondaScreen> {
             style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
             onPressed: _tomarFotos,
             icon: const Icon(Icons.camera_alt),
-            label: Text('Abrir cámara - tomar fotos (${_fotos.length}/$_min)'),
+            label: Text('Tomar fotos (${_fotos.length}/$_min)'),
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6),
@@ -262,7 +264,7 @@ class _RondaScreenState extends State<RondaScreen> {
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(10),
-                      child: Image.file(File(_fotos[i]), width: 92, height: 92, fit: BoxFit.cover),
+                      child: Image.file(File(_fotos[i]), width: 92, height: 92, fit: BoxFit.cover, cacheWidth: 276),
                     ),
                     Positioned(
                       right: 0, top: 0,

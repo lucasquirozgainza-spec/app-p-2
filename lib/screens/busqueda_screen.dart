@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
@@ -26,11 +27,27 @@ class _BusquedaScreenState extends State<BusquedaScreen> {
   final _q = TextEditingController();
   List<_Resultado> _res = [];
   bool _buscando = false;
+  Timer? _espera;
+  int _token = 0; // descarta resultados de búsquedas viejas
+
+  @override
+  void dispose() {
+    _espera?.cancel();
+    _q.dispose();
+    super.dispose();
+  }
+
+  /// Espera a que el guardia deje de escribir (300 ms) antes de buscar.
+  void _alEscribir(String q) {
+    _espera?.cancel();
+    _espera = Timer(const Duration(milliseconds: 300), () => _buscar(q));
+  }
 
   Future<void> _buscar(String q) async {
     q = q.trim();
+    final token = ++_token;
     if (q.length < 2) {
-      setState(() => _res = []);
+      setState(() { _res = []; _buscando = false; });
       return;
     }
     setState(() => _buscando = true);
@@ -39,21 +56,30 @@ class _BusquedaScreenState extends State<BusquedaScreen> {
     final like = '%$q%';
     final out = <_Resultado>[];
 
-    final props = await db.query('propietarios',
-        where: 'edificio=? AND (depto LIKE ? OR copropietario LIKE ? OR inquilino LIKE ? OR placa LIKE ? OR vehiculo LIKE ?)',
-        whereArgs: [ed, like, like, like, like, like],
-        limit: 30);
+    // Las 4 búsquedas EN PARALELO.
+    final r = await Future.wait([
+      db.query('propietarios',
+          where: 'edificio=? AND (depto LIKE ? OR copropietario LIKE ? OR inquilino LIKE ? OR placa LIKE ? OR vehiculo LIKE ?)',
+          whereArgs: [ed, like, like, like, like, like],
+          limit: 30),
+      db.query('vehiculos',
+          where: 'edificio=? AND (placa LIKE ? OR nro_parqueo LIKE ? OR depto LIKE ? OR marca LIKE ? OR modelo LIKE ? OR propietario LIKE ?)',
+          whereArgs: [ed, like, like, like, like, like, like], limit: 30),
+      db.query('residentes', where: 'edificio=? AND nombre LIKE ?', whereArgs: [ed, like], limit: 20),
+      db.query('visitas',
+          where: 'edificio=? AND (nombre_visita LIKE ? OR ci LIKE ? OR placa LIKE ?)',
+          whereArgs: [ed, like, like, like], orderBy: 'id DESC', limit: 20),
+    ]);
+    if (!mounted || token != _token) return; // llegó una búsqueda más nueva
+    final props = r[0], vehs = r[1], resis = r[2], vis = r[3];
     for (final p in props) {
       out.add(_Resultado('Propietario', p['copropietario']?.toString() ?? '—',
           'Depto ${p['depto']} · ${p['telefono'] ?? ''}', Icons.people,
           onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => PropietarioDetalle(prop: p, onChanged: () {})))));
+              MaterialPageRoute(builder: (_) => PropietarioDetalle(prop: Map<String, dynamic>.from(p), onChanged: () {})))));
     }
 
     // Vehiculos: por placa, nro de parqueo, depto, marca/modelo, dueño.
-    final vehs = await db.query('vehiculos',
-        where: 'edificio=? AND (placa LIKE ? OR nro_parqueo LIKE ? OR depto LIKE ? OR marca LIKE ? OR modelo LIKE ? OR propietario LIKE ?)',
-        whereArgs: [ed, like, like, like, like, like, like], limit: 30);
     for (final v in vehs) {
       final parq = (v['nro_parqueo']?.toString() ?? '').trim();
       out.add(_Resultado(
@@ -65,22 +91,16 @@ class _BusquedaScreenState extends State<BusquedaScreen> {
               MaterialPageRoute(builder: (_) => VehiculoDetalle(veh: v)))));
     }
 
-    final resis = await db.query('residentes',
-        where: 'edificio=? AND nombre LIKE ?', whereArgs: [ed, like], limit: 20);
     for (final r in resis) {
       out.add(_Resultado('Residente', r['nombre']?.toString() ?? '—',
           'Depto ${r['depto']}', Icons.person_outline));
     }
 
-    final vis = await db.query('visitas',
-        where: 'edificio=? AND (nombre_visita LIKE ? OR ci LIKE ? OR placa LIKE ?)',
-        whereArgs: [ed, like, like, like], orderBy: 'id DESC', limit: 20);
     for (final v in vis) {
       out.add(_Resultado('Visita', v['nombre_visita']?.toString() ?? '—',
           'Depto ${v['depto']} · ${v['estado']}', Icons.badge));
     }
 
-    if (!mounted) return;
     setState(() {
       _res = out;
       _buscando = false;
@@ -104,13 +124,23 @@ class _BusquedaScreenState extends State<BusquedaScreen> {
             focusedBorder: InputBorder.none,
             filled: false,
           ),
-          onChanged: _buscar,
+          onChanged: _alEscribir,
         ),
       ),
-      body: _buscando
+      body: (_buscando && _res.isEmpty)
           ? const Center(child: CircularProgressIndicator())
           : _res.isEmpty
-              ? const Center(child: Text('Escriba para buscar en todo el edificio'))
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      _q.text.trim().length >= 2
+                          ? 'Sin resultados para «${_q.text.trim()}»'
+                          : 'Escribe para buscar en todo el edificio',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.black54)),
+                  ),
+                )
               : ListView.builder(
                   padding: const EdgeInsets.all(12),
                   itemCount: _res.length,
