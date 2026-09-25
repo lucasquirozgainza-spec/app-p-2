@@ -4,9 +4,6 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
-import '../services/estructura.dart';
-import '../services/guardias_repo.dart';
-import '../services/sesion.dart';
 import '../services/device_context.dart';
 import '../services/turnos.dart';
 import '../theme.dart';
@@ -45,26 +42,23 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
   Future<void> _load() async {
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
-    // Celular vinculado: los turnos del sistema anterior o de guardias
-    // desactivados se cierran solos (sin salida) y solo se listan los de
-    // guardias de ESTA unidad: un guardia nuevo no puede cerrar el turno de otro.
-    await GuardiasRepo.cerrarTurnosHuerfanos();
-    final rows = Sesion.vinculado
-        ? await db.query('ingreso_turno',
-            where: 'activo=1 AND edificio=? AND guard_uuid IS NOT NULL'
-                '${Sesion.esGuardia ? ' AND unit_id=?' : ''}',
-            whereArgs: [ed, if (Sesion.esGuardia) Sesion.unitId],
-            orderBy: 'id DESC')
-        // Traer turnos activos del edificio (tolerando edificio vacío/nulo).
-        : await db.query('ingreso_turno',
-            where: "activo=1 AND (edificio=? OR edificio IS NULL OR edificio='')",
-            whereArgs: [ed], orderBy: 'id DESC');
+    // Turnos abiertos de guardias dados de baja o eliminados: se cierran solos
+    // (quedan "sin salida" en su historial) para que un guardia nuevo no pueda
+    // cerrarlos ni heredar sus horas.
+    try {
+      await db.rawUpdate('UPDATE ingreso_turno SET activo=0 WHERE activo=1 AND guardia_id IS NOT NULL AND '
+          '(guardia_id NOT IN (SELECT id FROM usuarios) OR guardia_id IN (SELECT id FROM usuarios WHERE activo=0))');
+    } catch (_) {}
+    // Traer turnos activos del edificio (tolerando edificio vacío/nulo).
+    final rows = await db.query('ingreso_turno',
+        where: "activo=1 AND (edificio=? OR edificio IS NULL OR edificio='')",
+        whereArgs: [ed], orderBy: 'id DESC');
     final list = [for (final r in rows) Map<String, dynamic>.from(r)];
     // Garantizar que el turno del operador actual de ESTE equipo aparezca
     // siempre, aunque su edificio no coincida (evita "no hay guardia activo").
     final s = AppState.instance;
     final tid = s.turnoActivoId;
-    if (tid != null && !Sesion.vinculado && !list.any((g) => g['id'] == tid)) {
+    if (tid != null && !list.any((g) => g['id'] == tid)) {
       final extra = await db.query('ingreso_turno', where: 'id=?', whereArgs: [tid]);
       if (extra.isNotEmpty) {
         list.insert(0, Map<String, dynamic>.from(extra.first));
@@ -108,8 +102,11 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     Cloud.evento('Doblar turno',
         guardia: sel['guardia_nombre'] as String?,
         edificio: _edificioDe(sel),
-        guardId: sel['guard_uuid'] as String?,
-        detalle: {'nivel': nivel, 'turno_ref': Turnos.ref(Cloud.deviceId, sel['id'])});
+        detalle: {
+          'nivel': nivel,
+          'turno_ref': Turnos.ref(Cloud.deviceId, sel['id']),
+          if (sel['guard_uuid'] != null) 'guard_ci': sel['guard_uuid'],
+        });
     if (!mounted) return;
     setState(() => sel['nivel'] = nivel);
     TopToast.show(context, 'Turno de $nivel h registrado', color: AppColors.verde, icon: Icons.check_circle);
@@ -173,8 +170,8 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     Cloud.evento('Salida de turno',
         guardia: sel['guardia_nombre'] as String?,
         edificio: _edificioDe(sel),
-        guardId: sel['guard_uuid'] as String?,
         detalle: {
+          if (sel['guard_uuid'] != null) 'guard_ci': sel['guard_uuid'], // CI del que sale
           'nivel': nivel, // turno DECLARADO por el guardia (12/24/36)
           'turno_ref': Turnos.ref(Cloud.deviceId, sel['id']),
           'ts': ahora.toUtc().toIso8601String(),
@@ -200,13 +197,11 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
         'edificio': s.edificioId,
         'created_at': DateTime.now().toIso8601String(),
       });
-      final guard = sel['guard_uuid'] as String?;
-      final bid = Sesion.buildingId ?? Estructura.idEdificio(s.edificioId);
-      if (guard != null && bid != null) {
-        Cloud.advertencia(guardId: guard, buildingId: bid, motivo: 'Tarjetas sin devolver',
-            descripcion: '${pend.length} tarjeta(s) sin devolver al finalizar el turno (deptos: $deptos).',
-            registradoPor: 'Sistema (fin de turno)');
-      }
+      Cloud.evento('Advertencia', guardia: sel['guardia_nombre'] as String?, detalle: {
+        'tipo': 'tarjeta_turno',
+        'motivo': '${pend.length} tarjeta(s) sin devolver (deptos: $deptos)',
+        if (sel['guard_uuid'] != null) 'guard_ci': sel['guard_uuid'],
+      });
       if (mounted) {
         await showDialog(
           context: context,

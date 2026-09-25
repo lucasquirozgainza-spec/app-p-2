@@ -8,8 +8,6 @@ import 'services/retention.dart';
 import 'services/notifications_service.dart';
 import 'services/camara.dart';
 import 'services/cloud.dart';
-import 'services/estructura.dart';
-import 'services/sesion.dart';
 import 'services/config_sync.dart';
 import 'screens/home_screen.dart';
 
@@ -59,12 +57,6 @@ class _BootState extends State<_Boot> {
     // El id del celular ANTES del primer latido/evento (si no, se enviaban
     // con el id genérico "device" y se mezclaban los celulares).
     try { await Cloud.init(); } catch (_) {}
-    // Vínculo del celular con su edificio/unidad (si ya fue vinculado).
-    try {
-      await Sesion.init();
-      await Estructura.init();
-      await AppState.instance.aplicarVinculo();
-    } catch (_) {}
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -77,11 +69,6 @@ class _BootState extends State<_Boot> {
     // Fotos de la cámara nativa que quedaron sin guardar porque Android
     // cerró la app por falta de memoria.
     try { await Camara.recuperarPerdidas(); } catch (_) {}
-    try {
-      await Sesion.revisar(forzar: true);
-      await AppState.instance.aplicarVinculo();
-      await Estructura.actualizar();
-    } catch (_) {}
     try {
       await Cloud.heartbeat();
       await Cloud.vaciarCola(); // lo registrado sin señal

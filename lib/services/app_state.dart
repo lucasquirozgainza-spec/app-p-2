@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
-import 'sesion.dart';
 import 'turnos.dart';
 
 /// Estado global. La app queda SIEMPRE abierta (sin login diario).
@@ -16,7 +15,7 @@ class AppState {
   String? userNombre;
   String? userCargo;
   String? userRol;
-  String? guardUuid; // id ÚNICO del guardia en la nube (celular vinculado)
+  String? guardCi; // CI del guardia de turno: su identificador único
 
   // Turno activo del operador
   int? turnoActivoId;
@@ -131,37 +130,16 @@ class AppState {
     } catch (_) {
       torres = [];
     }
+    // Las torres/bloques que definió el admin se sincronizan con la
+    // configuración del edificio (todos los celulares ven las mismas).
+    final mt = modulos['torres'];
+    if (mt is List) torres = [for (final x in mt) if ('$x'.trim().isNotEmpty) '$x'.trim()];
   }
 
   Future<void> setEdificio(String id) async {
-    // Un celular de guardia vinculado pertenece a UN edificio: no se cambia.
-    if (Sesion.esGuardia && Sesion.buildingCode != null && id != Sesion.buildingCode) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('edificio_id', id);
     await loadEdificio();
-  }
-
-  /// Celular de guardia vinculado: su edificio y su unidad los define la
-  /// base (no se eligen a mano). Crea el edificio en la base local si no
-  /// existía y lo deja activo; la etiqueta del celular es su unidad.
-  Future<void> aplicarVinculo() async {
-    if (!Sesion.esGuardia) return;
-    final code = Sesion.buildingCode;
-    if (code == null || code.isEmpty) return;
-    try {
-      final db = await DB.instance.database;
-      await db.rawInsert(
-          'INSERT OR IGNORE INTO edificios (id, nombre, torres, modulos, cant_deptos, cant_pisos) '
-          'VALUES (?,?,?,?,0,0)',
-          [code, Sesion.buildingName ?? code, '[]', '{}']);
-    } catch (_) {}
-    final prefs = await SharedPreferences.getInstance();
-    if (edificioId != code) {
-      await prefs.setString('edificio_id', code);
-      await loadEdificio();
-    }
-    final unidad = Sesion.unitName ?? '';
-    if (unidad.isNotEmpty && bloque != unidad) await setBloque(unidad);
   }
 
   Future<void> setNotifConfig({
@@ -252,7 +230,7 @@ class AppState {
   /// Selecciona el guardia operador (al iniciar turno). Se guarda en el
   /// dispositivo para que el turno siga abierto aunque se cierre la app.
   void setOperador({int? id, String? nombre, String? cargo, String? rol, int? turnoId, String? guard}) {
-    guardUuid = guard;
+    guardCi = guard;
     userId = id;
     userNombre = nombre;
     userCargo = cargo;
@@ -262,7 +240,7 @@ class AppState {
   }
 
   void clearOperador() {
-    guardUuid = null;
+    guardCi = null;
     userId = null;
     userNombre = null;
     userCargo = null;
@@ -279,7 +257,7 @@ class AppState {
       await prefs.setString('op_nombre', userNombre ?? '');
       await prefs.setString('op_cargo', userCargo ?? '');
       await prefs.setString('op_rol', userRol ?? '');
-      await prefs.setString('op_guard', guardUuid ?? '');
+      await prefs.setString('op_guard', guardCi ?? '');
     } else {
       for (final k in ['op_turno', 'op_uid', 'op_nombre', 'op_cargo', 'op_rol', 'op_guard']) {
         await prefs.remove(k);
@@ -301,7 +279,7 @@ class AppState {
     userCargo = prefs.getString('op_cargo');
     userRol = prefs.getString('op_rol');
     final g = prefs.getString('op_guard');
-    guardUuid = (g == null || g.isEmpty) ? null : g;
+    guardCi = (g == null || g.isEmpty) ? null : g;
     turnoActivoId = turno;
   }
 

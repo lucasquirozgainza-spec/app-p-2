@@ -3,9 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import 'app_state.dart';
 import 'cloud.dart';
-import 'estructura.dart';
-import 'guardias_repo.dart';
-import 'sesion.dart';
+import 'guardias_service.dart';
 
 /// Sincroniza la configuración (módulos) del edificio desde la nube. El admin
 /// la publica con Cloud.pushConfig y los otros dispositivos del mismo edificio
@@ -65,15 +63,7 @@ class ConfigSync {
     _syncGuardiasEnCurso = true;
     try {
       final ed = AppState.instance.edificioId;
-      // Celular vinculado: los guardias vienen de la tabla guards (con id
-      // único). El sistema anterior por NOMBRE ya no se usa (mezclaba
-      // guardias entre torres y hacía que uno nuevo heredara lo de otro).
-      if (Sesion.vinculado) {
-        final bid = Estructura.idEdificio(ed);
-        if (bid != null) await GuardiasRepo.delEdificio(bid);
-        _ultimaSyncGuardias = ahora;
-        return;
-      }
+
       final res = await Future.wait([
         // lanzar: si UNA de las dos falla no se aplica nada (con solo las
         // altas, un guardia dado de baja volvía a aparecer).
@@ -81,11 +71,27 @@ class ConfigSync {
         Cloud.eventos(tipo: 'GuardiaBaja', edificio: ed, limit: 300, lanzar: true),
       ]);
       _ultimaSyncGuardias = ahora;
-      // Último evento por nombre (clave en minúsculas).
+      // Guardias con CI (su identificador): el último evento de cada CI gana.
+      final porCi = <String, Map<String, dynamic>>{};
+      for (final e in [...res[0], ...res[1]]) {
+        final det = e['detalle'];
+        final d = det is Map ? det : const {};
+        final ci = GuardiasService.limpiarCi('${d['ci'] ?? ''}');
+        if (ci.isEmpty) continue;
+        final t = Cloud.horaEvento(e);
+        if (t == null) continue;
+        final prev = porCi[ci];
+        if (prev == null || t.isAfter(prev['_t'] as DateTime)) porCi[ci] = {...e, '_t': t, '_det': d};
+      }
+      for (final e in porCi.values) {
+        await GuardiasService.aplicarRemoto(ed, e['_det'] as Map, baja: e['tipo'] == 'GuardiaBaja');
+      }
+      // Sistema anterior (sin CI): último evento por nombre.
       final ultimo = <String, Map<String, dynamic>>{};
       for (final e in [...res[0], ...res[1]]) {
         final det = e['detalle'];
         final d = det is Map ? det : const {};
+        if ('${d['ci'] ?? ''}'.trim().isNotEmpty) continue;
         final nombre = (d['nombre'] ?? '').toString().trim();
         if (nombre.isEmpty) continue;
         final k = nombre.toLowerCase();
@@ -115,7 +121,7 @@ class ConfigSync {
             // Solo el de este edificio: los usuarios sin edificio son
             // compartidos por todos los edificios del celular.
             batch.delete('usuarios',
-                where: "LOWER(nombre)=? AND rol!='admin' AND edificio=?",
+                where: "LOWER(nombre)=? AND rol!='admin' AND edificio=? AND guard_uuid IS NULL",
                 whereArgs: [k, ed]);
           }
         } else if (!existentes.contains(k)) {

@@ -8,8 +8,6 @@ import 'package:image/image.dart' as img;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
-import 'estructura.dart';
-import 'sesion.dart';
 import 'app_state.dart';
 import 'img_util.dart';
 
@@ -50,17 +48,9 @@ class Cloud {
         'Accept': 'application/json',
       };
 
-  /// Encabezados de la base: con la sesión del celular vinculado (así la
-  /// base aplica sus políticas por edificio); sin vincular, la clave pública.
-  static Map<String, String> get _h => {
-        ..._hAnon,
-        if (Sesion.token != null) 'Authorization': 'Bearer ${Sesion.token}',
-      };
+  static Map<String, String> get _h => _hAnon;
 
-  static Future<Map<String, String>> _hdr() async {
-    await Sesion.vigente();
-    return _h;
-  }
+  static Future<Map<String, String>> _hdr() async => _hAnon;
 
   static Future<void> init() async {
     // ID ÚNICO por instalación. OJO: androidInfo.id es el Build.ID del sistema
@@ -126,41 +116,28 @@ class Cloud {
   /// - ts es la hora en que pasó, aunque se suba horas después (created_at
   ///   en la nube es la hora de SUBIDA).
   /// [edificio]: por defecto el activo de este celular.
-  /// [guardId]: guardia al que pertenece el registro (por defecto el que está
-  /// de turno en este celular). Con el celular vinculado, cada evento lleva
-  /// además building_id / unit_id / guard_id: así las horas y los registros
-  /// de un guardia se calculan SOLO con lo suyo, y la base puede separar
-  /// edificios con sus políticas.
+  /// Cada registro lleva el CI del guardia de turno (`guard_ci`): así el
+  /// historial y las horas de cada guardia salen SOLO de lo suyo.
   static Future<void> evento(String tipo,
-      {String? guardia, String? edificio, String? guardId, Map<String, dynamic>? detalle}) async {
+      {String? guardia, String? edificio, Map<String, dynamic>? detalle}) async {
     if (AppState.instance.soloLocal) return; // edificio sin conexión
     final ed = edificio ?? AppState.instance.edificioId;
+    // Altas/bajas/config no son registros de un guardia de turno.
+    final ci = const {'Guardia', 'GuardiaBaja', 'Config', 'AdminPass'}.contains(tipo)
+        ? null
+        : AppState.instance.guardCi;
     await _encolar({
       'tipo': tipo,
       'edificio': ed,
       'guardia': guardia ?? AppState.instance.userNombre,
       // Se adjunta el bloque de este celular para distinguir el origen
-      // dentro del mismo edificio (los dos bloques cruzan datos igual).
+      // dentro del mismo edificio.
       'detalle': {
+        if (ci != null && ci.isNotEmpty) 'guard_ci': ci,
         ...(detalle ?? const {}),
         if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
       },
-      ..._contexto(ed, guardId ?? AppState.instance.guardUuid),
     });
-  }
-
-  /// Columnas de contexto (solo con el celular vinculado: sin la migración
-  /// de la base esas columnas no existen).
-  static Map<String, dynamic> _contexto(String edificio, String? guardId) {
-    if (!Sesion.vinculado) return const {};
-    final bid = Sesion.esGuardia ? Sesion.buildingId : Estructura.idEdificio(edificio);
-    if (bid == null) return const {};
-    return {
-      'building_id': bid,
-      if (Sesion.esGuardia) 'unit_id': Sesion.unitId,
-      // El guardia debe ser de ESE edificio (la base lo verifica).
-      if (guardId != null && guardId.isNotEmpty) 'guard_id': guardId,
-    };
   }
 
   static int _seq = 0;
@@ -173,28 +150,6 @@ class Cloud {
     det['uid'] = uid;
     det['ts'] ??= DateTime.now().toUtc().toIso8601String();
     await _guardarEnCola('eventos', uid, {...fila, 'detalle': det, 'device_id': deviceId});
-  }
-
-  /// Advertencia de un guardia (tabla guard_warnings). Pasa por la cola.
-  static Future<void> advertencia({
-    required String guardId,
-    required String buildingId,
-    required String motivo,
-    String? descripcion,
-    String? registradoPor,
-    DateTime? fecha,
-  }) async {
-    if (AppState.instance.soloLocal || !Sesion.vinculado) return;
-    final uid = nuevoUid();
-    await _guardarEnCola('guard_warnings', uid, {
-      'uid': uid,
-      'guard_id': guardId,
-      'building_id': buildingId,
-      'occurred_at': (fecha ?? DateTime.now()).toUtc().toIso8601String(),
-      'reason': motivo,
-      if (descripcion != null && descripcion.trim().isNotEmpty) 'description': descripcion.trim(),
-      'created_by': registradoPor ?? AppState.instance.userNombre ?? (Sesion.esAdmin ? 'Administrador' : 'Guardia'),
-    });
   }
 
   static Future<void> _guardarEnCola(String tabla, String uid, Map<String, dynamic> fila) async {
@@ -301,7 +256,6 @@ class Cloud {
       'edificio': edificio,
       'guardia': AppState.instance.userNombre ?? 'Admin',
       'detalle': {'modulos': modulosJson},
-      ..._contexto(edificio, null),
     });
   }
 
@@ -377,9 +331,6 @@ class Cloud {
         'edificio': s.edificioId,
         'en_turno': s.turnoActivoId != null,
         'last_seen': DateTime.now().toUtc().toIso8601String(),
-        if (Sesion.vinculado && Estructura.idEdificio(s.edificioId) != null)
-          'building_id': Sesion.esGuardia ? Sesion.buildingId : Estructura.idEdificio(s.edificioId),
-        if (Sesion.esGuardia) 'unit_id': Sesion.unitId,
       };
       if (lat != null && lng != null) {
         body['lat'] = lat;
@@ -469,24 +420,47 @@ class Cloud {
     }
   }
 
-  /// Registros del mes que pertenecen a guardias (con guard_id) de un
-  /// edificio: rondas, incidentes, visitas, etc. Solo columnas livianas.
-  static Future<List<Map<String, dynamic>>> registrosGuardiasMes(String edificio, DateTime mes,
-      {String? guardId, bool completos = false}) async {
+  /// Registros del mes de UN guardia (por su CI) en un edificio: turnos,
+  /// rondas, incidentes, visitas, advertencias...
+  static Future<List<Map<String, dynamic>>> registrosGuardia(String edificio, String ci, DateTime mes) async {
     if (AppState.instance.soloLocal) return [];
     try {
       final desde = DateTime(mes.year, mes.month).toUtc().toIso8601String();
-      final hasta = DateTime(mes.year, mes.month + 1).toUtc().toIso8601String();
+      final hasta = DateTime(mes.year, mes.month + 1).add(const Duration(days: 1)).toUtc().toIso8601String();
       return await _paginas([
-        guardId != null ? 'guard_id=eq.$guardId' : 'guard_id=not.is.null',
+        'detalle->>guard_ci=eq.${Uri.encodeComponent(ci)}',
         _filtroEdificio(edificio),
         'created_at=gte.${Uri.encodeComponent(desde)}',
         'created_at=lt.${Uri.encodeComponent(hasta)}',
-      ], select: completos ? '*' : 'id,tipo,guard_id,created_at');
+      ]);
     } catch (e) {
       lastError = 'registros: $e';
       return [];
     }
+  }
+
+  /// Cantidad de registros por guardia (CI) y tipo en el mes (para tarjetas).
+  static Future<Map<String, Map<String, int>>> conteosGuardias(String edificio, DateTime mes) async {
+    final out = <String, Map<String, int>>{};
+    if (AppState.instance.soloLocal) return out;
+    try {
+      final desde = DateTime(mes.year, mes.month).toUtc().toIso8601String();
+      final hasta = DateTime(mes.year, mes.month + 1).toUtc().toIso8601String();
+      final l = await _paginas([
+        'detalle->>guard_ci=not.is.null',
+        _filtroEdificio(edificio),
+        'created_at=gte.${Uri.encodeComponent(desde)}',
+        'created_at=lt.${Uri.encodeComponent(hasta)}',
+      ], select: 'id,tipo,created_at,ci:detalle->>guard_ci');
+      for (final e in l) {
+        final m = out.putIfAbsent('${e['ci']}', () => {});
+        final t = '${e['tipo']}';
+        m[t] = (m[t] ?? 0) + 1;
+      }
+    } catch (e) {
+      lastError = 'conteos: $e';
+    }
+    return out;
   }
 
   /// Lee TODAS las filas de una consulta, de a 1000 (el servidor no entrega
@@ -553,15 +527,7 @@ class Cloud {
     }
   }
 
-  /// Filtro por edificio. Un celular de guardia vinculado filtra por el id
-  /// del edificio (lo que la base le permite ver); el admin, por el código,
-  /// que incluye también el historial anterior a la migración.
-  static String _filtroEdificio(String codigo) {
-    if (Sesion.esGuardia && Sesion.buildingId != null) {
-      return 'building_id=eq.${Sesion.buildingId}';
-    }
-    return 'edificio=eq.${Uri.encodeComponent(codigo)}';
-  }
+  static String _filtroEdificio(String codigo) => 'edificio=eq.${Uri.encodeComponent(codigo)}';
 
   /// Presencia de los celulares. Con [edificio], solo los de ese edificio
   /// (un guardia no descarga los datos ni la ubicación de otros edificios).

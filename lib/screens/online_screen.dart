@@ -1,25 +1,20 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
-import '../db/database_helper.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
-import '../services/estructura.dart';
 import '../services/pdf_export.dart';
 import '../theme.dart';
-import 'config_screen.dart';
+import '../widgets/evento_tile.dart';
 
-/// Actividad en línea. Con [soloEdificio]=true (guardias) solo se ve la
-/// actividad del edificio actual, para que los guardias de los distintos
-/// bloques crucen información. El admin (soloEdificio=false) ve TODOS los
-/// edificios.
+/// ACTIVIDAD DEL EDIFICIO: siempre el edificio elegido en Configuración
+/// (si está LIMCO II, solo LIMCO II; si está Millennial, solo Millennial).
+/// Un filtro por tipo, la lista de a poco (con "Ver más") y quién está en línea.
 class OnlineScreen extends StatefulWidget {
+  /// Se mantiene por compatibilidad: la pantalla SIEMPRE usa el edificio actual.
   final bool soloEdificio;
-  final String? edificioInicial; // admin: abrir ya filtrado en este edificio
-  const OnlineScreen({super.key, this.soloEdificio = false, this.edificioInicial});
+  const OnlineScreen({super.key, this.soloEdificio = true});
   @override
   State<OnlineScreen> createState() => _OnlineScreenState();
 }
@@ -27,29 +22,32 @@ class OnlineScreen extends StatefulWidget {
 class _OnlineScreenState extends State<OnlineScreen> {
   List<Map<String, dynamic>> _presencia = [];
   List<Map<String, dynamic>> _eventos = [];
-  List<Map<String, dynamic>> _turnos = [];
-  List<Map<String, dynamic>> _edificios = []; // para el filtro del admin
-  String? _edAdmin; // edificio seleccionado por el admin (null = todos)
   String? _filtro; // null = todos
+  int _limite = 40;
   bool _loading = true;
-
-  // Solo tipos que la app realmente publica.
-  static const _tipos = ['Ingreso de turno', 'Salida de turno', 'Doblar turno', 'Visita', 'Ronda', 'Incidente',
-      'Encomienda', 'Hospedaje', 'Advertencia', 'Guardia sin uniforme'];
-  bool _cargando = false; // evita cargas superpuestas (red lenta + timer)
-
+  bool _cargando = false;
+  bool _pendiente = false;
   Timer? _auto;
+
+  static const _tipos = {
+    'Visita': 'Visitas',
+    'Ronda': 'Rondas',
+    'Incidente': 'Incidentes',
+    'Ingreso de turno': 'Ingresos de turno',
+    'Salida de turno': 'Salidas de turno',
+    'Encomienda': 'Encomiendas',
+    'Hospedaje': 'Hospedajes',
+    'Advertencia': 'Advertencias',
+  };
+  static const _internos = <String>{'Config', 'AdminPass', 'Guardia', 'GuardiaBaja', 'Corrección de turno', 'Prueba de conexión'};
+
+  String get _ed => AppState.instance.edificioId;
 
   @override
   void initState() {
     super.initState();
-    if (!widget.soloEdificio) {
-      _edAdmin = widget.edificioInicial; // prefiltrado por edificio (opcional)
-      _cargarEdificios();
-    }
     _cargar();
-    // Actualiza solo cada 15 s (vinculación automática entre celulares).
-    _auto = Timer.periodic(const Duration(seconds: 15), (_) => _cargar(silencioso: true));
+    _auto = Timer.periodic(const Duration(seconds: 30), (_) => _cargar(silencioso: true));
   }
 
   @override
@@ -58,59 +56,24 @@ class _OnlineScreenState extends State<OnlineScreen> {
     super.dispose();
   }
 
-  Future<void> _cargarEdificios() async {
-    try {
-      final db = await DB.instance.database;
-      final eds = await db.query('edificios', orderBy: 'nombre');
-      if (!mounted) return;
-      setState(() => _edificios = eds);
-    } catch (_) {}
-  }
-
-  // Guardia: siempre su edificio. Admin: el edificio elegido (o todos).
-  String? get _edFiltro => widget.soloEdificio ? AppState.instance.edificioId : _edAdmin;
-
-  String get _tituloEd {
-    if (widget.soloEdificio) return AppState.instance.edificioNombre;
-    if (_edAdmin == null) return 'Todos los edificios';
-    final m = _edificios.firstWhere((e) => e['id'] == _edAdmin, orElse: () => const {});
-    return (m['nombre'] ?? _edAdmin).toString();
-  }
-
-  bool _pendiente = false;
-
   Future<void> _cargar({bool silencioso = false}) async {
-    // Si ya hay una carga en curso y el admin cambió el filtro, se repite al
-    // terminar (antes el pedido se perdía y quedaban los datos del filtro
-    // anterior bajo el nombre del nuevo edificio).
     if (_cargando) {
       if (!silencioso) _pendiente = true;
       return;
     }
     _cargando = true;
-    final ed = _edFiltro, tipo = _filtro;
-    if (!silencioso && mounted) setState(() => _loading = true);
+    final tipo = _filtro, limite = _limite, ed = _ed;
+    if (!silencioso && mounted) setState(() => _loading = _eventos.isEmpty);
     try {
-      // En PARALELO. Los turnos del mes (pesado) solo al abrir o al refrescar a
-      // mano, no en cada actualización automática de 15 s.
-      Cloud.heartbeat(); // en segundo plano, no bloquea la carga
-      final conTurnos = !widget.soloEdificio && (!silencioso || _turnos.isEmpty);
       final res = await Future.wait([
         Cloud.presencia(edificio: ed),
-        Cloud.eventos(tipo: tipo, edificio: ed),
-        conTurnos ? Cloud.eventosTurnoMes() : Future.value(_turnos),
+        Cloud.eventos(tipo: tipo, edificio: ed, limit: limite),
       ]);
-      final pres = res[0];
-      final evs = res[1];
-      // Eventos internos de sincronización no se muestran en la actividad.
-      evs.removeWhere((e) => e['tipo'] == 'Config' || e['tipo'] == 'AdminPass' || e['tipo'] == 'Guardia' || e['tipo'] == 'GuardiaBaja');
-      final turnos = res[2];
-      if (!mounted) return;
-      if (ed != _edFiltro || tipo != _filtro) return; // resultado de otro filtro
+      final evs = res[1]..removeWhere((e) => _internos.contains(e['tipo']));
+      if (!mounted || tipo != _filtro || ed != _ed) return; // resultado de otro filtro
       setState(() {
-        _presencia = pres;
+        _presencia = res[0];
         _eventos = evs;
-        _turnos = turnos;
         _loading = false;
       });
     } finally {
@@ -125,52 +88,42 @@ class _OnlineScreenState extends State<OnlineScreen> {
   }
 
   bool _online(Map<String, dynamic> p) {
-    try {
-      final ls = DateTime.parse(p['last_seen'].toString()).toUtc();
-      return DateTime.now().toUtc().difference(ls).inMinutes < 5;
-    } catch (_) {
-      return false;
-    }
+    final ls = DateTime.tryParse('${p['last_seen'] ?? ''}');
+    return ls != null && DateTime.now().toUtc().difference(ls.toUtc()).inMinutes < 5;
   }
 
-  /// SOLO descarga: genera (en segundo plano) y comparte el PDF. No borra nada.
   Future<void> _descargarPdf() async {
-    final ed = _edFiltro;
-    final titulo = _tituloEd;
+    final titulo = AppState.instance.edificioNombre;
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
     String? path;
     String? error;
     try {
-      // Descarga SOLO el tipo seleccionado (Ingreso, Incidente, Visita...).
-      final todos = await Cloud.eventos(tipo: _filtro, edificio: ed, limit: 1500);
-      final tituloPdf = _filtro == null ? titulo : '$titulo - $_filtro';
-      // El armado del PDF corre en un isolate: la app no se congela.
-      path = await PdfExport.actividadNube(todos, tituloPdf);
+      final todos = await Cloud.eventos(tipo: _filtro, edificio: _ed, limit: 1500);
+      todos.removeWhere((e) => _internos.contains(e['tipo']));
+      path = await PdfExport.actividadNube(todos, _filtro == null ? titulo : '$titulo - ${_tipos[_filtro]}');
     } catch (e) {
       error = '$e';
     }
     if (!mounted) return;
-    Navigator.pop(context); // cerrar spinner ANTES de compartir
-    if (path != null) {
+    Navigator.pop(context);
+    final p = path;
+    if (p != null) {
       try {
-        await Share.shareXFiles([XFile(path)], text: 'Actividad OSIRIS - $titulo');
+        await Share.shareXFiles([XFile(p)], text: 'Actividad OSIRIS - $titulo');
       } catch (_) {}
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el PDF: ${error ?? ''}')));
     }
   }
 
-  /// SOLO elimina: borra la actividad de la nube (rápido, sin generar PDF).
   Future<void> _eliminarNube() async {
-    final alcance = widget.soloEdificio ? 'de este edificio' : 'de TODOS los edificios';
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         icon: const Icon(Icons.delete_forever, color: AppColors.rojo, size: 38),
         title: const Text('Eliminar actividad de la nube'),
-        content: Text('Se borrará la actividad $alcance de la nube para liberar espacio. '
-            'Los registros locales de cada celular NO se tocan.\n\n'
-            'Sugerencia: descarga primero el PDF si quieres conservarla.'),
+        content: Text('Se borrará la actividad de ${AppState.instance.edificioNombre} de la nube. '
+            'Los registros de cada celular NO se tocan. Descarga antes el PDF si quieres conservarla.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(
@@ -183,9 +136,9 @@ class _OnlineScreenState extends State<OnlineScreen> {
     );
     if (ok != true || !mounted) return;
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    final borrado = await Cloud.borrarEventos(edificio: _edFiltro);
+    final borrado = await Cloud.borrarEventos(edificio: _ed);
     if (!mounted) return;
-    Navigator.pop(context); // cerrar spinner
+    Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(borrado ? 'Actividad eliminada de la nube.' : 'No se pudo eliminar: ${Cloud.lastError ?? ''}'),
         backgroundColor: borrado ? AppColors.verde : AppColors.rojo));
@@ -195,349 +148,122 @@ class _OnlineScreenState extends State<OnlineScreen> {
   Future<void> _abrirMapa(dynamic lat, dynamic lng) async {
     if (lat == null || lng == null) return;
     final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
-    try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
-  }
-
-  String _hace(String? iso) {
-    if (iso == null) return '';
     try {
-      final d = DateTime.parse(iso).toLocal();
-      return DateFormat('dd/MM HH:mm').format(d);
-    } catch (_) {
-      return '';
-    }
-  }
-
-  IconData _icono(String? tipo) {
-    switch (tipo) {
-      case 'Visita': return Icons.badge;
-      case 'Ronda': return Icons.directions_walk;
-      case 'Incidente': return Icons.warning_amber;
-      case 'Ingreso de turno': return Icons.login;
-      case 'Salida de turno': return Icons.logout;
-      case 'Encomienda': return Icons.inventory_2;
-      case 'Hospedaje': return Icons.hotel;
-      case 'Guardia sin uniforme': return Icons.checkroom;
-      case 'SOS': return Icons.sos;
-      case 'Doblar turno': return Icons.timelapse;
-      case 'Advertencia': return Icons.report_problem_outlined;
-      default: return Icons.event_note;
-    }
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!Cloud.enabled) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('En linea')),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text('No hay conexion a la nube en este momento.\n'
-                'Verifica tu internet e intenta de nuevo.',
-                textAlign: TextAlign.center),
-          ),
-        ),
-      );
-    }
-    final ed = AppState.instance.edificioId;
-    final enLinea = _presencia
-        .where(_online)
-        .where((p) {
-          if (widget.soloEdificio) return (p['edificio']?.toString() ?? '') == ed;
-          if (_edAdmin != null) return (p['edificio']?.toString() ?? '') == _edAdmin;
-          return true; // admin, todos
-        })
-        .toList();
+    final enLinea = _presencia.where(_online).toList();
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.soloEdificio ? 'Movimientos · ${AppState.instance.edificioNombre}' : _tituloEd,
-            maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Actividad del edificio', style: TextStyle(fontSize: 17)),
+          Text(AppState.instance.edificioNombre,
+              maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+        ]),
         actions: [
-          // Un solo menú (⋮) para no llenar la barra de iconos.
+          IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Descargar PDF', onPressed: _descargarPdf),
           PopupMenuButton<String>(
             onSelected: (v) async {
-              switch (v) {
-                case 'pdf':
-                  _descargarPdf();
-                  break;
-                case 'eliminar':
-                  _eliminarNube();
-                  break;
-                case 'config':
-                  Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => ConfigScreen(initialEdificio: _edAdmin)));
-                  break;
-                case 'probar':
-                  final r = await Cloud.probar();
-                  if (!mounted) return;
-                  await showDialog(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: const Text('Prueba de conexión a la nube'),
-                      content: SingleChildScrollView(child: SelectableText(r)),
-                      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
-                    ),
-                  );
-                  _cargar();
-                  break;
-                case 'refrescar':
-                  _cargar();
-                  break;
+              if (v == 'eliminar') _eliminarNube();
+              if (v == 'probar') {
+                final r = await Cloud.probar();
+                if (!mounted) return;
+                await showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Prueba de conexión'),
+                    content: SingleChildScrollView(child: SelectableText(r)),
+                    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+                  ),
+                );
               }
             },
             itemBuilder: (_) => [
-              const PopupMenuItem(value: 'pdf', child: ListTile(leading: Icon(Icons.picture_as_pdf), title: Text('Descargar PDF'))),
-              // Borrar la nube es solo del administrador (un guardia podía
-              // borrar el historial de todo el edificio).
-              if (AppState.instance.isAdmin)
-                const PopupMenuItem(value: 'eliminar', child: ListTile(leading: Icon(Icons.delete_forever), title: Text('Eliminar de la nube'))),
-              if (!widget.soloEdificio)
-                const PopupMenuItem(value: 'config', child: ListTile(leading: Icon(Icons.settings), title: Text('Configurar edificio'))),
               const PopupMenuItem(value: 'probar', child: ListTile(leading: Icon(Icons.wifi_find), title: Text('Probar conexión'))),
-              const PopupMenuItem(value: 'refrescar', child: ListTile(leading: Icon(Icons.refresh), title: Text('Actualizar'))),
+              if (AppState.instance.isAdmin)
+                const PopupMenuItem(
+                    value: 'eliminar', child: ListTile(leading: Icon(Icons.delete_forever), title: Text('Eliminar de la nube'))),
             ],
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _cargar,
-              child: ListView(
-                padding: const EdgeInsets.all(12),
+      body: RefreshIndicator(
+        onRefresh: _cargar,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+          children: [
+            // Quién está en línea: plegado (no ocupa la pantalla).
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: ExpansionTile(
+                leading: const Icon(Icons.circle, color: AppColors.verde, size: 14),
+                title: Text('En línea ahora (${enLinea.length})', style: const TextStyle(fontWeight: FontWeight.w600)),
                 children: [
-                  // Filtro por edificio (solo admin): ver cada uno por separado.
-                  if (!widget.soloEdificio) ...[
-                    Wrap(
-                      spacing: 6,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Todos'),
-                          selected: _edAdmin == null,
-                          onSelected: (_) { setState(() => _edAdmin = null); _cargar(); },
-                        ),
-                        for (final e in _edificios)
-                          ChoiceChip(
-                            label: Text(e['nombre']?.toString() ?? ''),
-                            selected: _edAdmin == e['id'],
-                            onSelected: (_) { setState(() => _edAdmin = e['id'] as String?); _cargar(); },
-                          ),
-                      ],
+                  if (enLinea.isEmpty) const ListTile(dense: true, title: Text('Ningún guardia en línea')),
+                  for (final p in enLinea)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.shield, color: AppColors.verde),
+                      title: Text('${p['guardia'] ?? '—'}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(p['en_turno'] == true ? 'En turno' : 'Sin turno'),
+                      trailing: p['lat'] != null && p['lng'] != null
+                          ? IconButton(
+                              icon: const Icon(Icons.location_on_outlined),
+                              tooltip: 'Ubicación',
+                              onPressed: () => _abrirMapa(p['lat'], p['lng']),
+                            )
+                          : null,
                     ),
-                    const SizedBox(height: 10),
-                  ],
-                  Row(children: [
-                    const Icon(Icons.circle, color: AppColors.verde, size: 12),
-                    const SizedBox(width: 6),
-                    Text('Guardias en linea (${enLinea.length})',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  ]),
-                  const SizedBox(height: 6),
-                  if (enLinea.isEmpty)
-                    const Card(child: ListTile(title: Text('Ningun guardia en linea ahora')))
-                  else
-                    for (final p in enLinea)
-                      Card(
-                        child: ListTile(
-                          leading: const CircleAvatar(
-                              backgroundColor: Color(0x1A2E7D32),
-                              child: Icon(Icons.shield, color: AppColors.verde)),
-                          title: Text(p['guardia']?.toString() ?? '—',
-                              style: const TextStyle(fontWeight: FontWeight.w600)),
-                          subtitle: Text('${p['edificio'] ?? ''}'
-                              '${p['en_turno'] == true ? ' · En turno' : ''}'),
-                          trailing: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(_hace(p['last_seen']?.toString()),
-                                  style: const TextStyle(fontSize: 11, color: Colors.black54)),
-                              if (p['lat'] != null && p['lng'] != null)
-                                TextButton.icon(
-                                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 28)),
-                                  onPressed: () => _abrirMapa(p['lat'], p['lng']),
-                                  icon: const Icon(Icons.location_on, size: 16),
-                                  label: const Text('Ubicación', style: TextStyle(fontSize: 11)),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  if (!widget.soloEdificio) ...[
-                    const SizedBox(height: 18),
-                    const Text('Dias trabajados este mes (todos los edificios)',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 6),
-                    ..._diasTrabajados(),
-                  ],
-                  const SizedBox(height: 18),
-                  Text(widget.soloEdificio ? 'Actividad reciente del edificio' : 'Eventos recientes',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('Todos'),
-                        selected: _filtro == null,
-                        onSelected: (_) { setState(() => _filtro = null); _cargar(); },
-                      ),
-                      for (final t in _tipos)
-                        ChoiceChip(
-                          label: Text(t),
-                          selected: _filtro == t,
-                          onSelected: (_) { setState(() => _filtro = t); _cargar(); },
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (_eventos.isEmpty)
-                    const Card(child: ListTile(title: Text('Sin eventos todavia')))
-                  else
-                    for (final e in _eventos) _eventoTile(e),
                 ],
               ),
             ),
-    );
-  }
-
-  List<Widget> _diasTrabajados() {
-    // Agrupa por guardia: dias distintos con "Ingreso de turno" y edificios.
-    final mapa = <String, Map<String, dynamic>>{};
-    final vistos = <String>{};
-    final ahora = DateTime.now();
-    for (final e in _turnos) {
-      if (e['tipo'] != 'Ingreso de turno') continue;
-      // Solo el edificio elegido, y cada ingreso una vez (reintentos).
-      if (_edAdmin != null && e['edificio']?.toString() != _edAdmin) continue;
-      final det = e['detalle'];
-      final uid = det is Map ? det['uid']?.toString() : null;
-      if (uid != null && !vistos.add(uid)) continue;
-      // Solo los de ESTE mes (la consulta trae días del borde).
-      final d = Cloud.horaEvento(e);
-      if (d == null || d.year != ahora.year || d.month != ahora.month) continue;
-      final g = e['guardia']?.toString() ?? 'Sin nombre';
-      final m = mapa.putIfAbsent(g, () => {'dias': <String>{}, 'edif': <String>{}, 'turnos': 0});
-      (m['dias'] as Set).add(DateFormat('yyyy-MM-dd').format(d));
-      if (e['edificio'] != null) (m['edif'] as Set).add(e['edificio'].toString());
-      m['turnos'] = (m['turnos'] as int) + 1;
-    }
-    if (mapa.isEmpty) {
-      return [const Card(child: ListTile(title: Text('Sin turnos este mes')))];
-    }
-    final entries = mapa.entries.toList()
-      ..sort((a, b) => (b.value['dias'] as Set).length.compareTo((a.value['dias'] as Set).length));
-    return [
-      for (final e in entries)
-        Card(
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: AppColors.azulMarino.withOpacity(.1),
-              child: Text('${(e.value['dias'] as Set).length}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.azulMarino)),
-            ),
-            title: Text(e.key, style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text('${(e.value['dias'] as Set).length} dias · ${e.value['turnos']} turnos · '
-                '${(e.value['edif'] as Set).join(", ")}'),
-          ),
-        ),
-    ];
-  }
-
-  Widget _eventoTile(Map<String, dynamic> e) {
-    final detalle = e['detalle'];
-    String sub = '';
-    String bloque = '';
-    try {
-      final m = detalle is String ? jsonDecode(detalle) : detalle;
-      if (m is Map) {
-        bloque = (m['bloque'] ?? '').toString();
-        // Datos internos (ids, horas técnicas) no se muestran.
-        const ocultos = {'bloque', 'uid', 'ts', 'turno_ref', 'relevos', 'ubicacion', 'foto_url', 'fotos_url', 'nivel'};
-        sub = m.entries.where((x) => !ocultos.contains(x.key) && '${x.value}'.trim().isNotEmpty)
-            .map((x) => '${x.value}').join(' · ');
-      }
-    } catch (_) {}
-    // Torre / dispositivo de origen (estructura nueva) o la etiqueta anterior.
-    final unidad = Estructura.nombreUnidad(e['unit_id']?.toString());
-    if (unidad.isNotEmpty) bloque = unidad;
-    final hora = Cloud.horaEvento(e);
-    return Card(
-      child: ListTile(
-        onTap: () => _verEvento(e),
-        leading: CircleAvatar(
-          backgroundColor: AppColors.azulMarino.withOpacity(.1),
-          child: Icon(_icono(e['tipo']?.toString()), color: AppColors.azulMarino, size: 20),
-        ),
-        title: Row(children: [
-          if (bloque.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(right: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00695C).withOpacity(.14),
-                borderRadius: BorderRadius.circular(8),
+            const SizedBox(height: 6),
+            // Un solo filtro (antes eran muchos botones).
+            DropdownButtonFormField<String?>(
+              value: _filtro,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Mostrar',
+                prefixIcon: Icon(Icons.filter_list),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               ),
-              child: Text(bloque, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF00695C))),
+              items: [
+                const DropdownMenuItem<String?>(value: null, child: Text('Toda la actividad')),
+                for (final t in _tipos.entries) DropdownMenuItem<String?>(value: t.key, child: Text(t.value)),
+              ],
+              onChanged: (v) {
+                setState(() {
+                  _filtro = v;
+                  _limite = 40;
+                  _eventos = [];
+                });
+                _cargar();
+              },
             ),
-          Expanded(
-            child: Text('${e['tipo']} · ${e['guardia'] ?? ''}',
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-          ),
-        ]),
-        subtitle: Text('${hora == null ? '' : DateFormat('dd/MM HH:mm').format(hora)}${sub.isNotEmpty ? ' · $sub' : ''}',
-            maxLines: 2, overflow: TextOverflow.ellipsis),
-        trailing: const Icon(Icons.chevron_right, color: Colors.black26),
-      ),
-    );
-  }
-
-  /// Muestra el detalle del evento (con foto si la nube la tiene).
-  void _verEvento(Map<String, dynamic> e) {
-    Map detalle = {};
-    try {
-      final d = e['detalle'];
-      final m = d is String ? jsonDecode(d) : d;
-      if (m is Map) detalle = m;
-    } catch (_) {}
-    final fotos = <String>[];
-    final f1 = detalle['foto_url'];
-    if (f1 is String && f1.isNotEmpty) fotos.add(f1);
-    final f2 = detalle['fotos_url'];
-    if (f2 is List) {
-      for (final u in f2) {
-        if (u is String && u.isNotEmpty) fotos.add(u);
-      }
-    }
-    const ocultas = {'ubicacion', 'foto_url', 'fotos_url'};
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: Icon(_icono(e['tipo']?.toString()), color: AppColors.azulMarino, size: 34),
-        title: Text('${e['tipo']}'),
-        content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Guardia: ${e['guardia'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text('Edificio: ${e['edificio'] ?? ''}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-            Text('Fecha: ${_hace(e['created_at']?.toString())}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
             const SizedBox(height: 8),
-            for (final entry in detalle.entries)
-              if ('${entry.value}'.trim().isNotEmpty && !ocultas.contains(entry.key))
-                Padding(padding: const EdgeInsets.only(bottom: 3), child: Text('${entry.key}: ${entry.value}')),
-            for (final u in fotos)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(u, fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const SizedBox(height: 40, child: Center(child: Text('Foto no disponible')))),
+            if (_loading)
+              const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+            else if (_eventos.isEmpty)
+              const Card(child: ListTile(title: Text('Sin actividad todavía')))
+            else ...[
+              for (final e in _eventos) EventoTile(e),
+              if (_eventos.length >= _limite - 5 && _limite < 600)
+                Center(
+                  child: TextButton.icon(
+                    onPressed: () {
+                      setState(() => _limite += 60);
+                      _cargar();
+                    },
+                    icon: const Icon(Icons.expand_more),
+                    label: const Text('Ver más'),
+                  ),
                 ),
-              ),
-          ]),
+            ],
+          ],
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
       ),
     );
   }

@@ -604,7 +604,8 @@ class _Ev {
     final g = (e['guardia'] ?? 'Sin nombre').toString();
     // Unidad (torre/dispositivo) de la estructura nueva; antes, el celular.
     final puesto = (e['unit_id'] ?? e['device_id'] ?? 'sin-celular').toString();
-    final gid = e['guard_id']?.toString();
+    // Identificador del guardia: su CI (o el id de la versión 12).
+    final gid = (det['guard_ci'] ?? e['guard_id'])?.toString();
     final idNube = e['id'];
     // uid: el del celular; eventos viejos: id de la nube; si no, una huella.
     final uid = det['uid']?.toString() ??

@@ -1,8 +1,7 @@
 import '../db/database_helper.dart';
 import 'app_state.dart';
 import 'cloud.dart';
-import 'estructura.dart';
-import 'sesion.dart';
+import 'guardias_service.dart';
 import 'panel_horas.dart';
 
 class HorasEdificio {
@@ -15,37 +14,33 @@ class HorasEdificio {
 /// Todos usan el mismo cálculo (PanelHoras), así ningún reporte da un número
 /// distinto al de la tarjeta del guardia.
 class HorasPanel {
+  /// Con guardias registrados por CI, solo cuentan los registros con CI
+  /// (los del sistema anterior no se mezclan con los guardias nuevos).
+  static Future<bool> _soloCi() async =>
+      (await GuardiasService.delEdificio(AppState.instance.edificioId, incluirInactivos: true)).isNotEmpty;
+
   /// Horas del edificio activo en el mes: desde la nube (todos los celulares
   /// del edificio) o, en edificios sin conexión o sin señal, desde este
   /// celular. [local] indica de dónde salieron.
   static Future<HorasEdificio> edificio(DateTime mes) async {
     final s = AppState.instance;
+    final soloCi = await _soloCi();
     if (!s.soloLocal) {
       try {
         await Cloud.vaciarCola(); // lo propio pendiente cuenta ya
         final ev = await Cloud.eventosTurnoMes(mes: mes, edificio: s.edificioId, lanzar: true);
         final p = PanelHoras.panelNube(ev, mes,
-            tolerancias: {s.edificioId: s.toleranciaMin},
-            soloConGuardia: Sesion.vinculado,
-            nombres: nombresUnidades());
+            tolerancias: {s.edificioId: s.toleranciaMin}, soloConGuardia: soloCi);
         return HorasEdificio(p[s.edificioId] ?? <PanelPuesto>[], false);
       } catch (_) {
         // Sin señal: lo de este celular (se avisa en pantalla / PDF).
       }
     }
-    return HorasEdificio(await local(mes), true);
-  }
-
-  /// Nombre de cada unidad (torre) del edificio activo.
-  static Map<String, String> nombresUnidades() {
-    final bid = Estructura.idEdificio(AppState.instance.edificioId);
-    final m = {for (final u in Estructura.unidades(bid)) u.id: u.name};
-    if (Sesion.unitId != null && Sesion.unitName != null) m.putIfAbsent(Sesion.unitId!, () => Sesion.unitName!);
-    return m;
+    return HorasEdificio(await local(mes, soloCi: soloCi), true);
   }
 
   /// Turnos guardados en ESTE celular.
-  static Future<List<PanelPuesto>> local(DateTime mes) async {
+  static Future<List<PanelPuesto>> local(DateTime mes, {bool soloCi = false}) async {
     final db = await DB.instance.database;
     final s = AppState.instance;
     final desde = DateTime(mes.year, mes.month);
@@ -66,9 +61,9 @@ class HorasPanel {
             where: 'turno_id BETWEEN ? AND ?',
             whereArgs: [ids.reduce((a, b) => a < b ? a : b), ids.reduce((a, b) => a > b ? a : b)]);
     final regs = PanelHoras.desdeLocal(ingresos, salidas,
-        relevos: s.horarios, edificio: s.edificioId, soloConGuardia: Sesion.vinculado);
+        relevos: s.horarios, edificio: s.edificioId, soloConGuardia: soloCi);
     return PanelHoras.calcular(regs,
-        nombres: {'local': s.bloque.isNotEmpty ? s.bloque : 'Este celular', ...nombresUnidades()},
+        nombres: {'local': s.bloque.isNotEmpty ? s.bloque : 'Este celular'},
         desde: desde,
         hasta: hasta,
         toleranciaMin: s.toleranciaMin);

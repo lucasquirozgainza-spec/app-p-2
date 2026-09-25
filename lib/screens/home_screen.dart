@@ -3,12 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
-import '../services/sesion.dart';
 import '../services/config_sync.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
-import '../widgets/dashboard_edificio.dart';
 import 'login_screen.dart';
 import 'inicio_turno_screen.dart';
 import 'visitas_screen.dart';
@@ -64,8 +62,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_latiendo || AppState.instance.soloLocal) return;
     _latiendo = true;
     try {
-      await Sesion.revisar(); // el admin pudo mover o desactivar este celular
-      await AppState.instance.aplicarVinculo();
       final g = await DeviceContext.gps();
       await Cloud.heartbeat(lat: g?['lat'], lng: g?['lng']);
       await Cloud.vaciarCola(); // reenvía lo que quedó sin señal
@@ -173,11 +169,6 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               _greeting(saludo, s, ahora),
               const SizedBox(height: 14),
-              // Administrador: resumen del edificio seleccionado en Configuración.
-              if (s.isAdmin) ...[
-                DashboardEdificio(key: ValueKey(s.edificioId)),
-                const SizedBox(height: 14),
-              ],
               _turnoButton(s),
               const SizedBox(height: 20),
               const _SectionTitle('Acciones rapidas'),
@@ -334,10 +325,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Drawer _buildDrawer() {
     final s = AppState.instance;
-    Widget grupo(String t) => Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
-          child: Text(t, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: .8)),
-        );
     Widget item(IconData i, String t, Widget screen, {bool show = true, Color? color}) {
       if (!show) return const SizedBox.shrink();
       return ListTile(
@@ -371,31 +358,18 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-          if (s.turnoActivoId == null)
-            item(Icons.play_arrow, 'Iniciar turno', const InicioTurnoScreen(), color: AppColors.verde)
-          else
-            item(Icons.logout, 'Finalizar turno', const SalidaTurnoScreen(), color: const Color(0xFF455A64)),
-          // GUARDIAS (admin): tarjetas, registro, turnos, horas y advertencias.
-          if (s.isAdmin) ...[
-            grupo('GUARDIAS'),
-            item(Icons.shield, 'Guardias', const GuardiasScreen(), color: AppColors.verde),
-          ],
-          // OPERACIÓN
-          grupo('OPERACIÓN'),
-          item(Icons.badge, 'Visitas', const VisitasScreen(), color: const Color(0xFF00897B), show: s.modulo('visitas')),
-          item(Icons.directions_walk, 'Rondas', const RondasHistorialScreen(), color: const Color(0xFF6A1B9A), show: s.modulo('rondas')),
-          item(Icons.warning_amber, 'Incidentes', const IncidentesScreen(), color: AppColors.rojo, show: s.modulo('incidentes')),
-          item(Icons.inventory_2, 'Encomiendas', const EncomiendasScreen(), color: const Color(0xFFEF6C00), show: s.modulo('encomiendas')),
-          item(Icons.hotel, 'Hospedajes', const HospedajesScreen(), color: const Color(0xFF00838F), show: s.modulo('hospedajes')),
-          // EDIFICIO (siempre el de Configuración)
-          grupo('EDIFICIO'),
-          item(Icons.apartment, 'Movimientos del edificio', const OnlineScreen(soloEdificio: true), color: const Color(0xFF00695C)),
+          // El menú NO repite lo que ya está en la pantalla principal
+          // (turno, visitas, rondas, incidentes, encomiendas...).
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
-          // REPORTES
-          grupo('REPORTES'),
-          item(Icons.dashboard, 'Panel y reportes', const PanelScreen(), color: const Color(0xFF1565C0)),
-          item(Icons.assessment, 'Reporte de personal', const ReportePersonalScreen(), color: const Color(0xFF1565C0), show: s.isAdmin),
+          // Administrador: siempre del edificio elegido en Configuración.
+          if (s.isAdmin) ...[
+            const Divider(height: 1),
+            item(Icons.shield, 'Guardias', const GuardiasScreen(), color: AppColors.verde),
+            item(Icons.sync_alt, 'Actividad del edificio', const OnlineScreen(soloEdificio: true), color: const Color(0xFF00695C)),
+            item(Icons.assessment, 'Reporte de personal', const ReportePersonalScreen(), color: const Color(0xFF1565C0)),
+            item(Icons.dashboard, 'Panel y reportes', const PanelScreen(), color: const Color(0xFF1565C0)),
+          ],
           const Divider(height: 1),
           if (!s.isAdmin)
             ListTile(
