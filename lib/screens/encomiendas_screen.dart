@@ -53,9 +53,10 @@ class _EncomiendasScreenState extends State<EncomiendasScreen> {
       appBar: AppBar(
         title: const Text('Encomiendas'),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
+          // 40 del botón + márgenes (con 48 se aplastaba la barra superior).
+          preferredSize: const Size.fromHeight(56),
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
             child: SegmentedButton<bool>(
               style: SegmentedButton.styleFrom(backgroundColor: Colors.white),
               segments: const [
@@ -82,7 +83,7 @@ class _EncomiendasScreenState extends State<EncomiendasScreen> {
         },
       ),
       body: ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               itemCount: _rows.length + 1,
               itemBuilder: (_, i) {
                 if (i == _rows.length) {
@@ -216,7 +217,7 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
                           style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size.fromHeight(44)),
                           onPressed: () => Contacto.whatsapp(context, c.tel, mensaje: msg),
                           icon: const Icon(Icons.message, size: 18),
-                          label: const Text('Enviar mensaje'),
+                          label: const Text('Mensaje', maxLines: 1),
                         ),
                       ),
                       const SizedBox(height: 6),

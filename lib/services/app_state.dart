@@ -55,16 +55,22 @@ class AppState {
   /// así los registros y fotos son instantáneos (no esperan a internet).
   bool get soloLocal => modulos['solo_local'] == true;
 
-  /// Horarios de relevo válidos de ESTE celular (ej. ["08:30", "20:30"]).
-  List<String> get horarios => Turnos.limpiar([turnoIngreso, turnoSalida]);
+  /// Horarios de relevo configurados en ESTE celular (puede estar vacío).
+  List<String> get horariosConfigurados => Turnos.limpiar([turnoIngreso, turnoSalida]);
+
+  /// Horarios de relevo de ESTE celular; sin configurar, el turno normal
+  /// 08:00 / 20:00.
+  List<String> get horarios {
+    final h = horariosConfigurados;
+    return h.isEmpty ? Turnos.porDefecto : h;
+  }
+
+  /// Tolerancia de relevo del edificio (minutos, editable por el admin).
+  int get toleranciaMin => Turnos.toleranciaDe(modulos);
 
   /// Minutos de atraso al iniciar turno respecto al relevo más cercano de este
-  /// celular (positivo = tarde; null = sin horario configurado).
+  /// celular (positivo = tarde).
   int? minutosTardeIngreso(DateTime llegada) => Turnos.minutosTarde(llegada, horarios);
-
-  /// Horas extra de un turno con la regla única (ver Turnos).
-  double horasExtra(DateTime inicio, DateTime fin, {int nivel = 12, List<String>? horariosTurno}) =>
-      Turnos.horasExtra(inicio: inicio, fin: fin, nivel: nivel, horarios: horariosTurno ?? horarios);
 
   /// Campo de visita habilitado (por defecto SI, salvo que el admin lo apague).
   bool campoVisita(String key) => modulos[key] != false;
@@ -108,14 +114,21 @@ class AppState {
   }
 
   void _applyEdificio(Map<String, dynamic> row) {
-    edificioId = row['id'] as String;
-    edificioNombre = row['nombre'] as String;
-    modulos = (row['modulos'] != null && (row['modulos'] as String).isNotEmpty)
-        ? Map<String, dynamic>.from(jsonDecode(row['modulos'] as String))
-        : {};
-    torres = (row['torres'] != null && (row['torres'] as String).isNotEmpty)
-        ? List<String>.from(jsonDecode(row['torres'] as String))
-        : [];
+    edificioId = '${row['id'] ?? ''}';
+    edificioNombre = '${row['nombre'] ?? ''}';
+    // Un JSON dañado no debe impedir que la app arranque.
+    try {
+      final m = jsonDecode('${row['modulos'] ?? ''}');
+      modulos = m is Map ? Map<String, dynamic>.from(m) : {};
+    } catch (_) {
+      modulos = {};
+    }
+    try {
+      final t = jsonDecode('${row['torres'] ?? ''}');
+      torres = t is List ? [for (final x in t) '$x'] : [];
+    } catch (_) {
+      torres = [];
+    }
   }
 
   Future<void> setEdificio(String id) async {

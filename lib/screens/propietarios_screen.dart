@@ -91,7 +91,7 @@ class _PropietariosScreenState extends State<PropietariosScreen> {
             child: _rows.isEmpty
                 ? const Center(child: Text('Sin resultados'))
                 : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 96),
                     itemCount: _rows.length,
                     itemBuilder: (_, i) => widget.soloVehiculos
                         ? _vehiculoTile(_rows[i])

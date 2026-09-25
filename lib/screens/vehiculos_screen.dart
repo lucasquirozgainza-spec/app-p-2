@@ -75,7 +75,7 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
             child: _rows.isEmpty
                 ? const Center(child: Text('Sin vehiculos. Toca "Registrar".'))
                 : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 96),
                     itemCount: _rows.length,
                     itemBuilder: (_, i) {
                       final v = _rows[i];

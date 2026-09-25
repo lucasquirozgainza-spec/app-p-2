@@ -110,7 +110,7 @@ class _PuntosControlScreenState extends State<PuntosControlScreen> {
               ),
             )
           : ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               itemCount: _puntos.length,
               itemBuilder: (_, i) {
                 final p = _puntos[i];

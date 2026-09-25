@@ -81,6 +81,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
     Cloud.pushConfig(_selId, json);
   }
 
+  int get _toleranciaMin => Turnos.toleranciaDe(_modulos);
+
   int get _tarjetaDigitos {
     final v = _modulos['tarjeta_digitos'];
     if (v is int) return v;
@@ -286,6 +288,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
               TextField(controller: c, decoration: const InputDecoration(labelText: 'Cargo')),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
+                isExpanded: true, // texto largo con "…" en vez de desbordar
                 value: rol,
                 decoration: const InputDecoration(labelText: 'Rol'),
                 items: const [
@@ -364,7 +367,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
   /// Resumen del horario de relevo de este celular.
   String _resumenHorario() {
     final h = AppState.instance.horarios;
-    if (h.isEmpty) return 'Sin horario (no se marcan atrasos)';
+    if (AppState.instance.horariosConfigurados.isEmpty) {
+      return '${h.join(' y ')} · turno normal de 12 h';
+    }
     if (h.length == 1) return 'Relevo ${h[0]} · turnos de 24 h';
     final d1 = Turnos.entre(h[0], h[1]), d2 = Turnos.entre(h[1], h[0]);
     return d1 == d2
@@ -466,6 +471,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               DropdownButtonFormField<String>(
+                isExpanded: true, // texto largo con "…" en vez de desbordar
                 value: metodo,
                 decoration: const InputDecoration(labelText: 'Metodo de aviso'),
                 items: const [
@@ -618,6 +624,31 @@ class _ConfigScreenState extends State<ConfigScreen> {
               title: const Text('Trabajar sin conexión'),
               subtitle: const Text('Edificio de una torre: registros instantáneos, no usa la nube.'),
               activeColor: AppColors.verde,
+            ),
+          ]),
+          _seccion('Horas de guardias', Icons.timer_outlined, const Color(0xFF00838F), [
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.more_time, color: Color(0xFF00838F)),
+              title: const Text('Tolerancia de relevo'),
+              subtitle: const Text('Hasta este margen no cuenta; pasado, se cuentan todos los minutos.'),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline),
+                  tooltip: 'Menos 5 min',
+                  onPressed: _toleranciaMin <= 0
+                      ? null
+                      : () => _setMod('tolerancia_min', (_toleranciaMin - 5).clamp(0, 60)),
+                ),
+                Text('$_toleranciaMin min', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'Más 5 min',
+                  onPressed: _toleranciaMin >= 60
+                      ? null
+                      : () => _setMod('tolerancia_min', (_toleranciaMin + 5).clamp(0, 60)),
+                ),
+              ]),
             ),
           ]),
           _seccion('Cámara', Icons.photo_camera, const Color(0xFF283593), [

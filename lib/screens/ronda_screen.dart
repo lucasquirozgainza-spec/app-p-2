@@ -74,7 +74,7 @@ class _RondaScreenState extends State<RondaScreen> {
 
   Future<void> _tomarFotos() async {
     final res = await Camara.tomar(context, multi: true, minFotos: _min, album: 'OSIRIS Rondas');
-    if (res != null && res.isNotEmpty) setState(() => _fotos.addAll(res));
+    if (res != null && res.isNotEmpty && mounted) setState(() => _fotos.addAll(res));
   }
 
   Future<void> _guardar() async {
@@ -294,7 +294,7 @@ class _RondaScreenState extends State<RondaScreen> {
               style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6A1B9A), minimumSize: const Size(double.infinity, 48)),
               onPressed: _escanearPunto,
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Escanear punto de control'),
+              label: const Text('Escanear punto', maxLines: 1),
             ),
             const SizedBox(height: 8),
             Wrap(

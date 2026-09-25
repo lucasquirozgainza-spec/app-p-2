@@ -57,18 +57,51 @@ class Camara {
     String? album,
     bool rapida = false,
   }) async {
-    if (!await Permisos.camara(context)) return null;
-    if (!context.mounted) return null;
-    if (AppState.instance.camaraNativa) {
-      return _nativa(context, multi: multi, minFotos: minFotos, frontal: frontal, album: album);
+    // Un doble toque abría dos cámaras (dos controladores sobre el mismo lente
+    // o "already_active" en la nativa) y dos pedidos de permiso a la vez.
+    if (_abierta) return null;
+    _abierta = true;
+    try {
+      if (!await Permisos.camara(context)) return null;
+      if (!context.mounted) return null;
+      if (AppState.instance.camaraNativa) {
+        return await _nativa(context, multi: multi, minFotos: minFotos, frontal: frontal, album: album);
+      }
+      return await Navigator.push<List<String>>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => CameraScreen(
+              multi: multi, minFotos: minFotos, frontal: frontal, album: album, rapida: rapida),
+        ),
+      );
+    } finally {
+      _abierta = false;
     }
-    return Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CameraScreen(
-            multi: multi, minFotos: minFotos, frontal: frontal, album: album, rapida: rapida),
-      ),
-    );
+  }
+
+  static bool _abierta = false;
+
+  /// Si Android cerró OSIRIS mientras estaba abierta la cámara nativa (poca
+  /// memoria), la foto sólo se recupera con retrieveLostData. La guardamos en
+  /// fotos/ y en la galería para que no se pierda. Devuelve cuántas recuperó.
+  static Future<int> recuperarPerdidas() async {
+    try {
+      final lost = await _picker.retrieveLostData();
+      if (lost.isEmpty) return 0;
+      final files = lost.files ?? (lost.file != null ? [lost.file!] : const <XFile>[]);
+      int n = 0;
+      for (final f in files) {
+        try {
+          if (!await File(f.path).exists()) continue;
+          final d = await moverAFotos(f.path);
+          ImgUtil.encolar(d, album: 'OSIRIS');
+          n++;
+        } catch (_) {}
+      }
+      return n;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// Cámara nativa del celular. Para varias fotos: llega al mínimo y luego

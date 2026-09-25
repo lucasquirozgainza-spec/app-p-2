@@ -97,7 +97,7 @@ class _MantenimientoScreenState extends State<MantenimientoScreen> {
       body: _rows.isEmpty
           ? const Center(child: Text('Sin registros de mantenimiento'))
           : ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               itemCount: _rows.length,
               itemBuilder: (_, i) {
                 final x = _rows[i];

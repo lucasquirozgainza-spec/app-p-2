@@ -76,9 +76,18 @@ class _OnlineScreenState extends State<OnlineScreen> {
     return (m['nombre'] ?? _edAdmin).toString();
   }
 
+  bool _pendiente = false;
+
   Future<void> _cargar({bool silencioso = false}) async {
-    if (_cargando) return;
+    // Si ya hay una carga en curso y el admin cambió el filtro, se repite al
+    // terminar (antes el pedido se perdía y quedaban los datos del filtro
+    // anterior bajo el nombre del nuevo edificio).
+    if (_cargando) {
+      if (!silencioso) _pendiente = true;
+      return;
+    }
     _cargando = true;
+    final ed = _edFiltro, tipo = _filtro;
     if (!silencioso && mounted) setState(() => _loading = true);
     try {
       // En PARALELO. Los turnos del mes (pesado) solo al abrir o al refrescar a
@@ -86,8 +95,8 @@ class _OnlineScreenState extends State<OnlineScreen> {
       Cloud.heartbeat(); // en segundo plano, no bloquea la carga
       final conTurnos = !widget.soloEdificio && (!silencioso || _turnos.isEmpty);
       final res = await Future.wait([
-        Cloud.presencia(),
-        Cloud.eventos(tipo: _filtro, edificio: _edFiltro),
+        Cloud.presencia(edificio: ed),
+        Cloud.eventos(tipo: tipo, edificio: ed),
         conTurnos ? Cloud.eventosTurnoMes() : Future.value(_turnos),
       ]);
       final pres = res[0];
@@ -96,6 +105,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
       evs.removeWhere((e) => e['tipo'] == 'Config' || e['tipo'] == 'AdminPass' || e['tipo'] == 'Guardia' || e['tipo'] == 'GuardiaBaja');
       final turnos = res[2];
       if (!mounted) return;
+      if (ed != _edFiltro || tipo != _filtro) return; // resultado de otro filtro
       setState(() {
         _presencia = pres;
         _eventos = evs;
@@ -104,6 +114,12 @@ class _OnlineScreenState extends State<OnlineScreen> {
       });
     } finally {
       _cargando = false;
+      if (_pendiente && mounted) {
+        _pendiente = false;
+        _cargar();
+      } else if (mounted && _loading) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -270,7 +286,10 @@ class _OnlineScreenState extends State<OnlineScreen> {
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'pdf', child: ListTile(leading: Icon(Icons.picture_as_pdf), title: Text('Descargar PDF'))),
-              const PopupMenuItem(value: 'eliminar', child: ListTile(leading: Icon(Icons.delete_forever), title: Text('Eliminar de la nube'))),
+              // Borrar la nube es solo del administrador (un guardia podía
+              // borrar el historial de todo el edificio).
+              if (AppState.instance.isAdmin)
+                const PopupMenuItem(value: 'eliminar', child: ListTile(leading: Icon(Icons.delete_forever), title: Text('Eliminar de la nube'))),
               if (!widget.soloEdificio)
                 const PopupMenuItem(value: 'config', child: ListTile(leading: Icon(Icons.settings), title: Text('Configurar edificio'))),
               const PopupMenuItem(value: 'probar', child: ListTile(leading: Icon(Icons.wifi_find), title: Text('Probar conexión'))),
@@ -384,14 +403,21 @@ class _OnlineScreenState extends State<OnlineScreen> {
   List<Widget> _diasTrabajados() {
     // Agrupa por guardia: dias distintos con "Ingreso de turno" y edificios.
     final mapa = <String, Map<String, dynamic>>{};
+    final vistos = <String>{};
+    final ahora = DateTime.now();
     for (final e in _turnos) {
       if (e['tipo'] != 'Ingreso de turno') continue;
+      // Solo el edificio elegido, y cada ingreso una vez (reintentos).
+      if (_edAdmin != null && e['edificio']?.toString() != _edAdmin) continue;
+      final det = e['detalle'];
+      final uid = det is Map ? det['uid']?.toString() : null;
+      if (uid != null && !vistos.add(uid)) continue;
+      // Solo los de ESTE mes (la consulta trae días del borde).
+      final d = Cloud.horaEvento(e);
+      if (d == null || d.year != ahora.year || d.month != ahora.month) continue;
       final g = e['guardia']?.toString() ?? 'Sin nombre';
       final m = mapa.putIfAbsent(g, () => {'dias': <String>{}, 'edif': <String>{}, 'turnos': 0});
-      try {
-        final d = DateTime.parse(e['created_at'].toString()).toLocal();
-        (m['dias'] as Set).add(DateFormat('yyyy-MM-dd').format(d));
-      } catch (_) {}
+      (m['dias'] as Set).add(DateFormat('yyyy-MM-dd').format(d));
       if (e['edificio'] != null) (m['edif'] as Set).add(e['edificio'].toString());
       m['turnos'] = (m['turnos'] as int) + 1;
     }

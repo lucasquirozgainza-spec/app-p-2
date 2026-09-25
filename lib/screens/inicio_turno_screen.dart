@@ -8,6 +8,7 @@ import '../services/config_sync.dart';
 import '../services/device_context.dart';
 import '../services/uniform_check.dart';
 import '../services/notifications_service.dart';
+import '../services/turnos.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
 import '../widgets/photo_field.dart';
@@ -77,11 +78,19 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     setState(() {
       _foto = path;
       _sinUniforme = false;
+      _revisando = false;
     });
     if (path == null || !AppState.instance.controlUniforme) return;
     setState(() => _revisando = true);
-    final r = await UniformeCheck.revisar(path);
-    if (!mounted) return;
+    UniformeResultado r;
+    try {
+      r = await UniformeCheck.revisar(path);
+    } catch (_) {
+      if (mounted && _foto == path) setState(() => _revisando = false);
+      return; // si la revisión falla no se bloquea el ingreso
+    }
+    // Si mientras se revisaba se tomó OTRA foto, este resultado ya no vale.
+    if (!mounted || _foto != path) return;
     setState(() => _revisando = false);
     if (r.ok) return; // uniforme detectado, todo bien
     await Notificaciones.mostrarAviso('Guardia sin uniforme',
@@ -122,21 +131,53 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
   }
 
   Future<void> _iniciar() async {
+    if (_saving) return; // doble toque
     if (_sel == null) return _snack('Selecciona el guardia');
     if (_foto == null) return _snack('La foto del guardia es obligatoria');
+    if (_revisando) return _snack('Espera: revisando la foto…');
     setState(() => _saving = true);
+    try {
+      await _registrarIngreso();
+    } catch (e) {
+      if (mounted) _snack('No se pudo iniciar el turno. Intenta de nuevo.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _registrarIngreso() async {
     final s = AppState.instance;
+    final sel = _sel!;
+    // Hora REAL del ingreso: la del toque (el GPS puede tardar segundos).
+    final ahora = DateTime.now();
+    final db = await DB.instance.database;
+    // Un guardia no puede tener dos turnos abiertos (doble registro o
+    // pantalla abierta dos veces): se retoma el que ya está abierto.
+    final ya = await db.query('ingreso_turno',
+        where: 'guardia_id=? AND activo=1', whereArgs: [sel['id']], orderBy: 'id DESC', limit: 1);
+    if (ya.isNotEmpty) {
+      s.setOperador(
+          id: sel['id'] as int,
+          nombre: '${sel['nombre'] ?? ''}',
+          cargo: sel['cargo'] as String?,
+          rol: sel['rol'] as String?,
+          turnoId: ya.first['id'] as int);
+      if (!mounted) return;
+      TopToast.show(context, '${sel['nombre']} ya tiene un turno abierto',
+          color: const Color(0xFFEF6C00), icon: Icons.info_outline);
+      Navigator.pop(context);
+      return;
+    }
     // GPS, batería y modelo EN PARALELO (antes uno tras otro).
     final ctx = await Future.wait<Object?>(
         [DeviceContext.gps(), DeviceContext.bateria(), DeviceContext.dispositivo()]);
     final gps = ctx[0] as Map<String, double>?;
     final bat = ctx[1] as int?;
     final disp = ctx[2] as String;
-    final db = await DB.instance.database;
     final id = await db.insert('ingreso_turno', {
-      'guardia_id': _sel!['id'],
-      'guardia_nombre': _sel!['nombre'],
-      'cargo': _sel!['cargo'],
+      'guardia_id': sel['id'],
+      'guardia_nombre': sel['nombre'],
+      'cargo': sel['cargo'],
       'foto': _foto,
       'gps_lat': gps?['lat'],
       'gps_lng': gps?['lng'],
@@ -145,44 +186,44 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
       'observaciones': _obs.text,
       'edificio': s.edificioId,
       'activo': 1,
-      'created_at': DateTime.now().toIso8601String(),
+      'created_at': ahora.toIso8601String(),
     });
     // El guardia que inicia turno pasa a ser el operador actual del equipo.
     s.setOperador(
-        id: _sel!['id'] as int,
-        nombre: _sel!['nombre'] as String,
-        cargo: _sel!['cargo'] as String?,
-        rol: _sel!['rol'] as String?,
+        id: sel['id'] as int,
+        nombre: '${sel['nombre'] ?? ''}',
+        cargo: sel['cargo'] as String?,
+        rol: sel['rol'] as String?,
         turnoId: id);
+    final nombre = sel['nombre'] as String?;
     // Si el guardia declaro que no trajo uniforme, se guarda una advertencia.
     if (_sinUniforme) {
       await db.insert('advertencias', {
-        'guardia_nombre': _sel!['nombre'],
+        'guardia_nombre': nombre,
         'mensaje': 'Inició turno SIN uniforme (sin camisa roja ni chaleco negro).',
         'tipo': 'uniforme',
         'foto': _foto,
         'edificio': s.edificioId,
-        'created_at': DateTime.now().toIso8601String(),
+        'created_at': ahora.toIso8601String(),
       });
-      Cloud.evento('Guardia sin uniforme', guardia: _sel!['nombre'] as String?); // segundo plano
+      Cloud.evento('Guardia sin uniforme', guardia: nombre); // segundo plano
     }
-    // Aviso por ENTRAR TARDE: si hay horario de relevo configurado y el guardia
-    // ingresa con retraso, se le avisa y se guarda la advertencia para llevar la
-    // cuenta de cuántas veces llega tarde.
-    final tarde = s.minutosTardeIngreso(DateTime.now());
-    if (tarde != null && tarde >= 15) {
+    // Aviso por ENTRAR TARDE respecto al horario de relevo del celular.
+    final tarde = s.minutosTardeIngreso(ahora);
+    // Aviso solo pasada la tolerancia del edificio (la misma de las horas).
+    if (tarde != null && tarde > s.toleranciaMin) {
       final txt = tarde >= 60
           ? '${(tarde / 60).floor()} h ${tarde % 60} min tarde'
           : '$tarde min tarde';
       await db.insert('advertencias', {
-        'guardia_nombre': _sel!['nombre'],
+        'guardia_nombre': nombre,
         'mensaje': 'Ingresó TARDE al turno ($txt respecto al horario de relevo).',
         'tipo': 'tarde',
         'foto': _foto,
         'edificio': s.edificioId,
-        'created_at': DateTime.now().toIso8601String(),
+        'created_at': ahora.toIso8601String(),
       });
-      Cloud.evento('Advertencia', guardia: _sel!['nombre'] as String?,
+      Cloud.evento('Advertencia', guardia: nombre,
           detalle: {'tipo': 'tarde', 'motivo': 'Ingresó tarde al turno ($txt)'});
       try {
         await Notificaciones.mostrarAviso('⚠️ Estás entrando tarde',
@@ -191,14 +232,17 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
       if (mounted) _snack('Advertencia: estás entrando tarde al turno ($txt).');
     }
     await Audit.log('INICIO_TURNO', 'ingreso_turno', '$id');
-    // La nube en segundo plano: no demora el inicio del turno.
+    // La nube pasa por la cola: sin señal se envía después, sin duplicarse.
     Cloud.evento('Ingreso de turno',
-        guardia: _sel!['nombre'] as String?,
+        guardia: nombre,
         detalle: {
-          'cargo': _sel!['cargo'],
-          // Horarios de relevo de ESTE celular: el admin calcula las horas
-          // extra con el horario del puesto donde marcó (bloques distintos).
-          if (s.horarios.isNotEmpty) 'relevos': s.horarios.join(','),
+          'cargo': sel['cargo'],
+          // Id del turno: une este ingreso con SU salida y sus correcciones.
+          'turno_ref': Turnos.ref(Cloud.deviceId, id),
+          'ts': ahora.toUtc().toIso8601String(),
+          // Horarios de relevo de ESTE celular: las horas se calculan con el
+          // horario del puesto donde marcó (bloques distintos).
+          'relevos': s.horarios.join(','),
           'observaciones': _obs.text,
           'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
         });

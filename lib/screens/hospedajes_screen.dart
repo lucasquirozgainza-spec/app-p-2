@@ -140,7 +140,7 @@ class _HospedajesScreenState extends State<HospedajesScreen> {
             child: rows.isEmpty
                 ? const Center(child: Text('Sin hospedajes'))
                 : ListView.builder(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
                     itemCount: rows.length,
                     itemBuilder: (_, i) {
                       final x = rows[i];
@@ -231,22 +231,27 @@ class _HospedajeFormState extends State<HospedajeForm> {
     final carnet = h.tipo == 'Carnet';
     // Cámara propia, sin confirmar cada foto. Carnet: 2 lados en una sesión.
     final res = await Camara.tomar(context, multi: carnet, minFotos: carnet ? 2 : 0, album: 'OSIRIS Documentos');
-    if (res == null || res.isEmpty) return;
+    if (res == null || res.isEmpty || !mounted) return;
     setState(() { h.fotos = res; h.leyendo = true; });
     // OCR en SEGUNDO PLANO: autocompleta nombre (y número si es pasaporte).
     () async {
-      final CarnetData d;
-      if (carnet) {
-        d = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
-      } else {
-        String texto = '';
-        for (final f in res) {
-          texto = '$texto\n${await OcrService.leerTexto(f)}';
+      CarnetData d;
+      try {
+        if (carnet) {
+          d = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
+        } else {
+          String texto = '';
+          for (final f in res) {
+            texto = '$texto\n${await OcrService.leerTexto(f)}';
+          }
+          d = OcrService.parsePasaporte(texto);
         }
-        d = OcrService.parsePasaporte(texto);
+      } catch (_) {
+        d = CarnetData(null, null);
       }
-      // Si se cerró el formulario o se quitó este huésped, no escribir.
-      if (!mounted || h.eliminado) return;
+      // Si se cerró el formulario, se quitó este huésped o se repitió la
+      // foto (otra lectura en curso), no escribir.
+      if (!mounted || h.eliminado || !identical(h.fotos, res)) return;
       if (d.nombre != null && h.nombre.text.trim().isEmpty) h.nombre.text = d.nombre!;
       if (d.ci != null && h.doc.text.trim().isEmpty) h.doc.text = d.ci!;
       setState(() => h.leyendo = false);

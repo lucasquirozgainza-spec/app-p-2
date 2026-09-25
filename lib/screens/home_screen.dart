@@ -64,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final g = await DeviceContext.gps();
       await Cloud.heartbeat(lat: g?['lat'], lng: g?['lng']);
+      await Cloud.vaciarCola(); // reenvía lo que quedó sin señal
       // Aplicar config remota si el admin cambió algo (refresca la pantalla).
       if (await ConfigSync.aplicarRemota() && mounted) setState(() {});
       await ConfigSync.aplicarAdminPassRemota();
@@ -74,8 +75,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  bool _abriendo = false;
+
+  /// Un doble toque abría dos pantallas iguales (dos ingresos o dos salidas
+  /// del mismo turno).
   Future<void> _open(Widget screen) async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+    if (_abriendo) return;
+    _abriendo = true;
+    try {
+      await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+    } finally {
+      _abriendo = false;
+    }
     if (mounted) setState(() {});
   }
 

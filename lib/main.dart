@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'theme.dart';
@@ -5,6 +6,7 @@ import 'db/database_helper.dart';
 import 'services/app_state.dart';
 import 'services/retention.dart';
 import 'services/notifications_service.dart';
+import 'services/camara.dart';
 import 'services/cloud.dart';
 import 'services/config_sync.dart';
 import 'screens/home_screen.dart';
@@ -23,6 +25,7 @@ class CondoControlApp extends StatelessWidget {
       title: 'OSIRIS',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
+      builder: (context, child) => _SinBarraSistema(child: child ?? const SizedBox()),
       home: const _Boot(),
     );
   }
@@ -43,10 +46,17 @@ class _BootState extends State<_Boot> {
 
   Future<void> _init() async {
     // Solo lo imprescindible antes de mostrar la app (rapido):
-    await initializeDateFormatting('es', null);
-    await DB.instance.database;
-    await AppState.instance.loadEdificio();
-    await AppState.instance.restaurarOperador();
+    // Cada paso protegido: si uno falla la app igual abre (antes un dato
+    // dañado dejaba el celular trabado en esta pantalla para siempre).
+    try { await initializeDateFormatting('es', null); } catch (_) {}
+    try {
+      await DB.instance.database;
+      await AppState.instance.loadEdificio();
+      await AppState.instance.restaurarOperador();
+    } catch (_) {}
+    // El id del celular ANTES del primer latido/evento (si no, se enviaban
+    // con el id genérico "device" y se mezclaban los celulares).
+    try { await Cloud.init(); } catch (_) {}
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -56,9 +66,12 @@ class _BootState extends State<_Boot> {
   }
 
   void _tareasEnSegundoPlano() async {
+    // Fotos de la cámara nativa que quedaron sin guardar porque Android
+    // cerró la app por falta de memoria.
+    try { await Camara.recuperarPerdidas(); } catch (_) {}
     try {
-      await Cloud.init();
       await Cloud.heartbeat();
+      await Cloud.vaciarCola(); // lo registrado sin señal
     } catch (_) {}
     // Aplicar config y contraseña de admin remotas (publicadas por el admin).
     try {
@@ -91,6 +104,38 @@ class _BootState extends State<_Boot> {
             SizedBox(height: 24),
             CircularProgressIndicator(color: Colors.white),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Android 15 dibuja la app DEBAJO de la barra de navegación del sistema
+/// (pantalla completa obligatoria): los botones "Guardar" al final de los
+/// formularios quedaban tapados. Se reserva ese espacio una sola vez para toda
+/// la app, como en las versiones anteriores de Android.
+class _SinBarraSistema extends StatelessWidget {
+  final Widget child;
+  const _SinBarraSistema({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final b = mq.viewPadding.bottom;
+    if (b <= 0) return child;
+    final vi = mq.viewInsets;
+    return ColoredBox(
+      color: Colors.black,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: b),
+        child: MediaQuery(
+          data: mq
+              .removePadding(removeBottom: true)
+              .removeViewPadding(removeBottom: true)
+              // El teclado se mide desde el borde de la pantalla: se descuenta
+              // lo ya reservado para no dejar un hueco sobre el teclado.
+              .copyWith(viewInsets: vi.copyWith(bottom: math.max(0.0, vi.bottom - b))),
+          child: child,
         ),
       ),
     );

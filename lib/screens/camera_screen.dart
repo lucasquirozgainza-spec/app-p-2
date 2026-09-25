@@ -50,10 +50,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    final c = _controller;
-    _controller = null;
-    c?.dispose();
+    _gen++; // cualquier inicio pendiente se descarta al terminar
+    _liberar();
     super.dispose();
+  }
+
+  /// Todas las operaciones sobre la cámara (abrir / liberar) van EN FILA: dos
+  /// initialize() simultáneos sobre el mismo lente, o abrir una nueva antes de
+  /// que la anterior termine de liberarse, dejaban la vista previa en negro.
+  Future<void> _fila = Future.value();
+  Future<void> _enFila(Future<void> Function() op) {
+    final f = _fila.then((_) => op()).catchError((_) {});
+    _fila = f;
+    return f;
+  }
+
+  /// Quita la cámara de la pantalla y la libera (en la fila).
+  void _liberar() {
+    final c = _controller;
+    if (c == null) return;
+    _controller = null;
+    if (mounted) setState(() {});
+    _enFila(() => c.dispose());
   }
 
   Future<void> _cargarCamaras() async {
@@ -84,13 +102,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     });
   }
 
-  Future<void> _iniciar() async {
-    if (_cams.isEmpty) return;
+  Future<void> _iniciar() {
+    if (_cams.isEmpty) return Future.value();
     final gen = ++_gen;
-    final anterior = _controller;
-    _controller = null;
-    if (mounted) setState(() {});
-    await anterior?.dispose();
+    _liberar();
+    return _enFila(() => _abrir(gen));
+  }
+
+  Future<void> _abrir(int gen) async {
+    // Pedido viejo (se cambió de cámara, se salió de la app o se cerró).
+    if (!mounted || gen != _gen) return;
 
     final preset = widget.rapida ? ResolutionPreset.high : ResolutionPreset.max;
     final c = CameraController(_cams[_idx], preset,
@@ -126,15 +147,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
-      // Liberar la cámara al salir (otra app/ajustes). Primero se quita de la
-      // pantalla y luego se libera: así nunca se dibuja una cámara liberada.
-      final c = _controller;
-      if (c == null) return;
-      _gen++;
-      _controller = null;
-      if (mounted) setState(() {});
-      c.dispose();
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      // Liberar la cámara SOLO al salir de la app (otra app / Ajustes). Con
+      // "inactive" (bajar la cortina de notificaciones, un diálogo del
+      // sistema) se liberaba en plena foto y la foto se perdía.
+      _gen++; // aunque todavía no haya abierto: el inicio pendiente se descarta
+      _liberar();
     } else if (state == AppLifecycleState.resumed) {
       // Al volver (por ejemplo de Ajustes tras dar el permiso), reabrir.
       if (_controller == null && _cams.isNotEmpty) {
@@ -227,6 +245,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       if (mounted) Navigator.pop(context);
       return;
     }
+    if (!mounted) return;
     setState(() => _terminando = true);
     await ImgUtil.esperarPendientes();
     if (mounted) Navigator.pop(context, List<String>.from(_fotos));
@@ -268,7 +287,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: FilledButton(
-                  style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
+                  style: FilledButton.styleFrom(backgroundColor: AppColors.verde, minimumSize: const Size(0, 40)),
                   onPressed: _terminando ? null : _terminar,
                   child: const Text('Listo'),
                 ),

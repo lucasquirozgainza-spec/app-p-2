@@ -21,12 +21,13 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 15,
+      version: 16,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, v) async {
         await _createSchema(db);
+        await _crearCola(db);
         await _crearIndices(db);
         await _seed(db);
       },
@@ -122,8 +123,20 @@ class DB {
             await db.execute('ALTER TABLE ingreso_turno ADD COLUMN nivel INTEGER DEFAULT 12');
           } catch (_) {}
         }
+        if (oldV < 16) await _crearCola(db);
       },
     );
+  }
+
+  /// Cola de eventos para la nube: lo que se registró sin señal se envía
+  /// después (ver Cloud.vaciarCola). uid = id único del evento (evita
+  /// duplicados al reintentar).
+  Future<void> _crearCola(Database db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS cola_nube (
+      uid TEXT PRIMARY KEY,
+      body TEXT NOT NULL,
+      intentos INTEGER DEFAULT 0,
+      created_at TEXT)''');
   }
 
   /// Índices para que las consultas sean rápidas aunque haya muchos registros.

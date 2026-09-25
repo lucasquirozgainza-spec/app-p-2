@@ -56,9 +56,9 @@ class ImgUtil {
   /// Endereza la foto de forma NATIVA y reemplaza el archivo (escritura atómica:
   /// se escribe a un temporal y se renombra, nunca queda un archivo a medias).
   static Future<void> normalizarNativa(String path) async {
+    final tmp = p.join(File(path).parent.path, 'n_${DateTime.now().microsecondsSinceEpoch}.jpg');
     try {
       if (!await File(path).exists()) return;
-      final tmp = p.join(File(path).parent.path, 'n_${DateTime.now().microsecondsSinceEpoch}.jpg');
       final out = await FlutterImageCompress.compressAndGetFile(
         path, tmp,
         // IMPORTANTE: el plugin por defecto reduce a 1920x1080. Con _ladoMax
@@ -72,11 +72,22 @@ class ImgUtil {
       if (out != null && await File(out.path).length() > 0) {
         await File(out.path).rename(path);
       } else {
+        await _borrar(tmp);
         await compute(_bakeOrient, path);
       }
     } catch (_) {
+      // Memoria llena o formato raro: el temporal no debe quedar ocupando
+      // espacio, y el original sigue intacto.
+      await _borrar(tmp);
       try { await compute(_bakeOrient, path); } catch (_) {}
     }
+  }
+
+  static Future<void> _borrar(String path) async {
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
   }
 
   /// Versión chica para subir a la nube (~1080 px, ~100-200 KB). Nativa.
@@ -113,7 +124,16 @@ bool _bakeOrient(String path) {
     final derecha = img.bakeOrientation(decoded);
     final cambioDim = derecha.width != decoded.width || derecha.height != decoded.height;
     if (orient == 1 && !cambioDim) return false; // ya estaba derecha
-    f.writeAsBytesSync(img.encodeJpg(derecha, quality: 92));
+    // Temporal + renombrar: si el almacenamiento se llena a la mitad, el
+    // original (única copia de la foto) no queda cortado.
+    final tmp = File('${f.path}.tmp');
+    try {
+      tmp.writeAsBytesSync(img.encodeJpg(derecha, quality: 92), flush: true);
+      tmp.renameSync(f.path);
+    } catch (_) {
+      try { if (tmp.existsSync()) tmp.deleteSync(); } catch (_) {}
+      return false;
+    }
     return true;
   } catch (_) {
     return false;

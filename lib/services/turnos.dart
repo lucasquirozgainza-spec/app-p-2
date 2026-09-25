@@ -1,20 +1,47 @@
-/// Reglas ÚNICAS de turnos y horas extra (las usan la pantalla Guardias, los
+/// Reglas ÚNICAS de turnos y horas (las usan la pantalla Guardias, los
 /// reportes PDF y el reporte de personal, así todos dan el mismo número).
 ///
+/// - Turnos normales: diurno 08:00–20:00 y nocturno 20:00–08:00 (12 h). Cada
+///   celular puede tener su propio horario de relevo (bloques/torres); si no
+///   tiene, se usa el normal.
 /// - Tipo de turno: lo DECLARA el guardia (12 h normal, 24 h doblado, 36 h
 ///   triple). Si un turno viejo no lo tiene, se estima por la duración.
 /// - El turno "programado" empieza en la hora de relevo más cercana al ingreso
-///   (aunque el guardia llegue antes o tarde) y dura 12/24/36 h.
-/// - Hora EXTRA = lo que el guardia se quedó DESPUÉS del fin programado,
-///   esperando a que llegue su relevo. Llegar temprano no suma.
-/// - ATRASO = lo que llegó tarde respecto a su hora de relevo.
-/// - Diferencias de hasta 30 min no cuentan (8:00 vs 8:08 no pasa nada).
-/// Ej. relevos 09:00/21:00: el nocturno llega 22:00 → el diurno sale 22:00 →
-/// diurno 1 h extra (se la debe el nocturno). Si al otro día el diurno llega
-/// 10:00, el nocturno espera 1 h → quedan a mano (ver PanelHoras).
+///   y dura 12/24/36 h (cruza medianoche y varios días sin problema: son
+///   fechas completas, no solo horas).
+/// - Las horas a favor / en contra se generan en cada RELEVO (ver
+///   PanelHoras): si el que entra llega tarde, el que esperó gana esas horas
+///   y el que llegó tarde las pierde; si el que sale se va antes, pierde lo
+///   que no cubrió y el que entró antes lo gana.
+/// - Tolerancia (editable por edificio, 15 min por defecto): hasta ese margen
+///   la diferencia no cuenta (8:00 vs 8:12 no pasa nada). Pasado el margen se
+///   cuentan TODOS los minutos (llegar 8:20 = 20 min en contra, no 5).
 class Turnos {
   static const List<int> niveles = [12, 24, 36];
-  static const double tolerancia = 0.5; // horas
+  static const int toleranciaPorDefecto = 15; // minutos
+
+  /// Tolerancia del edificio en minutos (0 a 60), guardada en su
+  /// configuración ('tolerancia_min'), que se sincroniza entre celulares.
+  static int toleranciaDe(Map? modulos) {
+    final v = modulos?['tolerancia_min'];
+    final n = v is int ? v : int.tryParse('${v ?? ''}');
+    if (n == null) return toleranciaPorDefecto;
+    return n < 0 ? 0 : (n > 60 ? 60 : n);
+  }
+
+  /// Horario normal si el celular no tiene uno configurado.
+  static const List<String> porDefecto = ['08:00', '20:00'];
+
+  /// Id ÚNICO de un turno en la nube: celular + id local. Une el ingreso con
+  /// su salida, sus cambios de 24/36 h y sus correcciones.
+  static String ref(String deviceId, Object? idLocal) => '${deviceId}_t$idLocal';
+
+  /// Saldo firmado: "+3 h 30 min", "-1 h", "0 h".
+  static String saldo(double horas) {
+    final m = (horas * 60).round();
+    if (m == 0) return '0 h';
+    return '${m > 0 ? '+' : '-'}${duracion(Duration(minutes: m.abs()))}';
+  }
 
   /// "HH:mm" → [hora, minuto] o null si no es válido.
   static List<int>? parseHora(String? s) {
@@ -85,35 +112,6 @@ class Turnos {
   /// Fin PROGRAMADO: inicio programado + 12/24/36 h.
   static DateTime finProgramado(DateTime inicio, int nivel, List<String> horarios) =>
       inicioProgramado(inicio, horarios).add(Duration(hours: nivel));
-
-  /// Horas EXTRA: tiempo que se quedó pasado su fin programado (esperando al
-  /// relevo). Sin horario configurado equivale a horas trabajadas − turno.
-  static double horasExtra({
-    required DateTime inicio,
-    required DateTime fin,
-    required int nivel,
-    List<String> horarios = const [],
-  }) {
-    final e = fin.difference(finProgramado(inicio, nivel, horarios)).inMinutes / 60.0;
-    return e > tolerancia ? e : 0.0;
-  }
-
-  /// Horas de ATRASO al entrar (0 si llegó a tiempo o antes, o sin horario).
-  static double horasAtraso(DateTime inicio, List<String> horarios) {
-    final a = inicio.difference(inicioProgramado(inicio, horarios)).inMinutes / 60.0;
-    return a > tolerancia ? a : 0.0;
-  }
-
-  /// Horas que faltaron: salió antes de su fin programado.
-  static double horasFalta({
-    required DateTime inicio,
-    required DateTime fin,
-    required int nivel,
-    List<String> horarios = const [],
-  }) {
-    final f = finProgramado(inicio, nivel, horarios).difference(fin).inMinutes / 60.0;
-    return f > tolerancia ? f : 0.0;
-  }
 
   /// Veces que dobló: 24 h = 1, 36 h = 2.
   static int dobles(int nivel) => nivel >= 36 ? 2 : (nivel >= 24 ? 1 : 0);

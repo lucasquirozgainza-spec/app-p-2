@@ -90,45 +90,85 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     final db = await DB.instance.database;
     await db.update('ingreso_turno', {'nivel': nivel}, where: 'id=?', whereArgs: [sel['id']]);
     await Audit.log('DOBLAR_TURNO', 'ingreso_turno', '${sel['id']}', detalle: 'nivel=$nivel');
+    // Con turno_ref el cambio se aplica a ESE turno (el último cambio gana;
+    // marcar 24 y luego 36 no suma dos veces).
     Cloud.evento('Doblar turno',
         guardia: sel['guardia_nombre'] as String?,
-        detalle: {'nivel': nivel, 'edificio': AppState.instance.edificioId});
+        edificio: _edificioDe(sel),
+        detalle: {'nivel': nivel, 'turno_ref': Turnos.ref(Cloud.deviceId, sel['id'])});
     if (!mounted) return;
     setState(() => sel['nivel'] = nivel);
     TopToast.show(context, 'Turno de $nivel h registrado', color: AppColors.verde, icon: Icons.check_circle);
   }
 
+  /// Edificio donde se ABRIÓ el turno (la salida va al mismo edificio aunque
+  /// el celular haya cambiado de edificio mientras tanto).
+  String _edificioDe(Map<String, dynamic> sel) {
+    final e = (sel['edificio'] ?? '').toString();
+    return e.isEmpty ? AppState.instance.edificioId : e;
+  }
+
   Future<void> _finalizar() async {
+    if (_saving) return; // doble toque
     if (_sel == null) return _snack('Selecciona el guardia que sale');
     if (_foto == null) return _snack('La foto de salida es obligatoria');
     setState(() => _saving = true);
+    try {
+      await _registrarSalida();
+    } catch (e) {
+      if (mounted) _snack('No se pudo finalizar el turno. Intenta de nuevo.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _registrarSalida() async {
     final s = AppState.instance;
     final sel = _sel!;
+    final ahora = DateTime.now(); // hora REAL de salida
     final db = await DB.instance.database;
-    final id = await db.insert('salida_turno', {
-      'turno_id': sel['id'],
-      'guardia_id': sel['guardia_id'],
-      'guardia_nombre': sel['guardia_nombre'],
-      'foto': _foto,
-      'observaciones': _obs.text,
-      'edificio': s.edificioId,
-      'created_at': DateTime.now().toIso8601String(),
+    // Cerrar el turno y registrar la salida JUNTOS (si la app se cierra a la
+    // mitad no queda una salida con el turno abierto) y solo si seguía
+    // abierto: una segunda pantalla de salida no lo cierra dos veces.
+    int? id;
+    await db.transaction((txn) async {
+      final n = await txn.update('ingreso_turno', {'activo': 0},
+          where: 'id=? AND activo=1', whereArgs: [sel['id']]);
+      if (n == 0 && sel.containsKey('created_at')) return; // ya estaba cerrado
+      id = await txn.insert('salida_turno', {
+        'turno_id': sel['id'],
+        'guardia_id': sel['guardia_id'],
+        'guardia_nombre': sel['guardia_nombre'],
+        'foto': _foto,
+        'observaciones': _obs.text,
+        'edificio': s.edificioId,
+        'created_at': ahora.toIso8601String(),
+      });
     });
-    await db.update('ingreso_turno', {'activo': 0}, where: 'id=?', whereArgs: [sel['id']]);
+    if (id == null) {
+      if (s.turnoActivoId == sel['id']) s.clearOperador();
+      if (!mounted) return;
+      _snack('Ese turno ya estaba finalizado');
+      Navigator.pop(context);
+      return;
+    }
     await Audit.log('FIN_TURNO', 'salida_turno', '$id');
     final nivel = Turnos.nivelValido(sel['nivel']) ?? 12;
-    final obs = _obs.text;
-    // Nube y GPS en segundo plano: la salida es inmediata aunque no haya señal.
+    // Se encola YA (con la hora real); el GPS solo acompaña la presencia.
+    Cloud.evento('Salida de turno',
+        guardia: sel['guardia_nombre'] as String?,
+        edificio: _edificioDe(sel),
+        detalle: {
+          'nivel': nivel, // turno DECLARADO por el guardia (12/24/36)
+          'turno_ref': Turnos.ref(Cloud.deviceId, sel['id']),
+          'ts': ahora.toUtc().toIso8601String(),
+          'observaciones': _obs.text,
+        });
     () async {
-      final gps = await DeviceContext.gps();
-      Cloud.evento('Salida de turno',
-          guardia: sel['guardia_nombre'] as String?,
-          detalle: {
-            'nivel': nivel, // turno DECLARADO por el guardia (12/24/36)
-            'observaciones': obs,
-            'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
-          });
-      Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+      try {
+        final gps = await DeviceContext.gps();
+        await Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+      } catch (_) {}
     }();
 
     // Advertencia: tarjetas de visita que NO fueron devueltas.
@@ -180,10 +220,13 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
             const SizedBox(width: 6),
             Text(ini == null ? 'Ingreso —' : 'Ingreso ${hm.format(ini)}',
                 style: const TextStyle(fontWeight: FontWeight.w600)),
-            const Spacer(),
+            const SizedBox(width: 8),
             if (ini != null)
-              Text('Lleva ${Turnos.duracion(DateTime.now().difference(ini))}',
-                  style: const TextStyle(color: Colors.black54)),
+              Expanded(
+                child: Text('Lleva ${Turnos.duracion(DateTime.now().difference(ini))}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.end,
+                    style: const TextStyle(color: Colors.black54)),
+              ),
           ]),
           const SizedBox(height: 10),
           SegmentedButton<int>(

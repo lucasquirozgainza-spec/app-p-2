@@ -112,9 +112,10 @@ class _VisitasScreenState extends State<VisitasScreen> {
       appBar: AppBar(
         title: const Text('Visitas'),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
+          // 40 del botón + márgenes (con 48 se aplastaba la barra superior).
+          preferredSize: const Size.fromHeight(56),
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
             child: SegmentedButton<bool>(
               style: SegmentedButton.styleFrom(
                   backgroundColor: Colors.white, selectedBackgroundColor: Colors.white),
@@ -157,7 +158,7 @@ class _VisitasScreenState extends State<VisitasScreen> {
           ),
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               itemCount: _visitas.length + 1,
               itemBuilder: (_, i) {
                 if (i == _visitas.length) {
@@ -320,6 +321,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   String? _fotoTarjeta;
   String? _motivoSel; // motivo elegido por boton (o 'Otro' = manual)
   bool _ocrLeyendo = false;
+  int _ocrSeq = 0; // cada captura de carnet invalida la lectura anterior
   List<String> _deptoSug = [];
   String? _carnetAnverso;
   String? _carnetReverso;
@@ -425,14 +427,18 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   /// SEGUNDO PLANO para no demorar. Si no lo lee, avisa para repetir manual.
   Future<void> _capturarTarjeta() async {
     final res = await Camara.tomar(context, multi: false, album: 'OSIRIS Tarjetas');
-    if (res == null || res.isEmpty) return;
+    if (res == null || res.isEmpty || !mounted) return;
     final path = res.first;
     final dig = AppState.instance.tarjetaDigitos;
     setState(() => _fotoTarjeta = path);
     // OCR en segundo plano.
     () async {
-      final num = await OcrService.leerNumero(path, digitos: dig);
-      if (!mounted) return;
+      String? num;
+      try {
+        num = await OcrService.leerNumero(path, digitos: dig);
+      } catch (_) {}
+      // Si mientras tanto se tomó otra foto, este resultado ya no vale.
+      if (!mounted || _fotoTarjeta != path) return;
       if (num != null && num.length == dig) {
         setState(() => _tarjetaNum.text = num);
         TopToast.show(context, 'N° de tarjeta: $num');
@@ -447,7 +453,8 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   /// CI+nombre en SEGUNDO PLANO para no demorar el registro.
   Future<void> _capturarCarnet() async {
     final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
-    if (res == null || res.isEmpty) return;
+    if (res == null || res.isEmpty || !mounted) return;
+    final seq = ++_ocrSeq;
     setState(() {
       _carnetAnverso = res.isNotEmpty ? res[0] : null;
       _carnetReverso = res.length > 1 ? res[1] : null;
@@ -457,8 +464,14 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     // vacíos (o que el mismo OCR llenó antes): nunca pisa lo que escribió el
     // guardia. Lo llenado queda marcado para revisar antes de guardar.
     () async {
-      final data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
-      if (!mounted) return;
+      CarnetData data;
+      try {
+        data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
+      } catch (_) {
+        data = CarnetData(null, null);
+      }
+      // Un carnet anterior (más lento de leer) no debe pisar al nuevo.
+      if (!mounted || seq != _ocrSeq) return;
       setState(() {
         _ocrLeyendo = false;
         if (data.nombre != null && (_nombre.text.trim().isEmpty || _nombreOcr)) {
@@ -483,11 +496,16 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   /// Carnet de un visitante ADICIONAL: toma los 2 lados y llena su nombre/CI.
   Future<void> _carnetAcompanante(_Acompanante a) async {
     final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
-    if (res == null || res.isEmpty) return;
+    if (res == null || res.isEmpty || !mounted) return;
     setState(() { a.fotos = res; a.leyendo = true; });
     () async {
-      final data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
-      if (!mounted || a.eliminado) return;
+      CarnetData data;
+      try {
+        data = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
+      } catch (_) {
+        data = CarnetData(null, null);
+      }
+      if (!mounted || a.eliminado || !identical(a.fotos, res)) return;
       setState(() {
         a.leyendo = false;
         if (data.nombre != null && a.nombre.text.trim().isEmpty) a.nombre.text = data.nombre!;

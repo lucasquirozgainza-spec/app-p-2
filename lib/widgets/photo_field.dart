@@ -41,7 +41,7 @@ class _PhotoFieldState extends State<PhotoField> {
     // Cámara según la configuración (nativa del cel o la de la app).
     final res = await Camara.tomar(context,
         multi: false, frontal: widget.frontal, album: widget.album, rapida: widget.rapida);
-    if (res != null && res.isNotEmpty) {
+    if (res != null && res.isNotEmpty && mounted) {
       setState(() => _path = res.first);
       widget.onChanged(res.first);
     }

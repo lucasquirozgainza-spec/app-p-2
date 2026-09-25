@@ -12,6 +12,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/turnos.dart';
 import '../services/panel_horas.dart';
+import '../services/horas_local.dart';
 
 /// Construye el PDF de actividad en un ISOLATE aparte (compute), para que la
 /// interfaz NUNCA se congele aunque haya cientos de filas. Recibe datos ya
@@ -324,13 +325,6 @@ class PdfExport {
     final hasta = DateTime(mes.year, mes.month + 1, 1);
     final di = desde.toIso8601String(), ha = hasta.toIso8601String();
 
-    final ingresos = await db.query('ingreso_turno',
-        where: 'edificio=? AND created_at>=? AND created_at<?', whereArgs: [ed, di, ha], orderBy: 'created_at');
-    final salidas = await db.query('salida_turno', where: 'edificio=?', whereArgs: [ed]);
-    final salMap = <int, String>{};
-    for (final s in salidas) {
-      if (s['turno_id'] != null) salMap[s['turno_id'] as int] = s['created_at'] as String;
-    }
     final advUni = await db.query('advertencias',
         where: "edificio=? AND tipo='uniforme' AND created_at>=? AND created_at<?", whereArgs: [ed, di, ha]);
     final sinUni = <String, int>{};
@@ -338,33 +332,13 @@ class PdfExport {
       final g = a['guardia_nombre']?.toString() ?? 'Sin nombre';
       sinUni[g] = (sinUni[g] ?? 0) + 1;
     }
-
-    final mapa = <String, Map<String, dynamic>>{};
-    for (final ing in ingresos) {
-      final nombre = ing['guardia_nombre']?.toString() ?? 'Sin nombre';
-      final m = mapa.putIfAbsent(nombre, () => {'dias': <String>{}, 'horas': 0.0, 'extra': 0.0, 'turnos': 0, 'dobles': 0});
-      final inicio = DateTime.parse(ing['created_at'] as String);
-      (m['dias'] as Set).add(DateFormat('yyyy-MM-dd').format(inicio));
-      m['turnos'] = (m['turnos'] as int) + 1;
-      final salStr = salMap[ing['id']];
-      if (salStr != null) {
-        final horas = DateTime.parse(salStr).difference(inicio).inMinutes / 60.0;
-        if (horas > 0 && horas < 60) {
-          // Regla única (Turnos): turno declarado 12/24/36; si falta, por horas.
-          final nivel = Turnos.nivelValido(ing['nivel']) ?? Turnos.nivelPorHoras(horas);
-          m['horas'] = (m['horas'] as double) + horas;
-          m['dobles'] = (m['dobles'] as int) + Turnos.dobles(nivel);
-          m['extra'] = (m['extra'] as double) +
-              AppState.instance.horasExtra(inicio, DateTime.parse(salStr), nivel: nivel);
-        }
-      }
-    }
-    // Incluir guardias que solo tienen advertencias de uniforme.
+    // Mismo cálculo que la pantalla Guardias (PanelHoras).
+    final horas = await HorasPanel.edificio(mes);
+    final porGuardia = PanelHoras.porGuardia(horas.puestos);
     for (final g in sinUni.keys) {
-      mapa.putIfAbsent(g, () => {'dias': <String>{}, 'horas': 0.0, 'extra': 0.0, 'turnos': 0, 'dobles': 0});
+      porGuardia.putIfAbsent(g, () => ResumenGuardia(g));
     }
-    final filas = mapa.entries.toList()
-      ..sort((a, b) => (b.value['horas'] as double).compareTo(a.value['horas'] as double));
+    final filas = porGuardia.values.toList()..sort((a, b) => b.horas.compareTo(a.horas));
 
     final doc = pw.Document();
     final periodo = DateFormat('MMMM yyyy', 'es').format(mes);
@@ -381,15 +355,21 @@ class PdfExport {
       ),
       build: (ctx) => [
         _portada('Reporte de guardias · $periodo', fecha),
+        if (horas.local && !AppState.instance.soloLocal)
+          pw.Text('Sin conexion al generar: solo incluye los turnos registrados en este celular.', style: const pw.TextStyle(fontSize: 9, color: PdfColors.orange800)),
         pw.SizedBox(height: 14),
-        _tabla('Personal del mes', ['Guardia', 'Dias', 'Horas', 'H. extra', 'Turnos 24h', 'Dias sin uniforme'],
-            filas.map((e) => [
-              e.key,
-              '${(e.value['dias'] as Set).length}',
-              (e.value['horas'] as double).toStringAsFixed(1),
-              (e.value['extra'] as double).toStringAsFixed(1),
-              '${e.value['dobles']}',
-              '${sinUni[e.key] ?? 0}',
+        _tabla('Personal del mes',
+            ['Guardia', 'Dias', 'Horas', 'A favor', 'En contra', 'Saldo', '24 h', '36 h', 'Sin uniforme'],
+            filas.map((r) => [
+              _s(r.guardia),
+              '${r.dias}',
+              r.horas.toStringAsFixed(1),
+              _hm(r.aFavor),
+              _hm(r.enContra),
+              _safe(Turnos.saldo(r.saldo)),
+              '${r.n24}',
+              '${r.n36}',
+              '${sinUni[r.guardia] ?? 0}',
             ]).toList()),
       ],
     ));
@@ -406,57 +386,31 @@ class PdfExport {
   /// temprano NO da extra).
   static Future<void> reporteIngresoSalida({required DateTime mes}) async {
     await _ensureLogo();
-    final db = await DB.instance.database;
-    final ed = AppState.instance.edificioId;
-    final desde = DateTime(mes.year, mes.month, 1);
-    final hasta = DateTime(mes.year, mes.month + 1, 1);
-    final di = desde.toIso8601String(), ha = hasta.toIso8601String();
-
-    final ingresos = await db.query('ingreso_turno',
-        where: 'edificio=? AND created_at>=? AND created_at<?', whereArgs: [ed, di, ha], orderBy: 'created_at');
-    final salidas = await db.query('salida_turno', where: 'edificio=?', whereArgs: [ed]);
-    final salMap = <int, String>{};
-    for (final s in salidas) {
-      if (s['turno_id'] != null) salMap[s['turno_id'] as int] = s['created_at'] as String;
-    }
-
-    final hm = DateFormat('dd/MM HH:mm');
     final s = AppState.instance;
-    final filas = <List<String>>[];
-    final resumen = <String, Map<String, double>>{}; // nombre -> {horas, extra, turnos}
-    for (final ing in ingresos) {
-      final nombre = ing['guardia_nombre']?.toString() ?? 'Sin nombre';
-      final inicio = DateTime.parse(ing['created_at'] as String);
-      final salStr = salMap[ing['id']];
-      String salTxt = 'En turno';
-      String trabTxt = '—';
-      String extraTxt = '—';
-      double horas = 0, extra = 0;
-      if (salStr != null) {
-        final fin = DateTime.parse(salStr);
-        horas = fin.difference(inicio).inMinutes / 60.0;
-        if (horas > 0 && horas < 60) {
-          final nivel = Turnos.nivelValido(ing['nivel']) ?? Turnos.nivelPorHoras(horas);
-          extra = s.horasExtra(inicio, fin, nivel: nivel);
-          salTxt = hm.format(fin.toLocal());
-          trabTxt = horas.toStringAsFixed(1);
-          extraTxt = extra > 0 ? extra.toStringAsFixed(1) : '0';
-        }
-      }
-      filas.add([nombre, hm.format(inicio.toLocal()), salTxt, trabTxt, extraTxt]);
-      final r = resumen.putIfAbsent(nombre, () => {'horas': 0.0, 'extra': 0.0, 'turnos': 0.0});
-      r['horas'] = r['horas']! + (horas > 0 && horas < 60 ? horas : 0);
-      r['extra'] = r['extra']! + extra;
-      r['turnos'] = r['turnos']! + 1;
-    }
+    // Mismo cálculo que la pantalla Guardias (PanelHoras).
+    final horas = await HorasPanel.edificio(mes);
+    final panel = horas.puestos;
+    final porGuardia = PanelHoras.porGuardia(panel);
+    final hm = DateFormat('dd/MM HH:mm');
+    final turnos = [for (final p in panel) ...p.turnos]..sort((a, b) => a.inicio.compareTo(b.inicio));
+    final filas = <List<String>>[
+      for (final t in turnos)
+        [
+          _s(t.guardia),
+          hm.format(t.inicio),
+          t.fin == null ? 'En turno' : hm.format(t.fin!),
+          t.valido ? '${t.nivel} h' : _s(t.estado),
+          t.cerrado ? t.horas.toStringAsFixed(1) : '-',
+          _hm(t.aFavor),
+          _hm(t.enContra),
+        ],
+    ];
 
     final doc = pw.Document();
     final periodo = DateFormat('MMMM yyyy', 'es').format(mes);
     final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
-    final horario = (s.turnoIngreso.isNotEmpty || s.turnoSalida.isNotEmpty)
-        ? 'Relevos configurados: ${s.turnoIngreso.isEmpty ? "?" : s.turnoIngreso} y ${s.turnoSalida.isEmpty ? "?" : s.turnoSalida}. '
-            'Horas extra = horas trabajadas − turno declarado (12/24/36 h); llegar antes del relevo no suma.'
-        : 'Horas extra = horas trabajadas − turno declarado (12/24/36 h).';
+    final horario = _safe('Relevos: ${s.horarios.join(' y ')}. ${_reglaHoras(s.toleranciaMin)}'
+        '${horas.local && !s.soloLocal ? ' Sin conexion al generar: solo incluye los turnos registrados en este celular.' : ''}');
     doc.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(28),
@@ -472,18 +426,19 @@ class PdfExport {
         pw.SizedBox(height: 8),
         pw.Text(horario, style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
         pw.SizedBox(height: 12),
-        _tabla('Resumen por guardia', ['Guardia', 'Turnos', 'Horas', 'H. extra'],
-            (resumen.entries.toList()
-                  ..sort((a, b) => b.value['horas']!.compareTo(a.value['horas']!)))
-                .map((e) => [
-                      e.key,
-                      '${e.value['turnos']!.toInt()}',
-                      e.value['horas']!.toStringAsFixed(1),
-                      e.value['extra']!.toStringAsFixed(1),
+        _tabla('Resumen por guardia', ['Guardia', 'Turnos', 'Horas', 'A favor', 'En contra', 'Saldo'],
+            (porGuardia.values.toList()..sort((a, b) => b.saldo.compareTo(a.saldo)))
+                .map((r) => [
+                      _s(r.guardia),
+                      '${r.turnos.where((t) => t.valido).length}',
+                      r.horas.toStringAsFixed(1),
+                      _hm(r.aFavor),
+                      _hm(r.enContra),
+                      _safe(Turnos.saldo(r.saldo)),
                     ])
                 .toList()),
         pw.SizedBox(height: 14),
-        _tabla('Detalle de turnos', ['Guardia', 'Ingreso', 'Salida', 'Trabajado', 'Extra'], filas),
+        _tabla('Detalle de turnos', ['Guardia', 'Ingreso', 'Salida', 'Turno', 'Horas', 'A favor', 'En contra'], filas),
         if (filas.isEmpty)
           pw.Padding(padding: const pw.EdgeInsets.only(top: 20), child: pw.Text('Sin turnos registrados este mes.')),
       ],
@@ -584,38 +539,11 @@ class PdfExport {
   /// Panel de horas con los turnos guardados en ESTE celular (sirve también
   /// para edificios "sin conexión").
   static Future<void> panelHorasLocal({required DateTime mes}) async {
-    final db = await DB.instance.database;
     final s = AppState.instance;
-    // 1 día a cada lado para saber quién relevó a quién en los bordes del mes.
-    final di = DateTime(mes.year, mes.month, 1).subtract(const Duration(days: 1)).toIso8601String();
-    final ha = DateTime(mes.year, mes.month + 1, 2).toIso8601String();
-    final ingresos = await db.query('ingreso_turno',
-        where: 'edificio=? AND created_at>=? AND created_at<?', whereArgs: [s.edificioId, di, ha], orderBy: 'created_at');
-    final salidas = await db.query('salida_turno', where: 'edificio=?', whereArgs: [s.edificioId]);
-    final salMap = <int, String>{};
-    for (final x in salidas) {
-      if (x['turno_id'] != null) salMap[x['turno_id'] as int] = x['created_at'] as String;
-    }
-    final regs = <RegistroTurno>[];
-    for (final ing in ingresos) {
-      final ini = DateTime.tryParse(ing['created_at']?.toString() ?? '');
-      if (ini == null) continue;
-      final fin = salMap[ing['id']] == null ? null : DateTime.tryParse(salMap[ing['id']]!);
-      if (fin != null && (fin.difference(ini).inMinutes <= 0 || fin.difference(ini).inHours >= 60)) continue;
-      if (fin == null && (ing['activo'] ?? 0) != 1) continue; // turno viejo sin salida
-      regs.add(RegistroTurno(
-        guardia: (ing['guardia_nombre'] ?? 'Sin nombre').toString(),
-        puesto: 'local',
-        inicio: ini,
-        fin: fin,
-        nivelDeclarado: Turnos.nivelValido(ing['nivel']),
-        relevos: s.horarios,
-      ));
-    }
-    final panel = PanelHoras.calcular(regs,
-        nombres: {'local': s.bloque.isNotEmpty ? s.bloque : 'Este celular'},
-        desde: DateTime(mes.year, mes.month), hasta: DateTime(mes.year, mes.month + 1));
+    final horas = await HorasPanel.edificio(mes);
+    final panel = horas.puestos;
     await panelHoras(
+        nota: horas.local && !s.soloLocal ? 'Sin conexion al generar: solo incluye los turnos registrados en este celular.' : null,
         porEdificio: {s.edificioNombre: panel}, periodo: DateFormat('MMMM yyyy', 'es').format(mes));
   }
 
@@ -625,6 +553,7 @@ class PdfExport {
   static Future<void> panelHoras({
     required Map<String, List<PanelPuesto>> porEdificio,
     required String periodo,
+    String? nota,
   }) async {
     await _ensureLogo();
     final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
@@ -633,22 +562,43 @@ class PdfExport {
     String h1(double v) => v.toStringAsFixed(1);
 
     final cuerpo = <pw.Widget>[_portada(periodo, fecha), pw.SizedBox(height: 8)];
+    final tols = {for (final l in porEdificio.values) for (final p in l) p.toleranciaMin};
+    final tolTxt = tols.length == 1 ? tols.first : AppState.instance.toleranciaMin;
     cuerpo.add(pw.Text(
-        _safe('Hora extra = tiempo que el guardia se quedo pasada su hora de relevo esperando al '
-            'siguiente. La debe quien llego tarde. Beneficiario = el que hizo esperar mas al otro '
-            '(diferencia del mes). Diferencias de hasta 30 min no cuentan.'),
+        _safe(_reglaHoras(tolTxt) +
+            (tols.length > 1 ? ' Cada edificio usa su propia tolerancia (${tols.join('/')} min).' : '')),
         style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey700)));
+    if (nota != null) {
+      cuerpo.add(pw.Text(_safe(nota), style: const pw.TextStyle(fontSize: 9, color: PdfColors.orange800)));
+    }
 
     for (final ed in porEdificio.entries) {
+      // Resumen para pago / compensación: saldo de cada guardia del edificio.
+      final todos = PanelHoras.porGuardia(ed.value).values.toList()
+        ..sort((a, b) {
+          final c = b.saldo.compareTo(a.saldo);
+          return c != 0 ? c : a.guardia.compareTo(b.guardia);
+        });
+      if (todos.isNotEmpty) {
+        cuerpo.add(pw.SizedBox(height: 14));
+        cuerpo.add(_tabla(_safe('${ed.key} - Saldo de horas'),
+            ['Guardia', 'Dias', '12 h', '24 h', '36 h', 'Horas', 'A favor', 'En contra', 'Saldo'], [
+          for (final r in todos)
+            [
+              _s(r.guardia), '${r.dias}', '${r.n12}', '${r.n24}', '${r.n36}', h1(r.horas),
+              _hm(r.aFavor), _hm(r.enContra), _safe(Turnos.saldo(r.saldo)),
+            ],
+        ]));
+      }
       for (final pu in ed.value) {
         cuerpo.add(pw.SizedBox(height: 14));
         cuerpo.add(_titulo(_safe('${ed.key} - ${pu.nombre}')));
         // Cuenta entre guardias
         for (final b in pu.balances) {
           final txt = b.aMano
-              ? '${b.a} y ${b.b}: estan a mano (${h1(b.aEsperoPorB)} h / ${h1(b.bEsperoPorA)} h de espera).'
-              : 'BENEFICIARIO: ${b.beneficiario} con ${h1(b.horas)} h '
-                  '(le debe a ${b.acreedor}). Espera: ${b.a} ${h1(b.aEsperoPorB)} h, ${b.b} ${h1(b.bEsperoPorA)} h.';
+              ? '${b.a} y ${b.b}: estan a mano (${_hm(b.aEsperoPorB)} / ${_hm(b.bEsperoPorA)} cubiertas).'
+              : 'BENEFICIARIO: ${b.beneficiario} con ${_hm(b.horas)} '
+                  '(le debe a ${b.acreedor}). Cubrio: ${b.a} ${_hm(b.aEsperoPorB)}, ${b.b} ${_hm(b.bEsperoPorA)}.';
           cuerpo.add(pw.Container(
             margin: const pw.EdgeInsets.only(top: 6),
             padding: const pw.EdgeInsets.all(8),
@@ -658,24 +608,25 @@ class PdfExport {
                 style: pw.TextStyle(fontSize: 9.5, fontWeight: b.aMano ? pw.FontWeight.normal : pw.FontWeight.bold)),
           ));
         }
-        // Resumen por guardia
-        final res = pu.guardias.values.toList()..sort((a, b) => a.guardia.compareTo(b.guardia));
-        cuerpo.add(_tabla('Resumen', ['Guardia', 'Dias', '12 h', '24 h', '36 h', 'Horas', 'Extra', 'Tarde'], [
-          for (final r in res)
-            [_s(r.guardia), '${r.dias}', '${r.n12}', '${r.n24}', '${r.n36}', h1(r.horas), h1(r.extra), '${r.vecesTarde}'],
-        ]));
-        // Detalle día por día
-        cuerpo.add(_tabla('Detalle', ['Dia', 'Guardia', 'Ingreso', 'Salida', 'Turno', 'Horas', 'Extra', 'Relevado por'], [
+        // Detalle día por día (auditable: horario programado, horas reales y
+        // de dónde sale cada hora a favor / en contra).
+        cuerpo.add(_tabla('Detalle',
+            ['Dia', 'Guardia', 'Ingreso', 'Salida', 'Turno', 'Horas', 'Saldo', 'Origen'], [
           for (final t in pu.turnos)
             [
               _safe(dia.format(t.inicio)),
               _s(t.guardia),
-              hm.format(t.inicio) + (t.atraso > 0 ? ' (tarde)' : ''),
-              t.fin == null ? 'En turno' : _safe(DateFormat('dd/MM HH:mm').format(t.fin!)),
-              '${t.nivel} h',
-              t.fin == null ? '-' : h1(t.horas),
-              t.extra > 0 ? h1(t.extra) : '0',
-              _s(t.relevadoPor ?? '-'),
+              hm.format(t.inicio),
+              t.fin == null ? '-' : _safe(DateFormat('dd/MM HH:mm').format(t.fin!)),
+              t.valido ? '${t.nivel} h' : _s(t.estado),
+              t.cerrado ? h1(t.horas) : '-',
+              t.movimientos.isEmpty ? '0' : _safe(Turnos.saldo(t.saldo)),
+              _safe([
+                for (final m in t.movimientos)
+                  '${Turnos.saldo(m.horas)} ${m.motivo}${m.con != null ? ' (${m.con})' : ''} '
+                      '${hm.format(m.programado)}/${hm.format(m.real)}',
+                if (t.corregido) 'Corregido',
+              ].join('; ')),
             ],
         ]));
       }
@@ -811,6 +762,19 @@ class PdfExport {
     }
     return b.toString();
   }
+
+  /// Horas sin signo: "3 h 30 min" / "0 h".
+  static String _hm(double horas) {
+    final m = (horas * 60).round().abs();
+    return m == 0 ? '0 h' : _safe(Turnos.duracion(Duration(minutes: m)));
+  }
+
+  static String _reglaHoras(int tolMin) =>
+      'Turno normal 12 h (diurno 08:00-20:00, nocturno 20:00-08:00, o el horario de relevo del celular). '
+      'En cada relevo: si el que entra llega tarde, esas horas son A FAVOR del que espero y EN CONTRA del '
+      'que llego tarde; si el que sale se va antes, son EN CONTRA suyo y A FAVOR del que lo cubrio. '
+      'Saldo = a favor - en contra. Tolerancia $tolMin min: hasta ese margen no cuenta; pasado el margen '
+      'se cuentan todos los minutos. Beneficiario = el que hizo cubrir mas horas al otro en el mes.';
 
   static String _s(Object? v) {
     final s = _safe(v?.toString() ?? '');

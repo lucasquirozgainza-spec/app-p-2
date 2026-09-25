@@ -36,7 +36,10 @@ ThemeData buildTheme() {
       style: FilledButton.styleFrom(
         backgroundColor: AppColors.azulMarino,
         foregroundColor: Colors.white,
-        minimumSize: const Size.fromHeight(54),
+        // Alto mínimo 54 pero ancho según el contenido: con ancho infinito los
+        // botones de los diálogos se apilaban en dos filas y el botón "Listo"
+        // de la cámara (en la barra superior) no podía medirse.
+        minimumSize: const Size(64, 54),
         textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../db/database_helper.dart';
 import '../services/app_state.dart';
+import '../services/horas_local.dart';
+import '../services/panel_horas.dart';
 import '../services/turnos.dart';
 import '../services/pdf_export.dart';
 import '../theme.dart';
@@ -15,21 +16,11 @@ class ReportePersonalScreen extends StatefulWidget {
   State<ReportePersonalScreen> createState() => _ReportePersonalScreenState();
 }
 
-class _Resumen {
-  String nombre;
-  final Set<String> dias = {};
-  double horas = 0;
-  int dobles = 0;
-  double extra = 0;
-  int turnos = 0;
-  int abiertos = 0;
-  _Resumen(this.nombre);
-}
-
 class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
   DateTime _mes = DateTime(DateTime.now().year, DateTime.now().month);
-  List<_Resumen> _data = [];
+  List<ResumenGuardia> _data = [];
   bool _loading = true;
+  bool _soloEsteCelular = false; // sin señal: solo los turnos de este celular
 
   @override
   void initState() {
@@ -42,50 +33,28 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
     _cargar();
   }
 
+  int _carga = 0;
+
+  /// Mismo cálculo que la pantalla Guardias y los PDF (PanelHoras).
   Future<void> _cargar() async {
+    final carga = ++_carga;
+    final mes = _mes;
     setState(() => _loading = true);
-    final db = await DB.instance.database;
-    final ed = AppState.instance.edificioId;
-    final desde = DateTime(_mes.year, _mes.month, 1);
-    final hasta = DateTime(_mes.year, _mes.month + 1, 1);
-    final di = desde.toIso8601String();
-    final ha = hasta.toIso8601String();
-
-    final ingresos = await db.query('ingreso_turno',
-        where: 'edificio=? AND created_at>=? AND created_at<?',
-        whereArgs: [ed, di, ha], orderBy: 'created_at');
-    final salidas = await db.query('salida_turno', where: 'edificio=?', whereArgs: [ed]);
-    final salidaPorTurno = <int, String>{};
-    for (final s in salidas) {
-      if (s['turno_id'] != null) salidaPorTurno[s['turno_id'] as int] = s['created_at'] as String;
+    List<ResumenGuardia> list;
+    bool local = false;
+    try {
+      final h = await HorasPanel.edificio(mes);
+      local = h.local && !AppState.instance.soloLocal;
+      list = PanelHoras.porGuardia(h.puestos).values.toList()
+        ..sort((a, b) => b.horas.compareTo(a.horas));
+    } catch (_) {
+      list = [];
     }
-
-    final mapa = <String, _Resumen>{};
-    for (final ing in ingresos) {
-      final nombre = (ing['guardia_nombre']?.toString() ?? 'Sin nombre');
-      final r = mapa.putIfAbsent(nombre, () => _Resumen(nombre));
-      final inicio = DateTime.parse(ing['created_at'] as String);
-      r.dias.add(DateFormat('yyyy-MM-dd').format(inicio));
-      r.turnos++;
-      final salStr = salidaPorTurno[ing['id']];
-      if (salStr != null) {
-        final fin = DateTime.parse(salStr);
-        final horas = fin.difference(inicio).inMinutes / 60.0;
-        if (horas > 0 && horas < 60) {
-          // Regla única (Turnos): turno declarado 12/24/36; si falta, por horas.
-          final nivel = Turnos.nivelValido(ing['nivel']) ?? Turnos.nivelPorHoras(horas);
-          r.horas += horas;
-          r.dobles += Turnos.dobles(nivel);
-          r.extra += AppState.instance.horasExtra(inicio, fin, nivel: nivel);
-        }
-      } else {
-        r.abiertos++;
-      }
-    }
-    final list = mapa.values.toList()..sort((a, b) => b.horas.compareTo(a.horas));
-    if (!mounted) return;
+    // Si se cambió de mes mientras cargaba, este resultado ya no vale.
+    if (!mounted || carga != _carga) return;
     setState(() {
       _data = list;
+      _soloEsteCelular = local;
       _loading = false;
     });
   }
@@ -123,6 +92,12 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
               ],
             ),
           ),
+          if (_soloEsteCelular && !_loading)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Text('Sin conexión: solo los turnos de este celular.',
+                  style: TextStyle(fontSize: 12, color: Color(0xFFEF6C00))),
+            ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -145,7 +120,7 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
                                         child: Icon(Icons.shield, color: AppColors.azulMarino)),
                                     const SizedBox(width: 10),
                                     Expanded(
-                                      child: Text(r.nombre,
+                                      child: Text(r.guardia,
                                           maxLines: 1, overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                                     ),
@@ -155,11 +130,13 @@ class _ReportePersonalScreenState extends State<ReportePersonalScreen> {
                                     spacing: 8,
                                     runSpacing: 8,
                                     children: [
-                                      _chip('Dias', '${r.dias.length}', AppColors.azulMarino),
+                                      _chip('Dias', '${r.dias}', AppColors.azulMarino),
                                       _chip('Horas', r.horas.toStringAsFixed(1), AppColors.verde),
-                                      _chip('Turnos 24h', '${r.dobles}', const Color(0xFF6A1B9A)),
-                                      _chip('Horas extra', r.extra.toStringAsFixed(1), const Color(0xFFEF6C00)),
-                                      if (r.abiertos > 0) _chip('En turno', '${r.abiertos}', Colors.teal),
+                                      _chip('24 h', '${r.n24}', const Color(0xFF6A1B9A)),
+                                      _chip('36 h', '${r.n36}', const Color(0xFF6A1B9A)),
+                                      _chip('Saldo', Turnos.saldo(r.saldo),
+                                          r.saldo > 0 ? AppColors.verde : (r.saldo < 0 ? AppColors.rojo : Colors.blueGrey)),
+                                      if (r.incompletos > 0) _chip('Incompletos', '${r.incompletos}', Colors.teal),
                                     ],
                                   ),
                                 ],

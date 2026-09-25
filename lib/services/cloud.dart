@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../db/database_helper.dart';
 import 'app_state.dart';
 import 'img_util.dart';
 
@@ -66,7 +67,11 @@ class Cloud {
         await prefs.setString('device_uid', uid);
       }
       deviceId = uid;
-    } catch (_) {}
+    } catch (_) {
+      // Sin preferencias: id temporal propio (nunca el genérico "device",
+      // que es igual en todos los celulares).
+      if (deviceId == 'device') deviceId = 'tmp_${DateTime.now().microsecondsSinceEpoch}';
+    }
     enabled = true;
   }
 
@@ -97,70 +102,150 @@ class Cloud {
   }
 
   /// Sube un evento (turno, visita, ronda, incidente...) a la nube.
-  static Future<void> evento(String tipo, {String? guardia, Map<String, dynamic>? detalle}) async {
+  ///
+  /// El evento se guarda PRIMERO en la cola local (tabla cola_nube) y después
+  /// se envía. Así, sin señal no se pierde: se reintenta en cada latido.
+  /// Cada evento lleva un `uid` único y la hora REAL (`ts`) en el detalle:
+  /// - el uid evita duplicados si un envío llegó al servidor pero la respuesta
+  ///   se cortó (antes de reenviar se pregunta si ya existe);
+  /// - ts es la hora en que pasó, aunque se suba horas después (created_at
+  ///   en la nube es la hora de SUBIDA).
+  /// [edificio]: por defecto el activo de este celular.
+  static Future<void> evento(String tipo,
+      {String? guardia, String? edificio, Map<String, dynamic>? detalle}) async {
     if (AppState.instance.soloLocal) return; // edificio sin conexión
+    await _encolar({
+      'tipo': tipo,
+      'edificio': edificio ?? AppState.instance.edificioId,
+      'guardia': guardia ?? AppState.instance.userNombre,
+      // Se adjunta el bloque de este celular para distinguir el origen
+      // dentro del mismo edificio (los dos bloques cruzan datos igual).
+      'detalle': {
+        ...(detalle ?? const {}),
+        if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
+      },
+    });
+  }
+
+  static int _seq = 0;
+  static String nuevoUid() =>
+      '${deviceId}_${DateTime.now().microsecondsSinceEpoch}_${(_seq++) % 1000}';
+
+  static Future<void> _encolar(Map<String, dynamic> fila) async {
+    final uid = nuevoUid();
+    final det = Map<String, dynamic>.from((fila['detalle'] as Map?) ?? const {});
+    det['uid'] = uid;
+    det['ts'] ??= DateTime.now().toUtc().toIso8601String();
+    final body = jsonEncode({...fila, 'detalle': det, 'device_id': deviceId});
     try {
-      final r = await http.post(
-        Uri.parse('$_rest/eventos'),
-        headers: {..._h, 'Prefer': 'return=minimal'},
-        body: jsonEncode({
-          'tipo': tipo,
-          'edificio': AppState.instance.edificioId,
-          'guardia': guardia ?? AppState.instance.userNombre,
-          // Se adjunta el bloque de este celular para distinguir el origen
-          // dentro del mismo edificio (los dos bloques cruzan datos igual).
-          'detalle': {
-            ...(detalle ?? const {}),
-            if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
-          },
-          'device_id': deviceId,
-        }),
-      ).timeout(const Duration(seconds: 12));
-      if (r.statusCode >= 300) lastError = 'evento ${r.statusCode}: ${r.body}';
+      final db = await DB.instance.database;
+      await db.insert('cola_nube', {
+        'uid': uid,
+        'body': body,
+        'intentos': 0,
+        'created_at': DateTime.now().toIso8601String(),
+      });
     } catch (e) {
-      lastError = 'evento: $e';
+      // Si la base local fallara, al menos intentarlo directo una vez.
+      lastError = 'cola: $e';
+      try {
+        await http.post(Uri.parse('$_rest/eventos'),
+                headers: {..._h, 'Prefer': 'return=minimal'}, body: body)
+            .timeout(const Duration(seconds: 12));
+      } catch (_) {}
+      return;
+    }
+    // No se espera: la pantalla sigue al instante.
+    vaciarCola();
+  }
+
+  static bool _vaciando = false;
+
+  /// Envía lo pendiente de la cola, en orden. Nunca corre dos veces a la vez.
+  /// Se llama al crear un evento, al arrancar y en cada latido.
+  static Future<void> vaciarCola() async {
+    if (_vaciando || AppState.instance.soloLocal) return;
+    _vaciando = true;
+    try {
+      final db = await DB.instance.database;
+      while (true) {
+        final filas = await db.query('cola_nube', orderBy: 'rowid', limit: 20);
+        if (filas.isEmpty) break;
+        for (final row in filas) {
+          final uid = row['uid'] as String;
+          final intentos = (row['intentos'] as int?) ?? 0;
+          // Un reintento puede ser de un envío que SÍ llegó (se cortó la
+          // respuesta): si ya está en la nube, no se vuelve a subir.
+          if (intentos > 0) {
+            final q = await http
+                .get(Uri.parse('$_rest/eventos?select=id&detalle->>uid=eq.${Uri.encodeComponent(uid)}&limit=1'),
+                    headers: _h)
+                .timeout(const Duration(seconds: 12));
+            if (q.statusCode < 300 && q.body.trim() != '[]') {
+              await db.delete('cola_nube', where: 'uid=?', whereArgs: [uid]);
+              continue;
+            }
+          }
+          await db.rawUpdate('UPDATE cola_nube SET intentos = intentos + 1 WHERE uid=?', [uid]);
+          final r = await http
+              .post(Uri.parse('$_rest/eventos'),
+                  headers: {..._h, 'Prefer': 'return=minimal'}, body: row['body'] as String)
+              .timeout(const Duration(seconds: 12));
+          final c = r.statusCode;
+          if (c < 300) {
+            await db.delete('cola_nube', where: 'uid=?', whereArgs: [uid]);
+          } else if (c >= 400 && c < 500 && c != 408 && c != 429) {
+            // Rechazo definitivo (fila inválida): se descarta para no trabar
+            // la cola para siempre.
+            lastError = 'evento $c: ${r.body}';
+            await db.delete('cola_nube', where: 'uid=?', whereArgs: [uid]);
+          } else {
+            lastError = 'evento $c: ${r.body}';
+            return; // servidor con problemas: se reintenta en el próximo latido
+          }
+        }
+      }
+    } catch (e) {
+      lastError = 'cola: $e'; // sin señal: se reintenta después
+    } finally {
+      _vaciando = false;
+    }
+  }
+
+  /// Eventos que todavía no llegaron a la nube.
+  static Future<int> pendientes() async {
+    try {
+      final db = await DB.instance.database;
+      final r = await db.rawQuery('SELECT COUNT(*) AS n FROM cola_nube');
+      return (r.first['n'] as int?) ?? 0;
+    } catch (_) {
+      return 0;
     }
   }
 
   /// El admin publica la configuración (módulos) de un edificio para que los
   /// OTROS dispositivos de ese edificio la reciban. Se guarda como un evento
-  /// 'Config' con el JSON de módulos.
+  /// 'Config' con el JSON de módulos. Pasa por la cola (no se pierde sin red).
   static Future<void> pushConfig(String edificio, String modulosJson) async {
-    try {
-      await http.post(
-        Uri.parse('$_rest/eventos'),
-        headers: {..._h, 'Prefer': 'return=minimal'},
-        body: jsonEncode({
-          'tipo': 'Config',
-          'edificio': edificio,
-          'guardia': AppState.instance.userNombre ?? 'Admin',
-          'detalle': {'modulos': modulosJson},
-          'device_id': deviceId,
-        }),
-      ).timeout(const Duration(seconds: 12));
-    } catch (e) {
-      lastError = 'pushConfig: $e';
-    }
+    if (AppState.instance.soloLocal) return;
+    await _encolar({
+      'tipo': 'Config',
+      'edificio': edificio,
+      'guardia': AppState.instance.userNombre ?? 'Admin',
+      'detalle': {'modulos': modulosJson},
+    });
   }
 
   /// Publica la contraseña de admin (hash + salt, NO texto plano) para que los
   /// otros dispositivos la adopten. Se guarda como evento 'AdminPass'.
   static Future<void> pushAdminPass(String usuario, String salt, String hash) async {
-    try {
-      await http.post(
-        Uri.parse('$_rest/eventos'),
-        headers: {..._h, 'Prefer': 'return=minimal'},
-        body: jsonEncode({
-          'tipo': 'AdminPass',
-          'edificio': '*',
-          'guardia': 'Admin',
-          'detalle': {'usuario': usuario, 'salt': salt, 'hash': hash},
-          'device_id': deviceId,
-        }),
-      ).timeout(const Duration(seconds: 12));
-    } catch (e) {
-      lastError = 'pushAdminPass: $e';
-    }
+    if (AppState.instance.soloLocal) return;
+    await _encolar({
+      'tipo': 'AdminPass',
+      'edificio': '*',
+      'guardia': 'Admin',
+      'detalle': {'usuario': usuario, 'salt': salt, 'hash': hash},
+    });
   }
 
   /// Trae la última contraseña de admin publicada (o null).
@@ -245,7 +330,10 @@ class Cloud {
   }
 
   /// Lee eventos recientes. Con [edificio] solo trae los de ese edificio.
-  static Future<List<Map<String, dynamic>>> eventos({String? tipo, String? edificio, int limit = 120}) async {
+  /// [lanzar]: si falla, lanza la excepción en vez de devolver [] (para
+  /// quien necesita distinguir "sin datos" de "no se pudo leer").
+  static Future<List<Map<String, dynamic>>> eventos(
+      {String? tipo, String? edificio, int limit = 120, bool lanzar = false}) async {
     if (AppState.instance.soloLocal) return [];
     try {
       final params = <String>['select=*', 'order=created_at.desc', 'limit=$limit'];
@@ -255,45 +343,76 @@ class Cloud {
           .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) {
         lastError = 'eventos ${r.statusCode}: ${r.body}';
+        if (lanzar) throw Exception(lastError);
         return [];
       }
       return List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
     } catch (e) {
       lastError = 'eventos: $e';
+      if (lanzar) rethrow;
       return [];
     }
   }
 
-  /// Eventos de turno (ingreso/salida) del mes actual, de TODOS los edificios.
-  /// Ingresos/salidas de un mes ([mes] = cualquier día de ese mes; por defecto
-  /// el actual). Incluye 1 día antes para no perder turnos que cruzan de mes.
-  static Future<List<Map<String, dynamic>>> eventosTurnoMes({DateTime? mes}) async {
+  /// Hora REAL de un evento de la nube, en hora local: la que registró el
+  /// celular (detalle.ts) o, en eventos viejos, la de subida (created_at).
+  static DateTime? horaEvento(Map<String, dynamic> e) {
+    final det = e['detalle'];
+    final ts = det is Map ? det['ts'] : null;
+    final t = DateTime.tryParse('${ts ?? e['created_at'] ?? ''}');
+    return t?.toLocal();
+  }
+
+  /// Eventos de turno (ingreso, salida, 24/36 h y correcciones) de un mes
+  /// ([mes] = cualquier día de ese mes; por defecto el actual), de TODOS los
+  /// edificios o solo de [edificio].
+  static Future<List<Map<String, dynamic>>> eventosTurnoMes(
+      {DateTime? mes, String? edificio, bool lanzar = false}) async {
     if (AppState.instance.soloLocal) return [];
     try {
       final m = mes ?? DateTime.now();
-      final desde = DateTime(m.year, m.month, 1).subtract(const Duration(days: 1)).toUtc().toIso8601String();
-      final hasta = DateTime(m.year, m.month + 1, 1).add(const Duration(days: 2)).toUtc().toIso8601String();
-      final inval = '("Ingreso de turno","Salida de turno")';
-      final params = [
-        'select=*',
+      // 2 días antes (un turno de 36 h que termina en el mes empezó antes) y
+      // 3 después (relevos del borde y eventos subidos tarde, sin señal).
+      final desde = DateTime(m.year, m.month, 1).subtract(const Duration(days: 2)).toUtc().toIso8601String();
+      final hasta = DateTime(m.year, m.month + 1, 1).add(const Duration(days: 3)).toUtc().toIso8601String();
+      final ed = edificio != null ? ['edificio=eq.${Uri.encodeComponent(edificio)}'] : const <String>[];
+      final inval = '("Ingreso de turno","Salida de turno","Doblar turno")';
+      final turnos = await _paginas([
         'tipo=in.${Uri.encodeComponent(inval)}',
         'created_at=gte.${Uri.encodeComponent(desde)}',
         'created_at=lt.${Uri.encodeComponent(hasta)}',
-        'order=created_at.asc',
-        'limit=5000',
-      ];
+        ...ed,
+      ]);
+      // Las correcciones pueden hacerse semanas después: sin límite superior.
+      final correcciones = await _paginas([
+        'tipo=eq.${Uri.encodeComponent('Corrección de turno')}',
+        'created_at=gte.${Uri.encodeComponent(desde)}',
+        ...ed,
+      ]);
+      return [...turnos, ...correcciones];
+    } catch (e) {
+      lastError = 'turnos: $e';
+      if (lanzar) rethrow;
+      return [];
+    }
+  }
+
+  /// Lee TODAS las filas de una consulta, de a 1000 (el servidor no entrega
+  /// más de 1000 por pedido: con un solo pedido se perdían los más nuevos).
+  static Future<List<Map<String, dynamic>>> _paginas(List<String> filtros) async {
+    const pagina = 1000;
+    final out = <Map<String, dynamic>>[];
+    for (int offset = 0; offset < 50000; offset += pagina) {
+      final params = ['select=*', ...filtros, 'order=created_at.asc,id.asc', 'limit=$pagina', 'offset=$offset'];
       final r = await http
           .get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
           .timeout(const Duration(seconds: 25));
-      if (r.statusCode >= 300) {
-        lastError = 'turnos ${r.statusCode}: ${r.body}';
-        return [];
-      }
-      return List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
-    } catch (e) {
-      lastError = 'turnos: $e';
-      return [];
+      if (r.statusCode >= 300) throw Exception('turnos ${r.statusCode}: ${r.body}');
+      final lote = List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
+      out.addAll(lote);
+      if (lote.length < pagina) break;
     }
+    return out;
   }
 
   /// Borra eventos de la nube (para liberar espacio en Supabase). Si se pasa
@@ -304,18 +423,31 @@ class Cloud {
     if (AppState.instance.soloLocal) return;
     try {
       final corte = DateTime.now().subtract(Duration(days: dias)).toUtc().toIso8601String();
-      await http.delete(Uri.parse('$_rest/eventos?created_at=lt.${Uri.encodeComponent(corte)}'), headers: _h)
+      // Solo los de ESTE edificio (cada edificio tiene su propio periodo) y
+      // nunca los de configuración/guardias: sin ellos un celular nuevo
+      // quedaría sin módulos, sin guardias y sin contraseña de admin.
+      final ed = AppState.instance.edificioId;
+      await http
+          .delete(
+              Uri.parse('$_rest/eventos?created_at=lt.${Uri.encodeComponent(corte)}'
+                  '&edificio=eq.${Uri.encodeComponent(ed)}&$_noSync'),
+              headers: _h)
           .timeout(const Duration(seconds: 20));
     } catch (e) {
       lastError = 'borrarViejos: $e';
     }
   }
 
+  static final String _noSync =
+      'tipo=not.in.${Uri.encodeComponent('(Config,AdminPass,Guardia,GuardiaBaja)')}';
+
   static Future<bool> borrarEventos({String? edificio}) async {
     try {
+      // PostgREST exige un filtro. Nunca se borran los eventos de
+      // configuración y guardias (los necesitan los celulares nuevos).
       final filtro = edificio != null
-          ? 'edificio=eq.${Uri.encodeComponent(edificio)}'
-          : 'id=gte.0'; // PostgREST exige un filtro; este abarca todos.
+          ? 'edificio=eq.${Uri.encodeComponent(edificio)}&$_noSync'
+          : 'id=gte.0&$_noSync';
       final r = await http.delete(Uri.parse('$_rest/eventos?$filtro'), headers: _h)
           .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) {
@@ -329,10 +461,13 @@ class Cloud {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> presencia() async {
+  /// Presencia de los celulares. Con [edificio], solo los de ese edificio
+  /// (un guardia no descarga los datos ni la ubicación de otros edificios).
+  static Future<List<Map<String, dynamic>>> presencia({String? edificio}) async {
     if (AppState.instance.soloLocal) return [];
     try {
-      final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc'), headers: _h)
+      final f = edificio == null ? '' : '&edificio=eq.${Uri.encodeComponent(edificio)}';
+      final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc$f'), headers: _h)
           .timeout(const Duration(seconds: 15));
       if (r.statusCode >= 300) {
         lastError = 'presencia ${r.statusCode}: ${r.body}';

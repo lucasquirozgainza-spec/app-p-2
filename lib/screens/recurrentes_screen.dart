@@ -115,6 +115,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Ingreso de ${r['nombre']}'),
+        scrollable: true, // con el teclado abierto no desborda
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text('¿A qué departamento ingresa esta vez?'),
           const SizedBox(height: 10),
@@ -191,7 +192,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
             ? const Center(child: Padding(padding: EdgeInsets.all(24),
                 child: Text('Aún no hay visitas recurrentes.\nToca "Registrar" para agregar una.', textAlign: TextAlign.center)))
             : ListView(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
                 children: [
                   for (final d in deptos)
                     Card(
@@ -227,7 +228,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
         child: gente.isEmpty
             ? const Center(child: Text('Sin personas en este depto'))
             : ListView.builder(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
                 itemCount: gente.length,
                 itemBuilder: (_, i) => _tarjetaPersona(gente[i]),
               ),
@@ -341,11 +342,17 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
 
   Future<void> _fotoCarnet() async {
     final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
-    if (res == null || res.isEmpty) return;
+    if (res == null || res.isEmpty || !mounted) return;
     setState(() { _fotosCarnet = res; _leyendo = true; });
     () async {
-      final d = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
-      if (!mounted) return;
+      CarnetData d;
+      try {
+        d = await OcrService.leerCarnetDosLados(res[0], res.length > 1 ? res[1] : null);
+      } catch (_) {
+        d = CarnetData(null, null);
+      }
+      // Si se repitió la foto, solo vale la lectura de la última.
+      if (!mounted || !identical(_fotosCarnet, res)) return;
       setState(() {
         _leyendo = false;
         if (d.nombre != null && _nombre.text.trim().isEmpty) _nombre.text = d.nombre!;

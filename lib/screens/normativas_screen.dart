@@ -146,7 +146,7 @@ class _NormativasScreenState extends State<NormativasScreen> {
       body: _rows.isEmpty
           ? const Center(child: Text('Sin documentos. El admin puede cargar PDF o imagenes.'))
           : ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               itemCount: _rows.length,
               itemBuilder: (_, i) {
                 final n = _rows[i];

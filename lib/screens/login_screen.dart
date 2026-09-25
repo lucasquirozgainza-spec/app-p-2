@@ -82,12 +82,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                       Text(_error!, style: const TextStyle(color: AppColors.rojo, fontWeight: FontWeight.w600)),
                     ],
                     const SizedBox(height: 20),
-                    FilledButton(
+                    SizedBox(width: double.infinity, child: FilledButton(
                       onPressed: _loading ? null : _ingresar,
                       child: _loading
                           ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
                           : const Text('Ingresar'),
-                    ),
+                    )),
                   ],
                 ),
               ),

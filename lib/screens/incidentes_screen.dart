@@ -116,7 +116,7 @@ class _IncidentesScreenState extends State<IncidentesScreen> {
       body: _rows.isEmpty
           ? const Center(child: Text('Sin incidentes'))
           : ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               itemCount: _rows.length,
               itemBuilder: (_, i) {
                 final x = _rows[i];

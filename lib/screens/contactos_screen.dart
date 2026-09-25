@@ -43,6 +43,7 @@ class _ContactosScreenState extends State<ContactosScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: Text(existente == null ? 'Nuevo contacto' : 'Editar contacto'),
+        scrollable: true, // con el teclado abierto no desborda
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(controller: nombre, decoration: const InputDecoration(labelText: 'Nombre (ej. Saguapac, Bomberos)')),
           const SizedBox(height: 8),
@@ -94,7 +95,7 @@ class _ContactosScreenState extends State<ContactosScreen> {
       body: _rows.isEmpty
           ? const Center(child: Text('Sin contactos. Toca "Agregar".'))
           : ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               itemCount: _rows.length,
               itemBuilder: (_, i) {
                 final c = _rows[i];

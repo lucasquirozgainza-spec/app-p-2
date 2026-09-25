@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import 'app_state.dart';
@@ -16,8 +17,16 @@ class ConfigSync {
       final cfg = await Cloud.ultimaConfig(ed);
       if (cfg == null) return false;
       final createdAt = cfg['created_at']?.toString() ?? '';
-      final modulos = cfg['modulos']?.toString() ?? '';
+      // Solo se acepta un JSON de objeto válido: un valor raro guardado en la
+      // nube dejaba a todos los celulares del edificio trabados al arrancar.
+      final raw = cfg['modulos'];
+      final modulos = raw is String ? raw : (raw is Map ? jsonEncode(raw) : '');
       if (createdAt.isEmpty || modulos.isEmpty) return false;
+      try {
+        if (jsonDecode(modulos) is! Map) return false;
+      } catch (_) {
+        return false;
+      }
 
       final prefs = await SharedPreferences.getInstance();
       final key = 'config_at_$ed';
@@ -54,8 +63,10 @@ class ConfigSync {
     try {
       final ed = AppState.instance.edificioId;
       final res = await Future.wait([
-        Cloud.eventos(tipo: 'Guardia', edificio: ed, limit: 300),
-        Cloud.eventos(tipo: 'GuardiaBaja', edificio: ed, limit: 300),
+        // lanzar: si UNA de las dos falla no se aplica nada (con solo las
+        // altas, un guardia dado de baja volvía a aparecer).
+        Cloud.eventos(tipo: 'Guardia', edificio: ed, limit: 300, lanzar: true),
+        Cloud.eventos(tipo: 'GuardiaBaja', edificio: ed, limit: 300, lanzar: true),
       ]);
       _ultimaSyncGuardias = ahora;
       // Último evento por nombre (clave en minúsculas).
@@ -67,9 +78,12 @@ class ConfigSync {
         if (nombre.isEmpty) continue;
         final k = nombre.toLowerCase();
         final prev = ultimo[k];
-        final t = (e['created_at'] ?? '').toString();
-        if (prev == null || t.compareTo((prev['created_at'] ?? '').toString()) > 0) {
-          ultimo[k] = {...e, '_nombre': nombre, '_det': d};
+        // Hora real del evento (ts) y no la de subida: una baja hecha sin
+        // señal y subida después no debe ganarle a una alta posterior.
+        final t = Cloud.horaEvento(e);
+        if (t == null) continue;
+        if (prev == null || t.isAfter(prev['_t'] as DateTime)) {
+          ultimo[k] = {...e, '_nombre': nombre, '_det': d, '_t': t};
         }
       }
       if (ultimo.isEmpty) return;
@@ -86,8 +100,10 @@ class ConfigSync {
         final d = e['_det'] as Map;
         if (e['tipo'] == 'GuardiaBaja') {
           if (existentes.contains(k)) {
+            // Solo el de este edificio: los usuarios sin edificio son
+            // compartidos por todos los edificios del celular.
             batch.delete('usuarios',
-                where: "LOWER(nombre)=? AND rol!='admin' AND (edificio=? OR edificio IS NULL OR edificio='')",
+                where: "LOWER(nombre)=? AND rol!='admin' AND edificio=?",
                 whereArgs: [k, ed]);
           }
         } else if (!existentes.contains(k)) {
