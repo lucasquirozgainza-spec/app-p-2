@@ -21,13 +21,14 @@ class DB {
     final path = p.join(dir.path, 'condocontrol.db');
     return openDatabase(
       path,
-      version: 16,
+      version: 17,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, v) async {
         await _createSchema(db);
         await _crearCola(db);
+        await _v17(db);
         await _crearIndices(db);
         await _seed(db);
       },
@@ -124,6 +125,7 @@ class DB {
           } catch (_) {}
         }
         if (oldV < 16) await _crearCola(db);
+        if (oldV < 17) await _v17(db);
       },
     );
   }
@@ -137,6 +139,34 @@ class DB {
       body TEXT NOT NULL,
       intentos INTEGER DEFAULT 0,
       created_at TEXT)''');
+  }
+
+  /// v17: estructura EDIFICIO → UNIDAD → GUARDIA con ids de la nube.
+  /// - usuarios.guard_uuid: el id ÚNICO del guardia en la nube (el guardia
+  ///   local es una copia; un guardia nuevo nunca reutiliza un id viejo).
+  /// - ingreso/salida/advertencias guardan ese id: las horas se calculan
+  ///   SOLO con los registros de cada guardia.
+  /// - cola_nube.tabla: la cola también sirve para las advertencias.
+  Future<void> _v17(Database db) async {
+    const cols = {
+      'usuarios': ['guard_uuid TEXT', 'unit_id TEXT', 'turno TEXT', 'documento TEXT', 'telefono TEXT',
+          'fecha_inicio TEXT', 'fecha_fin TEXT'],
+      'ingreso_turno': ['guard_uuid TEXT', 'unit_id TEXT'],
+      'salida_turno': ['guard_uuid TEXT'],
+      'advertencias': ['guard_uuid TEXT'],
+      'cola_nube': ["tabla TEXT DEFAULT 'eventos'"],
+    };
+    for (final e in cols.entries) {
+      for (final c in e.value) {
+        try {
+          await db.execute('ALTER TABLE ${e.key} ADD COLUMN $c');
+        } catch (_) {} // ya existía
+      }
+    }
+    try {
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_usuarios_guard ON usuarios(guard_uuid)');
+      await db.execute('CREATE INDEX IF NOT EXISTS ix_ingreso_guard ON ingreso_turno(guard_uuid, activo)');
+    } catch (_) {}
   }
 
   /// Índices para que las consultas sean rápidas aunque haya muchos registros.

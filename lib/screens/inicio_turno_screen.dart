@@ -4,6 +4,8 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
+import '../services/estructura.dart';
+import '../services/sesion.dart';
 import '../services/config_sync.dart';
 import '../services/device_context.dart';
 import '../services/uniform_check.dart';
@@ -55,11 +57,19 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
 
   Future<void> _cargarLocales() async {
     final db = await DB.instance.database;
-    final rows = await db.query('usuarios',
-        where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1 "
-            "AND (edificio=? OR edificio IS NULL OR edificio='')",
-        whereArgs: [AppState.instance.edificioId],
-        orderBy: 'nombre COLLATE NOCASE');
+    // Celular vinculado: SOLO los guardias de la nube de ESTA unidad (torre).
+    // Los guardias de otra torre o del sistema anterior no aparecen.
+    final rows = Sesion.vinculado
+        ? await db.query('usuarios',
+            where: 'guard_uuid IS NOT NULL AND activo=1 AND edificio=?'
+                '${Sesion.esGuardia ? ' AND unit_id=?' : ''}',
+            whereArgs: [AppState.instance.edificioId, if (Sesion.esGuardia) Sesion.unitId],
+            orderBy: 'turno, nombre COLLATE NOCASE')
+        : await db.query('usuarios',
+            where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1 "
+                "AND (edificio=? OR edificio IS NULL OR edificio='')",
+            whereArgs: [AppState.instance.edificioId],
+            orderBy: 'nombre COLLATE NOCASE');
     if (!mounted) return;
     setState(() {
       _guardias = [for (final r in rows) Map<String, dynamic>.from(r)];
@@ -145,6 +155,14 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     }
   }
 
+  /// Advertencia automática en la tarjeta del guardia (celular vinculado).
+  void _advertir(String? guard, String motivo, String descripcion) {
+    final bid = Sesion.buildingId ?? Estructura.idEdificio(AppState.instance.edificioId);
+    if (guard == null || bid == null) return;
+    Cloud.advertencia(guardId: guard, buildingId: bid, motivo: motivo, descripcion: descripcion,
+        registradoPor: 'Sistema (inicio de turno)');
+  }
+
   Future<void> _registrarIngreso() async {
     final s = AppState.instance;
     final sel = _sel!;
@@ -161,7 +179,8 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
           nombre: '${sel['nombre'] ?? ''}',
           cargo: sel['cargo'] as String?,
           rol: sel['rol'] as String?,
-          turnoId: ya.first['id'] as int);
+          turnoId: ya.first['id'] as int,
+          guard: sel['guard_uuid'] as String?);
       if (!mounted) return;
       TopToast.show(context, '${sel['nombre']} ya tiene un turno abierto',
           color: const Color(0xFFEF6C00), icon: Icons.info_outline);
@@ -187,14 +206,18 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
       'edificio': s.edificioId,
       'activo': 1,
       'created_at': ahora.toIso8601String(),
+      'guard_uuid': sel['guard_uuid'],
+      'unit_id': Sesion.unitId,
     });
     // El guardia que inicia turno pasa a ser el operador actual del equipo.
+    final guard = sel['guard_uuid'] as String?;
     s.setOperador(
         id: sel['id'] as int,
         nombre: '${sel['nombre'] ?? ''}',
         cargo: sel['cargo'] as String?,
         rol: sel['rol'] as String?,
-        turnoId: id);
+        turnoId: id,
+        guard: guard);
     final nombre = sel['nombre'] as String?;
     // Si el guardia declaro que no trajo uniforme, se guarda una advertencia.
     if (_sinUniforme) {
@@ -207,6 +230,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
         'created_at': ahora.toIso8601String(),
       });
       Cloud.evento('Guardia sin uniforme', guardia: nombre); // segundo plano
+      _advertir(guard, 'Sin uniforme', 'Inició turno sin camisa roja ni chaleco negro.');
     }
     // Aviso por ENTRAR TARDE respecto al horario de relevo del celular.
     final tarde = s.minutosTardeIngreso(ahora);
@@ -225,6 +249,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
       });
       Cloud.evento('Advertencia', guardia: nombre,
           detalle: {'tipo': 'tarde', 'motivo': 'Ingresó tarde al turno ($txt)'});
+      _advertir(guard, 'Llegada tarde', 'Ingresó $txt respecto al horario de relevo.');
       try {
         await Notificaciones.mostrarAviso('⚠️ Estás entrando tarde',
             'Registraste tu ingreso $txt. Se guardó una advertencia por entrar tarde al turno.');
@@ -235,6 +260,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     // La nube pasa por la cola: sin señal se envía después, sin duplicarse.
     Cloud.evento('Ingreso de turno',
         guardia: nombre,
+        guardId: guard,
         detalle: {
           'cargo': sel['cargo'],
           // Id del turno: une este ingreso con SU salida y sus correcciones.
@@ -281,7 +307,10 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
                 for (final g in _guardias)
                   DropdownMenuItem<int>(
                     value: g['id'] as int,
-                    child: Text('${g['nombre']}',
+                    child: Text(
+                        g['turno'] == null
+                            ? '${g['nombre']}'
+                            : '${g['nombre']} · ${g['turno'] == 'NOCTURNO' ? 'Nocturno' : 'Diurno'}',
                         overflow: TextOverflow.ellipsis),
                   ),
               ],

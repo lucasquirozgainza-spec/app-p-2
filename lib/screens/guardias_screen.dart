@@ -1,21 +1,24 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../db/database_helper.dart';
 import '../services/app_state.dart';
-import '../services/auth_service.dart';
 import '../services/cloud.dart';
-import '../services/config_sync.dart';
+import '../services/estructura.dart';
+import '../services/guardias_repo.dart';
 import '../services/horas_local.dart';
-import '../services/turnos.dart';
-import '../widgets/common.dart';
-import '../services/pdf_export.dart';
 import '../services/panel_horas.dart';
+import '../services/pdf_export.dart';
+import '../services/sesion.dart';
+import '../services/turnos.dart';
 import '../theme.dart';
+import '../widgets/common.dart';
 import '../widgets/toast.dart';
-import 'reporte_personal_screen.dart';
-import 'advertencias_screen.dart';
+import 'config_screen.dart';
+import 'guardias_anterior_screen.dart';
+import 'historial_guardia.dart';
 
+/// GUARDIAS del edificio seleccionado en Configuración (contexto global).
+/// Estructura: EDIFICIO → UNIDAD (torre/dispositivo) → GUARDIA (id único)
+/// → sus registros. Cada unidad tiene 1 guardia diurno y 1 nocturno.
 class GuardiasScreen extends StatefulWidget {
   const GuardiasScreen({super.key});
   @override
@@ -23,13 +26,23 @@ class GuardiasScreen extends StatefulWidget {
 }
 
 class _GuardiasScreenState extends State<GuardiasScreen> {
-  List<Map<String, dynamic>> _activosLocal = [];
-  List<Map<String, dynamic>> _presencia = []; // en linea desde la nube (todos los celulares)
-  List<Map<String, dynamic>> _personal = [];
-  Map<String, List<PanelPuesto>> _panel = {}; // edificio -> puestos (nube)
-  bool _cargandoNube = false;
-  bool _soloEsteCelular = false; // sin señal: se muestran solo los turnos de este celular
+  List<Guardia> _guardias = [];
+  Map<String, ResumenGuardia> _horas = {};           // guard_id → horas del mes
+  List<PanelPuesto> _puestos = [];
+  final Map<String, Map<String, int>> _conteos = {}; // guard_id → tipo → cantidad
+  Map<String, int> _adv = {};                        // guard_id → advertencias activas
   DateTime _mes = DateTime(DateTime.now().year, DateTime.now().month);
+  bool _cargando = false;
+  bool _sinSenal = false;
+  bool _verInactivos = false;
+  String? _error;
+  int _carga = 0;
+
+  String get _ed => AppState.instance.edificioId;
+  String get _edNombre => AppState.instance.edificioNombre;
+  String? get _bid => Estructura.idEdificio(_ed);
+  List<Unidad> get _unidades => Estructura.unidades(_bid);
+  String get _periodo => DateFormat('MMMM yyyy', 'es').format(_mes);
 
   @override
   void initState() {
@@ -38,149 +51,339 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
   }
 
   Future<void> _load() async {
-    final db = await DB.instance.database;
-    final ed = AppState.instance.edificioId;
-    final activos = await db.query('ingreso_turno',
-        where: 'edificio=? AND activo=1', whereArgs: [ed], orderBy: 'id DESC');
-    final personal = await db.query('usuarios',
-        where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1 "
-            "AND (edificio=? OR edificio IS NULL OR edificio='')",
-        whereArgs: [ed],
-        orderBy: 'nombre');
-    // Lo local se muestra YA; la nube llega después (sin señal no deja la
-    // pantalla vacía esperando).
-    if (!mounted) return;
+    if (!Sesion.vinculado) {
+      setState(() {});
+      return;
+    }
+    final carga = ++_carga;
+    final mes = _mes;
     setState(() {
-      _activosLocal = activos;
-      _personal = personal;
+      _cargando = true;
+      _error = null;
     });
-    if (!AppState.instance.soloLocal) {
-      Cloud.heartbeat();
-      Cloud.presencia(edificio: ed).then((pres) {
-        if (mounted) setState(() => _presencia = pres);
+    try {
+      await Estructura.actualizar();
+      // El edificio de Configuración todavía no está en la nube: el admin lo publica.
+      if (_bid == null && Sesion.esAdmin) await Estructura.publicarEdificio(_ed, _edNombre);
+      final bid = _bid;
+      if (bid == null) {
+        if (!mounted || carga != _carga) return;
+        setState(() {
+          _cargando = false;
+          _error = 'Este edificio no está en la nube todavía. Revisa la conexión y actualiza.';
+        });
+        return;
+      }
+      final res = await Future.wait<Object>([
+        GuardiasRepo.delEdificio(bid),
+        HorasPanel.edificio(mes),
+        GuardiasRepo.advertenciasActivas(bid),
+        Cloud.registrosGuardiasMes(_ed, mes),
+      ]);
+      final guardias = res[0] as List<Guardia>;
+      final horas = res[1] as HorasEdificio;
+      final adv = res[2] as Map<String, int>;
+      final regs = res[3] as List<Map<String, dynamic>>;
+      final conteos = <String, Map<String, int>>{};
+      for (final e in regs) {
+        final g = '${e['guard_id']}';
+        final t = '${e['tipo']}';
+        final m = conteos.putIfAbsent(g, () => {});
+        m[t] = (m[t] ?? 0) + 1;
+      }
+      if (!mounted || carga != _carga) return;
+      setState(() {
+        _guardias = guardias;
+        _puestos = horas.puestos;
+        _horas = PanelHoras.porGuardia(horas.puestos);
+        _sinSenal = horas.local && !AppState.instance.soloLocal;
+        _adv = adv;
+        _conteos
+          ..clear()
+          ..addAll(conteos);
+        _cargando = false;
+      });
+    } catch (e) {
+      if (!mounted || carga != _carga) return;
+      setState(() {
+        _cargando = false;
+        _error = 'No se pudo cargar: $e';
       });
     }
-    await _cargarPanel();
   }
 
-  int _cargaPanel = 0;
-
-  /// Carga las horas del mes elegido. Si se cambia de mes mientras carga,
-  /// el resultado viejo se descarta (antes podía mostrar otro mes).
-  Future<void> _cargarPanel() async {
-    final carga = ++_cargaPanel;
-    final mes = _mes;
-    setState(() => _cargandoNube = true);
-    Map<String, List<PanelPuesto>> panel = {};
-    bool local = AppState.instance.soloLocal;
-    try {
-      if (!local) {
-        // Primero se envía lo pendiente de este celular (así sus propios
-        // ingresos/salidas y correcciones ya cuentan).
-        await Cloud.vaciarCola();
-        panel = PanelHoras.panelNube(await Cloud.eventosTurnoMes(mes: mes, lanzar: true), mes,
-            tolerancias: await _tolerancias());
-      }
-    } catch (_) {
-      local = true; // sin señal: al menos lo de este celular
-    }
-    if (local) {
-      try {
-        final l = await HorasPanel.local(mes);
-        panel = l.isEmpty ? {} : {AppState.instance.edificioId: l};
-      } catch (_) {}
-    }
-    if (!mounted || carga != _cargaPanel) return;
-    setState(() {
-      _panel = panel;
-      _soloEsteCelular = local && !AppState.instance.soloLocal;
-      _cargandoNube = false;
-    });
-  }
-
-  /// Tolerancia de cada edificio (su configuración, sincronizada desde la
-  /// nube por el admin).
-  Future<Map<String, int>> _tolerancias() async {
-    final out = <String, int>{};
-    try {
-      final db = await DB.instance.database;
-      for (final e in await db.query('edificios', columns: ['id', 'modulos'])) {
-        Map? m;
-        try {
-          final d = jsonDecode('${e['modulos'] ?? ''}');
-          if (d is Map) m = d;
-        } catch (_) {}
-        out['${e['id']}'] = Turnos.toleranciaDe(m);
-      }
-    } catch (_) {}
-    out[AppState.instance.edificioId] = AppState.instance.toleranciaMin;
-    return out;
-  }
-
-  /// Cambia el mes del panel de horas (solo recarga las horas).
   void _cambiarMes(int delta) {
-    setState(() {
-      _mes = DateTime(_mes.year, _mes.month + delta);
-      _panel = {};
-    });
-    _cargarPanel();
+    setState(() => _mes = DateTime(_mes.year, _mes.month + delta));
+    _load();
   }
 
-  Future<void> _descargarPanel() async {
-    final periodo = DateFormat('MMMM yyyy', 'es').format(_mes);
-    await conEspera(context, () => PdfExport.panelHoras(
-        porEdificio: _panel,
-        periodo: periodo,
-        nota: _soloEsteCelular ? 'Sin conexion al generar: solo incluye los turnos registrados en este celular.' : null));
+  // ---------------------------------------------------------------------------
+  // Acciones
+  // ---------------------------------------------------------------------------
+
+  Guardia? _activoEn(String unitId, String turno) {
+    for (final g in _guardias) {
+      if (g.activo && g.rol == 'guardia' && g.unitId == unitId && g.turno == turno) return g;
+    }
+    return null;
   }
 
-  /// Resumen de un guardia en un edificio (todos sus puestos).
-  ResumenGuardia? _resumen(String edificio, String guardia) =>
-      PanelHoras.porGuardia(_panel[edificio] ?? const [])[guardia];
+  String _nombreTurno(String t) => t == 'NOCTURNO' ? 'nocturno' : 'diurno';
 
-  /// Nombre visible de cada puesto (celular) de un edificio.
-  Map<String, String> _nombresPuestos(String edificio) =>
-      {for (final p in _panel[edificio] ?? const <PanelPuesto>[]) p.puesto: p.nombre};
+  /// Registrar, editar o reemplazar (mismo formulario).
+  Future<void> _formulario({Guardia? editar, Guardia? reemplazar, String? unitId, String? turno}) async {
+    final bid = _bid;
+    if (bid == null) return;
+    final base = editar;
+    final nombre = TextEditingController(text: base?.nombre ?? '');
+    final documento = TextEditingController(text: base?.documento ?? '');
+    final telefono = TextEditingController(text: base?.telefono ?? '');
+    String t = reemplazar?.turno ?? base?.turno ?? turno ?? 'DIURNO';
+    String rol = reemplazar?.rol ?? base?.rol ?? 'guardia';
+    final unidades = _unidades;
+    String? u = reemplazar?.unitId ?? base?.unitId ?? unitId ?? (unidades.isNotEmpty ? unidades.first.id : null);
+    DateTime inicio = DateTime.now();
+    String? error;
+    bool guardando = false;
+    final titulo = reemplazar != null
+        ? 'Reemplazar a ${reemplazar.nombre}'
+        : (editar != null ? 'Editar guardia' : 'Registrar guardia');
 
-  /// Saldo junto al guardia: "+3 h 30 min" (a favor), "-1 h" (en contra),
-  /// "0 h" (equilibrado).
-  Widget _saldoChip(double saldo) {
-    final m = (saldo * 60).round();
-    final color = m > 0 ? AppColors.verde : (m < 0 ? AppColors.rojo : Colors.blueGrey);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: color.withOpacity(.12), borderRadius: BorderRadius.circular(20)),
-      child: Text(Turnos.saldo(saldo),
-          maxLines: 1, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13)),
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setD) {
+          Future<void> guardar() async {
+            if (nombre.text.trim().isEmpty) {
+              setD(() => error = 'Escribe el nombre completo');
+              return;
+            }
+            final unidad = u;
+            if (unidad == null) {
+              setD(() => error = 'El edificio no tiene unidades. Créalas en Configuración.');
+              return;
+            }
+            // Regla: 1 diurno y 1 nocturno activos por unidad (la base también lo impide).
+            if (reemplazar == null && rol == 'guardia') {
+              final ocupado = _activoEn(unidad, t);
+              if (ocupado != null && ocupado.id != editar?.id) {
+                setD(() => error = 'Ya existe un guardia ${_nombreTurno(t)} activo para esta unidad. '
+                    'Debe reemplazarlo o desactivarlo antes de registrar uno nuevo.');
+                return;
+              }
+            }
+            setD(() {
+              guardando = true;
+              error = null;
+            });
+            String? r;
+            if (reemplazar != null) {
+              r = await GuardiasRepo.reemplazar(reemplazar,
+                  nombre: nombre.text, documento: documento.text, telefono: telefono.text, inicio: inicio);
+            } else if (editar != null) {
+              r = await GuardiasRepo.editar(editar,
+                  nombre: nombre.text, documento: documento.text, telefono: telefono.text, turno: t, unitId: unidad);
+            } else {
+              r = await GuardiasRepo.registrar(
+                  buildingId: bid,
+                  unitId: unidad,
+                  nombre: nombre.text,
+                  turno: t,
+                  rol: rol,
+                  documento: documento.text,
+                  telefono: telefono.text,
+                  inicio: inicio);
+            }
+            if (!ctx.mounted) return;
+            if (r != null) {
+              final msg = r;
+              setD(() {
+                guardando = false;
+                error = msg;
+              });
+              return;
+            }
+            if (ctx.mounted) Navigator.pop(ctx);
+            if (!mounted) return;
+            TopToast.show(context, reemplazar != null
+                ? 'Guardia reemplazado: el nuevo empieza en cero'
+                : (editar != null ? 'Datos actualizados' : 'Guardia registrado'));
+            _load();
+          }
+
+          return PopScope(
+            canPop: !guardando, // no se cierra mientras guarda
+            child: AlertDialog(
+            scrollable: true,
+            title: Text(titulo, maxLines: 2, overflow: TextOverflow.ellipsis),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text('Edificio: $_edNombre', style: const TextStyle(fontWeight: FontWeight.w600)),
+              if (reemplazar != null)
+                const Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Text('El guardia actual queda INACTIVO y conserva su historial. '
+                      'El nuevo tiene un id nuevo y empieza con horas, deuda y advertencias en cero.',
+                      style: TextStyle(fontSize: 12, color: Colors.black54)),
+                ),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: nombre,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(labelText: 'Nombre completo *')),
+              const SizedBox(height: 8),
+              TextField(controller: documento, decoration: const InputDecoration(labelText: 'Documento de identidad')),
+              const SizedBox(height: 8),
+              TextField(
+                  controller: telefono,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: 'Teléfono')),
+              const SizedBox(height: 10),
+              SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: 'DIURNO', label: Text('Diurno'), icon: Icon(Icons.wb_sunny_outlined)),
+                  ButtonSegment(value: 'NOCTURNO', label: Text('Nocturno'), icon: Icon(Icons.nightlight_outlined)),
+                ],
+                selected: {t},
+                onSelectionChanged: reemplazar != null ? null : (v) => setD(() => t = v.first),
+              ),
+              if (editar == null && reemplazar == null) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  value: rol,
+                  decoration: const InputDecoration(labelText: 'Cargo'),
+                  items: const [
+                    DropdownMenuItem(value: 'guardia', child: Text('Guardia')),
+                    DropdownMenuItem(value: 'franquero', child: Text('Franquero (temporal)')),
+                    DropdownMenuItem(value: 'supervisor', child: Text('Supervisor')),
+                  ],
+                  onChanged: (v) => setD(() => rol = v ?? 'guardia'),
+                ),
+              ],
+              if (unidades.length > 1 && reemplazar == null) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  value: u,
+                  decoration: const InputDecoration(labelText: 'Torre / dispositivo'),
+                  items: [
+                    for (final x in unidades)
+                      DropdownMenuItem(value: x.id, child: Text(x.name, overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (v) => setD(() => u = v),
+                ),
+              ],
+              if (editar == null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.event),
+                  title: const Text('Fecha de inicio'),
+                  subtitle: Text(DateFormat('dd/MM/yyyy').format(inicio)),
+                  onTap: () async {
+                    final d = await showDatePicker(
+                        context: ctx,
+                        initialDate: inicio,
+                        firstDate: DateTime.now().subtract(const Duration(days: 60)),
+                        lastDate: DateTime.now().add(const Duration(days: 60)));
+                    if (d != null) setD(() => inicio = d);
+                  },
+                ),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(error ?? '', style: const TextStyle(color: AppColors.rojo, fontWeight: FontWeight.w600)),
+                ),
+            ]),
+            actions: [
+              TextButton(onPressed: guardando ? null : () => Navigator.pop(ctx), child: const Text('Cancelar')),
+              FilledButton(
+                onPressed: guardando ? null : guardar,
+                child: guardando
+                    ? const SizedBox(
+                        width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                    : const Text('Guardar'),
+              ),
+            ],
+          ),
+          );
+        },
+      ),
     );
   }
 
-  /// Historial COMPLETO de un guardia (se abre al tocar su tarjeta).
-  void _historial(String edificio, String guardia) {
-    final r = _resumen(edificio, guardia) ?? ResumenGuardia(guardia);
-    Navigator.push(
+  Future<void> _desactivar(Guardia g) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.person_off_outlined, color: AppColors.rojo, size: 36),
+        title: Text('Desactivar a ${g.nombre}'),
+        content: const Text('Queda INACTIVO con fecha de hoy. No se borra: conserva sus ingresos, '
+            'salidas, horas y advertencias.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Desactivar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    String? r;
+    await conEspera(context, () async {
+      r = await GuardiasRepo.desactivar(g);
+    }, mensaje: 'Guardando…', error: 'No se pudo desactivar');
+    if (!mounted) return;
+    final msg = r;
+    if (msg != null) {
+      TopToast.show(context, msg, color: AppColors.rojo, icon: Icons.error_outline);
+    } else {
+      TopToast.show(context, '${g.nombre} quedó inactivo');
+      _load();
+    }
+  }
+
+  Future<void> _historial(Guardia g) async {
+    final r = _horas[g.id] ?? ResumenGuardia(g.nombre, g.id);
+    await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => _HistorialGuardia(
+        builder: (_) => HistorialGuardiaScreen(
           resumen: r,
-          edificio: edificio,
-          periodo: DateFormat('MMMM yyyy', 'es').format(_mes),
-          puestos: _nombresPuestos(edificio),
-          toleranciaMin: (_panel[edificio]?.isNotEmpty ?? false)
-              ? _panel[edificio]!.first.toleranciaMin
-              : AppState.instance.toleranciaMin,
-          // Las correcciones van a la nube (quedan registradas y auditables).
-          onCorregir: AppState.instance.isAdmin && !AppState.instance.soloLocal && !_soloEsteCelular
-              ? _corregir
-              : null,
+          edificio: _edNombre,
+          periodo: _periodo,
+          puestos: HorasPanel.nombresUnidades(),
+          toleranciaMin: _puestos.isNotEmpty ? _puestos.first.toleranciaMin : AppState.instance.toleranciaMin,
+          onCorregir: Sesion.esAdmin && !_sinSenal ? _corregir : null,
+          cabecera: _datosGuardia(g),
         ),
       ),
     );
   }
 
-  /// Corrección MANUAL de un turno (solo admin). No modifica los registros
-  /// originales: agrega un evento "Corrección de turno" con el id del turno;
-  /// la última corrección reemplaza a las anteriores, así no se duplican horas.
+  Widget _datosGuardia(Guardia g) {
+    final c = _conteos[g.id] ?? const {};
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _linea('Edificio', _edNombre),
+          if (_unidades.length > 1) _linea('Torre', Estructura.nombreUnidad(g.unitId)),
+          _linea('Turno', g.diurno ? 'Diurno (08:00–20:00)' : 'Nocturno (20:00–08:00)'),
+          _linea('Fecha de ingreso', DateFormat('dd/MM/yyyy').format(g.inicio)),
+          if (!g.activo && g.fin != null) _linea('Fecha de salida', DateFormat('dd/MM/yyyy').format(g.fin!)),
+          if ((g.documento ?? '').isNotEmpty) _linea('Documento', g.documento ?? ''),
+          _linea('Rondas / incidentes (mes)', '${c['Ronda'] ?? 0} / ${c['Incidente'] ?? 0}'),
+        ]),
+      ),
+    );
+  }
+
+  /// Corrección MANUAL de un turno (solo admin): un evento nuevo con el id del
+  /// turno; la última corrección reemplaza a las anteriores (no suma dos veces).
   Future<bool> _corregir(RegistroTurno t) async {
     DateTime ini = t.inicio;
     DateTime? fin = t.fin;
@@ -213,20 +416,24 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
               leading: const Icon(Icons.login, color: AppColors.verde),
               title: const Text('Ingreso'),
               subtitle: Text(f.format(ini)),
-              onTap: anular ? null : () async {
-                final v = await elegir(ctx, ini);
-                if (v != null) setD(() => ini = v);
-              },
+              onTap: anular
+                  ? null
+                  : () async {
+                      final v = await elegir(ctx, ini);
+                      if (v != null) setD(() => ini = v);
+                    },
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.logout, color: AppColors.rojo),
               title: const Text('Salida'),
               subtitle: Text(fin == null ? 'Sin salida (tocar para poner)' : f.format(fin!)),
-              onTap: anular ? null : () async {
-                final v = await elegir(ctx, fin ?? ini.add(Duration(hours: nivel)));
-                if (v != null) setD(() => fin = v);
-              },
+              onTap: anular
+                  ? null
+                  : () async {
+                      final v = await elegir(ctx, fin ?? ini.add(Duration(hours: nivel)));
+                      if (v != null) setD(() => fin = v);
+                    },
             ),
             const SizedBox(height: 6),
             SegmentedButton<int>(
@@ -246,10 +453,7 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
               title: const Text('Anular este registro'),
               subtitle: const Text('Duplicado o marcado por error'),
             ),
-            TextField(
-              controller: motivo,
-              decoration: const InputDecoration(labelText: 'Motivo *'),
-            ),
+            TextField(controller: motivo, decoration: const InputDecoration(labelText: 'Motivo *')),
           ]),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
@@ -265,14 +469,13 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
         ),
       ),
     );
-    // (el controlador es local; no se libera aquí porque el diálogo todavía
-    // se está cerrando y el campo lo usa al perder el foco)
     final texto = motivo.text.trim();
     if (ok != true || !mounted) return false;
     await conEspera(context, () async {
       await Cloud.evento('Corrección de turno',
           guardia: t.guardia,
-          edificio: t.edificio,
+          edificio: t.edificio.isEmpty ? _ed : t.edificio,
+          guardId: t.guardId,
           detalle: {
             'turno_ref': t.id,
             'anular': anular,
@@ -280,546 +483,573 @@ class _GuardiasScreenState extends State<GuardiasScreen> {
             if (fin != null) 'fin': fin!.toUtc().toIso8601String(),
             'nivel': nivel,
             'motivo': texto,
-            'antes': '${f.format(t.inicio)} → ${t.fin == null ? '-' : f.format(t.fin!)} (${t.nivel} h)',
           });
       await Cloud.vaciarCola();
     }, mensaje: 'Guardando corrección…', error: 'No se pudo guardar la corrección');
     if (!mounted) return false;
-    final pendientes = await Cloud.pendientes();
-    if (!mounted) return false;
-    TopToast.show(context, pendientes > 0 ? 'Corrección guardada; se enviará al volver la señal' : 'Corrección guardada');
-    await _cargarPanel();
+    TopToast.show(context, 'Corrección guardada');
+    await _load();
     return true;
   }
 
-  /// Frase de la cuenta entre dos guardias.
-  Widget _balance(BalancePar b) {
-    final h = Turnos.saldo(b.horas).replaceFirst('+', '');
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: b.aMano ? const Color(0xFFE8F5E9) : const Color(0xFFFFF3E0),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(children: [
-        Icon(b.aMano ? Icons.handshake_outlined : Icons.balance, color: b.aMano ? AppColors.verde : const Color(0xFFEF6C00)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            b.aMano
-                ? '${b.a} y ${b.b} están a mano'
-                : 'Beneficiario: ${b.beneficiario} con $h\n(le debe a ${b.acreedor})',
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ),
-      ]),
-    );
+  Future<void> _pdf(Guardia g) async {
+    await conEspera(context, () async {
+      final res = await Future.wait<Object>([
+        GuardiasRepo.advertencias(g.id),
+        Cloud.registrosGuardiasMes(_ed, _mes, guardId: g.id, completos: true),
+      ]);
+      await PdfExport.guardiaPdf(
+        g: g,
+        edificio: _edNombre,
+        unidad: Estructura.nombreUnidad(g.unitId),
+        periodo: _periodo,
+        resumen: _horas[g.id],
+        advertencias: res[0] as List<Advertencia>,
+        registros: res[1] as List<Map<String, dynamic>>,
+        toleranciaMin: _puestos.isNotEmpty ? _puestos.first.toleranciaMin : AppState.instance.toleranciaMin,
+      );
+    });
   }
 
-  String _fechaHora(Object? iso) {
-    final d = DateTime.tryParse('${iso ?? ''}');
-    return d == null ? '—' : DateFormat('dd/MM HH:mm').format(d);
+  Future<void> _advertencias(Guardia g) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => AdvertenciasGuardiaScreen(guardia: g)));
+    if (mounted) _load();
   }
 
-  bool _enLinea(Map<String, dynamic> p) {
-    try {
-      final ls = DateTime.parse(p['last_seen'].toString()).toUtc();
-      return DateTime.now().toUtc().difference(ls).inMinutes < 5;
-    } catch (_) {
-      return false;
-    }
+  // ---------------------------------------------------------------------------
+  // Interfaz
+  // ---------------------------------------------------------------------------
+
+  Color _colorSaldo(double h) {
+    final m = (h * 60).round();
+    return m > 0 ? AppColors.verde : (m < 0 ? AppColors.rojo : Colors.blueGrey);
   }
 
-  /// Guardias en linea de este edificio segun la nube (todos los celulares).
-  List<Map<String, dynamic>> get _enTurnoNube {
-    final ed = AppState.instance.edificioId;
-    return _presencia
-        .where((p) => _enLinea(p) && p['en_turno'] == true && (p['edificio']?.toString() ?? '') == ed)
-        .toList();
-  }
+  String _sinSigno(double h) => Turnos.saldo(h).replaceFirst('+', '');
 
-  Future<void> _eliminarPersonal(Map<String, dynamic> p) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: const Icon(Icons.person_remove, color: AppColors.rojo, size: 36),
-        title: const Text('Eliminar personal'),
-        content: Text('¿Eliminar a "${p['nombre'] ?? ''}" del personal registrado?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    // Baja en este celular y en los demás del edificio (sincronizado).
-    await ConfigSync.darDeBaja(p['id'] as int, (p['nombre'] ?? '').toString());
-    if (!mounted) return;
-    TopToast.show(context, 'Personal eliminado');
-    _load();
-  }
+  Widget _linea(String k, String v) => Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SizedBox(width: 130, child: Text(k, style: const TextStyle(color: Colors.black54, fontSize: 13))),
+          Expanded(child: Text(v, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+        ]),
+      );
 
-  Future<void> _nuevoGuardia() async {
-    final n = TextEditingController();
-    final c = TextEditingController(text: 'Guardia de Seguridad');
-    String rol = 'guardia';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: const Text('Registrar guardia'),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(controller: n, decoration: const InputDecoration(labelText: 'Nombre completo')),
-              const SizedBox(height: 8),
-              TextField(controller: c, decoration: const InputDecoration(labelText: 'Cargo')),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                isExpanded: true, // texto largo con "…" en vez de desbordar
-                value: rol,
-                decoration: const InputDecoration(labelText: 'Rol'),
-                items: const [
-                  DropdownMenuItem(value: 'guardia', child: Text('Guardia')),
-                  DropdownMenuItem(value: 'franquero', child: Text('Franquero (temporal)')),
-                  DropdownMenuItem(value: 'supervisor', child: Text('Supervisor')),
-                  DropdownMenuItem(value: 'conserje', child: Text('Conserje')),
-                  DropdownMenuItem(value: 'limpieza', child: Text('Limpieza')),
-                ],
-                onChanged: (v) => setD(() => rol = v ?? 'guardia'),
-              ),
-            ]),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Registrar')),
-          ],
-        ),
-      ),
-    );
-    if (ok == true && n.text.trim().isNotEmpty) {
-      await AuthService.crearGuardia(nombre: n.text.trim(), cargo: c.text, rol: rol);
-      if (!mounted) return;
-      TopToast.show(context, 'Guardia registrado');
-      _load();
-    }
-  }
+  Widget _dato(String etiqueta, String valor, Color color) => Container(
+        constraints: const BoxConstraints(minWidth: 86),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(12)),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(valor, maxLines: 1, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: color)),
+          Text(etiqueta, maxLines: 1, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+        ]),
+      );
 
-  /// Tarjeta del guardia (la existente) con su saldo del mes al lado; al
-  /// tocarla se abre su historial completo.
-  Widget _tarjetaPersonal(Map<String, dynamic> p) {
-    final nombre = p['nombre']?.toString() ?? '—';
-    final ed = AppState.instance.edificioId;
-    final r = _resumen(ed, nombre);
+  Widget _seccionTitulo(String t) => Padding(
+        padding: const EdgeInsets.only(top: 10, bottom: 4),
+        child: Text(t,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: .8)),
+      );
+
+  Widget _tarjeta(Guardia g) {
+    final r = _horas[g.id];
+    final c = _conteos[g.id] ?? const {};
+    final nAdv = _adv[g.id] ?? 0;
+    final ingresos = r?.turnos.where((t) => t.valido).length ?? 0;
+    final salidas = r?.turnos.where((t) => t.cerrado).length ?? 0;
+    final horas = r?.horas ?? 0;
+    final color = g.diurno ? const Color(0xFFEF8F00) : const Color(0xFF283593);
     return Card(
-      child: ListTile(
-        onTap: () => _historial(ed, nombre),
-        leading: const CircleAvatar(
-            backgroundColor: Color(0x1A0A335D),
-            child: Icon(Icons.person, color: AppColors.azulMarino)),
-        title: Text(nombre, maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(
-            [p['cargo'], p['rol']].where((x) => (x ?? '').toString().trim().isNotEmpty).join(' · '),
-            maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (r != null) _saldoChip(r.saldo),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: AppColors.rojo),
-            tooltip: 'Eliminar',
-            onPressed: () => _eliminarPersonal(p),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 6),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            CircleAvatar(
+              backgroundColor: color.withOpacity(.12),
+              child: Icon(g.diurno ? Icons.wb_sunny : Icons.nightlight_round, color: color),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(g.rol == 'guardia' ? 'GUARDIA ${g.turno}' : '${g.rol.toUpperCase()} · ${g.turno}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: Colors.black54, letterSpacing: .6)),
+                Text(g.nombre,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              ]),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: (g.activo ? AppColors.verde : Colors.blueGrey).withOpacity(.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.circle, size: 9, color: g.activo ? AppColors.verde : Colors.blueGrey),
+                const SizedBox(width: 4),
+                Text(g.activo ? 'ACTIVO' : 'INACTIVO',
+                    style: TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.bold, color: g.activo ? AppColors.verde : Colors.blueGrey)),
+              ]),
+            ),
+            const SizedBox(width: 6),
+          ]),
+          const SizedBox(height: 6),
+          if (_unidades.length > 1) _linea('Torre', Estructura.nombreUnidad(g.unitId)),
+          _linea('Fecha de ingreso', DateFormat('dd/MM/yyyy').format(g.inicio)),
+          if (!g.activo && g.fin != null) _linea('Fecha de salida', DateFormat('dd/MM/yyyy').format(g.fin!)),
+          _seccionTitulo('HORAS · ${_periodo.toUpperCase()}'),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            _dato('Trabajadas', '${horas.toStringAsFixed(horas % 1 == 0 ? 0 : 1)} h', AppColors.azulMarino),
+            _dato('Extras', _sinSigno(r?.aFavor ?? 0), AppColors.verde),
+            _dato('En deuda', _sinSigno(r?.enContra ?? 0), AppColors.rojo),
+            _dato('Saldo', Turnos.saldo(r?.saldo ?? 0), _colorSaldo(r?.saldo ?? 0)),
+          ]),
+          _seccionTitulo('REGISTROS'),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            _dato('Ingresos', '$ingresos', const Color(0xFF00695C)),
+            _dato('Salidas', '$salidas', const Color(0xFF455A64)),
+            _dato('Rondas', '${c['Ronda'] ?? 0}', const Color(0xFF6A1B9A)),
+            _dato('Incidentes', '${c['Incidente'] ?? 0}', AppColors.rojo),
+          ]),
+          const SizedBox(height: 8),
+          Material(
+            color: (nAdv > 0 ? const Color(0xFFEF6C00) : Colors.blueGrey).withOpacity(.08),
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => _advertencias(g),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                child: Row(children: [
+                  Icon(nAdv > 0 ? Icons.warning_amber : Icons.verified_outlined,
+                      color: nAdv > 0 ? const Color(0xFFEF6C00) : Colors.blueGrey, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                        nAdv == 0
+                            ? 'Sin advertencias activas'
+                            : '$nAdv advertencia${nAdv == 1 ? '' : 's'} activa${nAdv == 1 ? '' : 's'}',
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                  const Text('Ver', style: TextStyle(color: AppColors.azulMarino, fontWeight: FontWeight.bold)),
+                  const Icon(Icons.chevron_right, color: AppColors.azulMarino),
+                ]),
+              ),
+            ),
           ),
+          const SizedBox(height: 4),
+          Row(children: [
+            Expanded(
+              child: Wrap(children: [
+                TextButton.icon(
+                    onPressed: () => _historial(g),
+                    icon: const Icon(Icons.history, size: 18),
+                    label: const Text('Historial')),
+                if (g.activo && Sesion.esAdmin)
+                  TextButton.icon(
+                      onPressed: () => _formulario(editar: g),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Editar')),
+                TextButton.icon(
+                    onPressed: () => _pdf(g),
+                    icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                    label: const Text('PDF')),
+              ]),
+            ),
+            if (g.activo && Sesion.esAdmin)
+              PopupMenuButton<String>(
+                tooltip: 'Más acciones',
+                onSelected: (v) {
+                  if (v == 'reemplazar') _formulario(reemplazar: g);
+                  if (v == 'desactivar') _desactivar(g);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                      value: 'reemplazar',
+                      child: ListTile(leading: Icon(Icons.swap_horiz), title: Text('Reemplazar guardia'))),
+                  PopupMenuItem(
+                      value: 'desactivar',
+                      child: ListTile(
+                          leading: Icon(Icons.person_off_outlined, color: AppColors.rojo), title: Text('Desactivar'))),
+                ],
+              ),
+          ]),
         ]),
       ),
     );
   }
 
-  /// Resumen de un edificio: cuentas entre pares y guardias ordenados por
-  /// saldo (a favor arriba, en contra abajo).
-  List<Widget> _resumenEdificio(String ed) {
-    final puestos = _panel[ed] ?? const <PanelPuesto>[];
-    final guardias = PanelHoras.porGuardia(puestos).values.toList()
-      ..sort((a, b) {
-        final c = b.saldo.compareTo(a.saldo);
-        return c != 0 ? c : a.guardia.compareTo(b.guardia);
-      });
-    return [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
-        child: Text(
-            puestos.length == 1 ? '$ed · ${puestos.first.nombre}' : '$ed · ${puestos.length} puestos',
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.azulMarino)),
-      ),
-      for (final pu in puestos)
-        for (final b in pu.balances) _balance(b),
-      for (final r in guardias)
-        Card(
-          child: ListTile(
-            onTap: () => _historial(ed, r.guardia),
-            title: Text(r.guardia, maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(
-              'A favor ${Turnos.saldo(r.aFavor).replaceFirst('+', '')} · '
-              'En contra ${Turnos.saldo(r.enContra).replaceFirst('+', '')}\n'
-              '${r.dias} días · 12 h: ${r.n12} · 24 h: ${r.n24} · 36 h: ${r.n36}'
-              '${r.incompletos > 0 ? ' · ${r.incompletos} incompleto${r.incompletos == 1 ? '' : 's'}' : ''}',
-              maxLines: 2, overflow: TextOverflow.ellipsis,
-            ),
-            isThreeLine: true,
-            trailing: _saldoChip(r.saldo),
-          ),
+  Widget _vacante(Unidad u, String turno) => Card(
+        color: const Color(0xFFF7F9FB),
+        child: ListTile(
+          leading: Icon(turno == 'DIURNO' ? Icons.wb_sunny_outlined : Icons.nightlight_outlined, color: Colors.blueGrey),
+          title: Text('Sin guardia ${_nombreTurno(turno)}', style: const TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Text(u.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: Sesion.esAdmin
+              ? FilledButton(
+                  style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
+                  onPressed: () => _formulario(unitId: u.id, turno: turno),
+                  child: const Text('Registrar'),
+                )
+              : null,
         ),
-    ];
+      );
+
+  List<Widget> _porUnidad() {
+    final unidades = _unidades;
+    final out = <Widget>[];
+    final vistos = <String>{};
+    for (final u in unidades) {
+      if (unidades.length > 1) {
+        out.add(Padding(
+          padding: const EdgeInsets.fromLTRB(4, 16, 4, 4),
+          child: Row(children: [
+            const Icon(Icons.domain, color: AppColors.azulMarino, size: 20),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(u.name.toUpperCase(),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.azulMarino, letterSpacing: .6)),
+            ),
+          ]),
+        ));
+      }
+      for (final turno in ['DIURNO', 'NOCTURNO']) {
+        final g = _activoEn(u.id, turno);
+        if (g != null) {
+          vistos.add(g.id);
+          out.add(_tarjeta(g));
+        } else {
+          out.add(_vacante(u, turno));
+        }
+      }
+      // Franquero, supervisor... activos de esta unidad.
+      for (final g in _guardias.where((g) => g.activo && g.unitId == u.id && !vistos.contains(g.id))) {
+        vistos.add(g.id);
+        out.add(_tarjeta(g));
+      }
+    }
+    // Activos de una unidad que ya no está en la lista (no debería pasar).
+    for (final g in _guardias.where((g) => g.activo && !vistos.contains(g.id))) {
+      out.add(_tarjeta(g));
+    }
+    return out;
   }
+
+  Widget _resumen() {
+    final activos = _guardias.where((g) => g.activo).toList();
+    final ids = {for (final g in activos) g.id};
+    final favor = activos.where((g) => ((_horas[g.id]?.saldo ?? 0) * 60).round() > 0).length;
+    final contra = activos.where((g) => ((_horas[g.id]?.saldo ?? 0) * 60).round() < 0).length;
+    final adv = _adv.entries.where((e) => ids.contains(e.key)).fold<int>(0, (a, e) => a + e.value);
+    return Wrap(spacing: 8, runSpacing: 8, children: [
+      _dato('Activos', '${activos.length}', AppColors.azulMarino),
+      _dato('Con horas a favor', '$favor', AppColors.verde),
+      _dato('Con horas en deuda', '$contra', AppColors.rojo),
+      _dato('Advertencias', '$adv', const Color(0xFFEF6C00)),
+    ]);
+  }
+
+  Widget _noVinculado() => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Icon(Icons.link_off, size: 40, color: Color(0xFFEF6C00)),
+            const SizedBox(height: 8),
+            const Text('Este celular no está vinculado',
+                textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            const Text(
+                'Para registrar guardias por edificio y torre, vincula este celular con su código '
+                'en Configuración → Vincular celular.',
+                textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () async {
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfigScreen()));
+                if (mounted) _load();
+              },
+              icon: const Icon(Icons.settings),
+              label: const Text('Ir a Configuración'),
+            ),
+          ]),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
-    final admin = AppState.instance.isAdmin;
-    // "En linea" preferimos la nube (todos los celulares); si no hay, lo local.
-    final enTurnoNube = _enTurnoNube;
-    // Sin conexión (edificio "solo local") se muestran los turnos de este celular.
-    final usarNube = !AppState.instance.soloLocal;
-
+    final vinculado = Sesion.vinculado;
+    final inactivos = _guardias.where((g) => !g.activo).toList();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Guardias'),
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Guardias', style: TextStyle(fontSize: 17)),
+          Text(_edNombre,
+              maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+        ]),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Actualizar',
-            onPressed: _load,
+          IconButton(icon: const Icon(Icons.refresh), tooltip: 'Actualizar', onPressed: _load),
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              if (v == 'pdf' && _puestos.isNotEmpty) {
+                conEspera(
+                    context,
+                    () => PdfExport.panelHoras(
+                        porEdificio: {_edNombre: _puestos},
+                        periodo: _periodo,
+                        nota: _sinSenal
+                            ? 'Sin conexion al generar: solo incluye los turnos registrados en este celular.'
+                            : null));
+              }
+              if (v == 'archivo') {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const GuardiasAnteriorScreen()));
+              }
+            },
+            itemBuilder: (_) => [
+              if (vinculado)
+                const PopupMenuItem(
+                    value: 'pdf', child: ListTile(leading: Icon(Icons.picture_as_pdf), title: Text('PDF de horas del edificio'))),
+              const PopupMenuItem(
+                  value: 'archivo',
+                  child: ListTile(leading: Icon(Icons.inventory_2_outlined), title: Text('Archivo (sistema anterior)'))),
+            ],
           ),
-          if (admin)
-            IconButton(
-              icon: const Icon(Icons.warning_amber),
-              tooltip: 'Advertencias',
-              onPressed: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const AdvertenciasScreen())),
-            ),
-          if (admin)
-            IconButton(
-              icon: const Icon(Icons.assessment),
-              tooltip: 'Reporte de personal (PDF)',
-              onPressed: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ReportePersonalScreen())),
-            ),
         ],
       ),
-      floatingActionButton: admin
+      floatingActionButton: vinculado && Sesion.esAdmin
           ? FloatingActionButton.extended(
               backgroundColor: AppColors.azulMarino,
               foregroundColor: Colors.white,
               icon: const Icon(Icons.person_add),
               label: const Text('Registrar guardia'),
-              onPressed: _nuevoGuardia,
+              onPressed: () => _formulario(),
             )
           : null,
       body: RefreshIndicator(
         onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-          children: [
-            Row(children: [
-              const Icon(Icons.wifi_tethering, color: AppColors.verde),
-              const SizedBox(width: 8),
-              Text('En línea ahora (${usarNube ? enTurnoNube.length : _activosLocal.length})',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ]),
-            const Text('En todos los celulares con la app (se actualiza al refrescar).',
-                style: TextStyle(fontSize: 12, color: Colors.black54)),
-            const SizedBox(height: 8),
-            if (usarNube)
-              ...(enTurnoNube.isEmpty
-                  ? [const Card(child: ListTile(title: Text('Ningún guardia en línea ahora')))]
-                  : [
-                      for (final p in enTurnoNube)
-                        Card(
-                          child: ListTile(
-                            leading: const CircleAvatar(
-                                backgroundColor: Color(0x1A2E7D32),
-                                child: Icon(Icons.shield, color: AppColors.verde)),
-                            title: Text(p['guardia']?.toString() ?? '—',
-                                style: const TextStyle(fontWeight: FontWeight.w600)),
-                            subtitle: Text('${p['edificio'] ?? ''} · En turno'),
-                            trailing: const Icon(Icons.circle, color: AppColors.verde, size: 12),
-                          ),
-                        ),
-                    ])
-            else if (_activosLocal.isEmpty)
-              const Card(child: ListTile(title: Text('Ningún guardia con turno activo')))
-            else
-              for (final t in _activosLocal)
-                Card(
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                        backgroundColor: Color(0x1A2E7D32),
-                        child: Icon(Icons.shield, color: AppColors.verde)),
-                    title: Text(t['guardia_nombre']?.toString() ?? '—',
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text(
-                        'Ingreso: ${_fechaHora(t['created_at'])}'
-                        '${t['bateria'] != null ? ' · Bateria ${t['bateria']}%' : ''}'),
-                    trailing: const Icon(Icons.circle, color: AppColors.verde, size: 12),
-                  ),
-                ),
-
-            // El personal registrado (con usuarios) SOLO lo ve el administrador.
-            if (admin) ...[
-              const SizedBox(height: 20),
-              Row(children: [
-                const Icon(Icons.groups, color: AppColors.azulMarino),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('Personal registrado (${_personal.length})',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-              ]),
-              const SizedBox(height: 8),
-              if (_personal.isEmpty)
-                const Card(child: ListTile(title: Text('Sin personal registrado. Usa "Registrar guardia".'))),
-              for (final p in _personal) _tarjetaPersonal(p),
-              // RESUMEN DE HORAS: quién tiene horas a favor y quién en contra
-              // (para pago o compensación). Mismo cálculo que el historial y el PDF.
-              const SizedBox(height: 20),
-              Row(children: [
-                const Icon(Icons.query_stats, color: Color(0xFF00838F)),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text('Horas a favor / en contra',
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.picture_as_pdf),
-                  tooltip: 'Descargar panel (PDF)',
-                  onPressed: _panel.isEmpty ? null : _descargarPanel,
-                ),
-              ]),
-              Row(children: [
-                IconButton(icon: const Icon(Icons.chevron_left), onPressed: () => _cambiarMes(-1)),
-                Expanded(
-                  child: Text(DateFormat('MMMM yyyy', 'es').format(_mes),
-                      textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600)),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  onPressed: _mes.isBefore(DateTime(DateTime.now().year, DateTime.now().month)) ? () => _cambiarMes(1) : null,
-                ),
-              ]),
-              if (_soloEsteCelular)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 6),
-                  child: Text('Sin conexión: solo los turnos de este celular.',
-                      style: TextStyle(fontSize: 12, color: Color(0xFFEF6C00))),
-                ),
-              if (_cargandoNube && _panel.isEmpty)
-                const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
-              else if (_panel.isEmpty)
-                const Card(child: ListTile(title: Text('Sin turnos en este mes')))
-              else
-                for (final ed in (_panel.keys.toList()..sort())) ..._resumenEdificio(ed),
-            ] else ...[
-              const SizedBox(height: 24),
-              const Card(
-                child: ListTile(
-                  leading: Icon(Icons.lock, color: Colors.blueGrey),
-                  title: Text('Personal y registro'),
-                  subtitle: Text('Solo el administrador puede ver el personal y registrar guardias.'),
-                ),
-              ),
-            ],
-          ],
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 820),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
+              children: [
+                if (!vinculado)
+                  _noVinculado()
+                else ...[
+                  Row(children: [
+                    IconButton(icon: const Icon(Icons.chevron_left), onPressed: () => _cambiarMes(-1)),
+                    Expanded(
+                      child: Text(_periodo,
+                          textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      onPressed: _mes.isBefore(DateTime(DateTime.now().year, DateTime.now().month))
+                          ? () => _cambiarMes(1)
+                          : null,
+                    ),
+                  ]),
+                  if (_sinSenal)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 6),
+                      child: Text('Sin conexión: las horas son solo de los turnos de este celular.',
+                          style: TextStyle(fontSize: 12, color: Color(0xFFEF6C00))),
+                    ),
+                  if (_error != null)
+                    Card(
+                        child: ListTile(
+                            leading: const Icon(Icons.error_outline, color: AppColors.rojo), title: Text(_error ?? ''))),
+                  if (_cargando && _guardias.isEmpty)
+                    const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+                  else ...[
+                    _resumen(),
+                    const SizedBox(height: 6),
+                    if (_unidades.isEmpty && _error == null)
+                      const Card(child: ListTile(title: Text('Este edificio no tiene unidades. Créalas en Configuración.'))),
+                    ..._porUnidad(),
+                    if (inactivos.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      TextButton.icon(
+                        onPressed: () => setState(() => _verInactivos = !_verInactivos),
+                        icon: Icon(_verInactivos ? Icons.expand_less : Icons.expand_more),
+                        label: Text('${_verInactivos ? 'Ocultar' : 'Ver'} inactivos (${inactivos.length})'),
+                      ),
+                      if (_verInactivos) ...[for (final g in inactivos) _tarjeta(g)],
+                    ],
+                  ],
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-
-/// Historial completo de un guardia en el periodo: cada turno con fecha,
-/// ingreso y salida reales, tipo (12/24/36 h), las horas a favor / en contra
-/// que generó y de qué registro salió cada una (auditoría).
-class _HistorialGuardia extends StatefulWidget {
-  final ResumenGuardia resumen;
-  final String edificio;
-  final String periodo;
-  final Map<String, String> puestos;
-  final int toleranciaMin;
-  final Future<bool> Function(RegistroTurno t)? onCorregir;
-  const _HistorialGuardia({
-    required this.toleranciaMin,
-    required this.resumen,
-    required this.edificio,
-    required this.periodo,
-    required this.puestos,
-    this.onCorregir,
-  });
-
+/// Advertencias de UN guardia: fecha, motivo, descripción, quién la
+/// registró, estado y observaciones. Se agregan y se resuelven aquí.
+class AdvertenciasGuardiaScreen extends StatefulWidget {
+  final Guardia guardia;
+  const AdvertenciasGuardiaScreen({super.key, required this.guardia});
   @override
-  State<_HistorialGuardia> createState() => _HistorialGuardiaState();
+  State<AdvertenciasGuardiaScreen> createState() => _AdvertenciasGuardiaScreenState();
 }
 
-class _HistorialGuardiaState extends State<_HistorialGuardia> {
-  static final _dia = DateFormat('EEE dd/MM', 'es');
-  static final _hm = DateFormat('HH:mm');
-  static final _dhm = DateFormat('EEE dd/MM HH:mm', 'es');
+class _AdvertenciasGuardiaScreenState extends State<AdvertenciasGuardiaScreen> {
+  List<Advertencia> _lista = [];
+  bool _cargando = true;
 
-  Color _color(double h) {
-    final m = (h * 60).round();
-    return m > 0 ? AppColors.verde : (m < 0 ? AppColors.rojo : Colors.blueGrey);
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  Widget _dato(String valor, String etiqueta, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(valor, maxLines: 1, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: color)),
-          Text(etiqueta, style: const TextStyle(fontSize: 11, color: Colors.black54)),
-        ]),
-      );
-
-  String _estado(RegistroTurno t) {
-    switch (t.estado) {
-      case 'abierto':
-        return 'En turno';
-      case 'sin salida':
-        return 'Sin salida · no se calcula';
-      case 'sin ingreso':
-        return 'Sin ingreso · no se calcula';
-      case 'anulado':
-        return 'Anulado';
-      case 'inconsistente':
-        return 'Registro inconsistente · no se calcula';
-      default:
-        return '';
-    }
+  Future<void> _load() async {
+    setState(() => _cargando = true);
+    await Cloud.vaciarCola(); // las recién agregadas sin señal
+    final l = await GuardiasRepo.advertencias(widget.guardia.id);
+    if (!mounted) return;
+    setState(() {
+      _lista = l;
+      _cargando = false;
+    });
   }
 
-  Widget _turno(RegistroTurno t) {
-    final estado = _estado(t);
-    final puesto = widget.puestos[t.puesto];
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(
-              child: Text(
-                '${_dia.format(t.inicio)} · ${t.valido ? 'Turno ${t.nivel} h' : 'Registro'}',
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-            if (t.valido && t.movimientos.isNotEmpty)
-              Text(Turnos.saldo(t.saldo),
-                  style: TextStyle(fontWeight: FontWeight.bold, color: _color(t.saldo))),
-            if (widget.onCorregir != null)
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.edit_calendar_outlined, size: 20),
-                tooltip: 'Corregir',
-                onPressed: () async {
-                  final ok = await widget.onCorregir!(t);
-                  if (ok && mounted) Navigator.pop(context); // el panel se recalculó
-                },
-              ),
-          ]),
-          Text(
-            'Ingreso ${_dhm.format(t.inicio)}\n'
-            'Salida ${t.fin == null ? '—' : _dhm.format(t.fin!)}'
-            '${t.cerrado ? ' · ${Turnos.duracion(t.fin!.difference(t.inicio))}' : ''}',
-            style: const TextStyle(fontSize: 13),
-          ),
-          if (t.progInicio != null)
-            Text(
-              'Programado ${_hm.format(t.progInicio!)} → ${_dhm.format(t.progFin!)}'
-              '${puesto != null ? ' · $puesto' : ''}',
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-          if (estado.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(estado,
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: t.estado == 'abierto' ? AppColors.verde : const Color(0xFFEF6C00))),
-            ),
-          for (final m in t.movimientos)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '${Turnos.saldo(m.horas)} · ${m.motivo}'
-                '${m.con != null ? ' (${m.con})' : ''} · relevo ${_hm.format(m.programado)}, '
-                'real ${_hm.format(m.real)}',
-                style: TextStyle(fontSize: 12.5, color: _color(m.horas), fontWeight: FontWeight.w600),
-              ),
-            ),
-          // Auditoría: de qué registros salió este turno.
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              [
-                if (t.refIngreso != null) 'Ingreso: ${t.refIngreso}',
-                if (t.refSalida != null) 'Salida: ${t.refSalida}',
-                ...t.notas,
-              ].join('\n'),
-              style: const TextStyle(fontSize: 11, color: Colors.black45),
-            ),
-          ),
+  Future<void> _nueva() async {
+    final motivo = TextEditingController();
+    final desc = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        title: const Text('Nueva advertencia'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: motivo, decoration: const InputDecoration(labelText: 'Motivo *')),
+          const SizedBox(height: 8),
+          TextField(controller: desc, maxLines: 3, decoration: const InputDecoration(labelText: 'Descripción')),
         ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () {
+              if (motivo.text.trim().isEmpty) return;
+              Navigator.pop(ctx, true);
+            },
+            child: const Text('Guardar'),
+          ),
+        ],
       ),
     );
+    if (ok != true || !mounted) return;
+    await Cloud.advertencia(
+      guardId: widget.guardia.id,
+      buildingId: widget.guardia.buildingId,
+      motivo: motivo.text.trim(),
+      descripcion: desc.text,
+      registradoPor: Sesion.esAdmin ? 'Administrador' : AppState.instance.userNombre,
+    );
+    if (!mounted) return;
+    await _load();
+  }
+
+  Future<void> _resolver(Advertencia a) async {
+    final obs = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        title: const Text('Marcar como resuelta'),
+        content: TextField(controller: obs, maxLines: 3, decoration: const InputDecoration(labelText: 'Observaciones')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Resolver')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final r = await GuardiasRepo.resolverAdvertencia(a.id, observaciones: obs.text);
+    if (!mounted) return;
+    if (r != null) TopToast.show(context, r, color: AppColors.rojo, icon: Icons.error_outline);
+    _load();
   }
 
   @override
   Widget build(BuildContext context) {
-    final r = widget.resumen;
-    final turnos = r.turnos.toList()..sort((a, b) => b.inicio.compareTo(a.inicio));
-    final saldo = r.saldo;
-    final m = (saldo * 60).round();
+    final f = DateFormat('dd/MM/yyyy HH:mm');
     return Scaffold(
-      appBar: AppBar(title: Text(r.guardia, maxLines: 1, overflow: TextOverflow.ellipsis)),
-      body: ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Text('${widget.edificio} · ${widget.periodo}',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black54)),
-                const SizedBox(height: 6),
-                Text(Turnos.saldo(saldo),
-                    style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: _color(saldo))),
-                Text(m > 0 ? 'Horas a favor' : (m < 0 ? 'Horas en contra' : 'Equilibrado'),
-                    style: TextStyle(color: _color(saldo), fontWeight: FontWeight.w600)),
-                Text('Tolerancia ${widget.toleranciaMin} min: pasado ese margen cuentan todos los minutos',
-                    style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 12),
-                Wrap(spacing: 8, runSpacing: 8, children: [
-                  _dato(Turnos.saldo(r.aFavor).replaceFirst('+', ''), 'A favor', AppColors.verde),
-                  _dato(Turnos.saldo(r.enContra).replaceFirst('+', ''), 'En contra', AppColors.rojo),
-                  _dato('${r.dias}', 'Días', AppColors.azulMarino),
-                  _dato('${r.n12}', '12 h', const Color(0xFF1565C0)),
-                  _dato('${r.n24}', '24 h', AppColors.verde),
-                  _dato('${r.n36}', '36 h', const Color(0xFF6A1B9A)),
-                  _dato('${r.vecesTarde}', 'Tarde', AppColors.rojo),
-                ]),
-              ]),
+      appBar: AppBar(
+          title: Text('Advertencias · ${widget.guardia.nombre}', maxLines: 1, overflow: TextOverflow.ellipsis)),
+      floatingActionButton: widget.guardia.activo
+          ? FloatingActionButton.extended(
+              backgroundColor: const Color(0xFFEF6C00),
+              foregroundColor: Colors.white,
+              onPressed: _nueva,
+              icon: const Icon(Icons.add_alert),
+              label: const Text('Nueva advertencia'),
+            )
+          : null,
+      body: _cargando
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
+                children: [
+                  if (_lista.isEmpty) const Card(child: ListTile(title: Text('Sin advertencias'))),
+                  for (final a in _lista)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Expanded(
+                              child: Text(a.motivo,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: (a.activa ? const Color(0xFFEF6C00) : AppColors.verde).withOpacity(.12),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(a.activa ? 'ACTIVA' : 'RESUELTA',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: a.activa ? const Color(0xFFEF6C00) : AppColors.verde)),
+                            ),
+                          ]),
+                          const SizedBox(height: 4),
+                          Text(f.format(a.fecha), style: const TextStyle(color: Colors.black54, fontSize: 12)),
+                          if ((a.descripcion ?? '').isNotEmpty)
+                            Padding(padding: const EdgeInsets.only(top: 6), child: Text(a.descripcion ?? '')),
+                          const SizedBox(height: 6),
+                          Text('Registró: ${a.registradoPor ?? '-'}', style: const TextStyle(fontSize: 12)),
+                          if ((a.observaciones ?? '').isNotEmpty)
+                            Text('Observaciones: ${a.observaciones}', style: const TextStyle(fontSize: 12)),
+                          if (a.activa && Sesion.esAdmin)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: () => _resolver(a),
+                                icon: const Icon(Icons.check_circle_outline),
+                                label: const Text('Resolver'),
+                              ),
+                            ),
+                        ]),
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          if (turnos.isEmpty)
-            const Card(child: ListTile(title: Text('Sin turnos en este periodo'))),
-          for (final t in turnos) _turno(t),
-        ],
-      ),
     );
   }
 }

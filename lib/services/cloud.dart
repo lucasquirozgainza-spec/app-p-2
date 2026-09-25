@@ -8,6 +8,8 @@ import 'package:image/image.dart' as img;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
+import 'estructura.dart';
+import 'sesion.dart';
 import 'app_state.dart';
 import 'img_util.dart';
 
@@ -41,11 +43,24 @@ class Cloud {
   static String deviceId = 'device';
   static String? lastError;
 
-  static Map<String, String> get _h => {
+  /// Encabezados solo con la clave pública (almacenamiento de fotos).
+  static Map<String, String> get _hAnon => {
         'apikey': anonKey,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       };
+
+  /// Encabezados de la base: con la sesión del celular vinculado (así la
+  /// base aplica sus políticas por edificio); sin vincular, la clave pública.
+  static Map<String, String> get _h => {
+        ..._hAnon,
+        if (Sesion.token != null) 'Authorization': 'Bearer ${Sesion.token}',
+      };
+
+  static Future<Map<String, String>> _hdr() async {
+    await Sesion.vigente();
+    return _h;
+  }
 
   static Future<void> init() async {
     // ID ÚNICO por instalación. OJO: androidInfo.id es el Build.ID del sistema
@@ -80,7 +95,7 @@ class Cloud {
     try {
       final r = await http.post(
         Uri.parse('$_rest/eventos'),
-        headers: {..._h, 'Prefer': 'return=minimal'},
+        headers: {...await _hdr(), 'Prefer': 'return=minimal'},
         body: jsonEncode({
           'tipo': 'Prueba de conexión',
           'edificio': AppState.instance.edificioId,
@@ -111,12 +126,18 @@ class Cloud {
   /// - ts es la hora en que pasó, aunque se suba horas después (created_at
   ///   en la nube es la hora de SUBIDA).
   /// [edificio]: por defecto el activo de este celular.
+  /// [guardId]: guardia al que pertenece el registro (por defecto el que está
+  /// de turno en este celular). Con el celular vinculado, cada evento lleva
+  /// además building_id / unit_id / guard_id: así las horas y los registros
+  /// de un guardia se calculan SOLO con lo suyo, y la base puede separar
+  /// edificios con sus políticas.
   static Future<void> evento(String tipo,
-      {String? guardia, String? edificio, Map<String, dynamic>? detalle}) async {
+      {String? guardia, String? edificio, String? guardId, Map<String, dynamic>? detalle}) async {
     if (AppState.instance.soloLocal) return; // edificio sin conexión
+    final ed = edificio ?? AppState.instance.edificioId;
     await _encolar({
       'tipo': tipo,
-      'edificio': edificio ?? AppState.instance.edificioId,
+      'edificio': ed,
       'guardia': guardia ?? AppState.instance.userNombre,
       // Se adjunta el bloque de este celular para distinguir el origen
       // dentro del mismo edificio (los dos bloques cruzan datos igual).
@@ -124,7 +145,22 @@ class Cloud {
         ...(detalle ?? const {}),
         if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
       },
+      ..._contexto(ed, guardId ?? AppState.instance.guardUuid),
     });
+  }
+
+  /// Columnas de contexto (solo con el celular vinculado: sin la migración
+  /// de la base esas columnas no existen).
+  static Map<String, dynamic> _contexto(String edificio, String? guardId) {
+    if (!Sesion.vinculado) return const {};
+    final bid = Sesion.esGuardia ? Sesion.buildingId : Estructura.idEdificio(edificio);
+    if (bid == null) return const {};
+    return {
+      'building_id': bid,
+      if (Sesion.esGuardia) 'unit_id': Sesion.unitId,
+      // El guardia debe ser de ESE edificio (la base lo verifica).
+      if (guardId != null && guardId.isNotEmpty) 'guard_id': guardId,
+    };
   }
 
   static int _seq = 0;
@@ -136,11 +172,38 @@ class Cloud {
     final det = Map<String, dynamic>.from((fila['detalle'] as Map?) ?? const {});
     det['uid'] = uid;
     det['ts'] ??= DateTime.now().toUtc().toIso8601String();
-    final body = jsonEncode({...fila, 'detalle': det, 'device_id': deviceId});
+    await _guardarEnCola('eventos', uid, {...fila, 'detalle': det, 'device_id': deviceId});
+  }
+
+  /// Advertencia de un guardia (tabla guard_warnings). Pasa por la cola.
+  static Future<void> advertencia({
+    required String guardId,
+    required String buildingId,
+    required String motivo,
+    String? descripcion,
+    String? registradoPor,
+    DateTime? fecha,
+  }) async {
+    if (AppState.instance.soloLocal || !Sesion.vinculado) return;
+    final uid = nuevoUid();
+    await _guardarEnCola('guard_warnings', uid, {
+      'uid': uid,
+      'guard_id': guardId,
+      'building_id': buildingId,
+      'occurred_at': (fecha ?? DateTime.now()).toUtc().toIso8601String(),
+      'reason': motivo,
+      if (descripcion != null && descripcion.trim().isNotEmpty) 'description': descripcion.trim(),
+      'created_by': registradoPor ?? AppState.instance.userNombre ?? (Sesion.esAdmin ? 'Administrador' : 'Guardia'),
+    });
+  }
+
+  static Future<void> _guardarEnCola(String tabla, String uid, Map<String, dynamic> fila) async {
+    final body = jsonEncode(fila);
     try {
       final db = await DB.instance.database;
       await db.insert('cola_nube', {
         'uid': uid,
+        'tabla': tabla,
         'body': body,
         'intentos': 0,
         'created_at': DateTime.now().toIso8601String(),
@@ -149,8 +212,8 @@ class Cloud {
       // Si la base local fallara, al menos intentarlo directo una vez.
       lastError = 'cola: $e';
       try {
-        await http.post(Uri.parse('$_rest/eventos'),
-                headers: {..._h, 'Prefer': 'return=minimal'}, body: body)
+        await http.post(Uri.parse('$_rest/$tabla'),
+                headers: {...await _hdr(), 'Prefer': 'return=minimal'}, body: body)
             .timeout(const Duration(seconds: 12));
       } catch (_) {}
       return;
@@ -173,13 +236,15 @@ class Cloud {
         if (filas.isEmpty) break;
         for (final row in filas) {
           final uid = row['uid'] as String;
+          final tabla = (row['tabla'] as String?) ?? 'eventos';
           final intentos = (row['intentos'] as int?) ?? 0;
           // Un reintento puede ser de un envío que SÍ llegó (se cortó la
           // respuesta): si ya está en la nube, no se vuelve a subir.
           if (intentos > 0) {
+            final filtro = tabla == 'eventos' ? 'detalle->>uid' : 'uid';
             final q = await http
-                .get(Uri.parse('$_rest/eventos?select=id&detalle->>uid=eq.${Uri.encodeComponent(uid)}&limit=1'),
-                    headers: _h)
+                .get(Uri.parse('$_rest/$tabla?select=id&$filtro=eq.${Uri.encodeComponent(uid)}&limit=1'),
+                    headers: await _hdr())
                 .timeout(const Duration(seconds: 12));
             if (q.statusCode < 300 && q.body.trim() != '[]') {
               await db.delete('cola_nube', where: 'uid=?', whereArgs: [uid]);
@@ -188,20 +253,23 @@ class Cloud {
           }
           await db.rawUpdate('UPDATE cola_nube SET intentos = intentos + 1 WHERE uid=?', [uid]);
           final r = await http
-              .post(Uri.parse('$_rest/eventos'),
-                  headers: {..._h, 'Prefer': 'return=minimal'}, body: row['body'] as String)
+              .post(Uri.parse('$_rest/$tabla'),
+                  headers: {...await _hdr(), 'Prefer': 'return=minimal'}, body: row['body'] as String)
               .timeout(const Duration(seconds: 12));
           final c = r.statusCode;
-          if (c < 300) {
+          if (c < 300 || c == 409) {
+            // 409 = ya existía (mismo uid): no se sube dos veces.
             await db.delete('cola_nube', where: 'uid=?', whereArgs: [uid]);
-          } else if (c >= 400 && c < 500 && c != 408 && c != 429) {
+          } else if (c >= 400 && c < 500 && c != 401 && c != 403 && c != 408 && c != 429) {
             // Rechazo definitivo (fila inválida): se descarta para no trabar
             // la cola para siempre.
-            lastError = 'evento $c: ${r.body}';
+            lastError = '$tabla $c: ${r.body}';
             await db.delete('cola_nube', where: 'uid=?', whereArgs: [uid]);
           } else {
-            lastError = 'evento $c: ${r.body}';
-            return; // servidor con problemas: se reintenta en el próximo latido
+            // Sin permiso (sesión vencida / celular desvinculado) o servidor
+            // con problemas: se conserva y se reintenta en el próximo latido.
+            lastError = '$tabla $c: ${r.body}';
+            return;
           }
         }
       }
@@ -233,6 +301,7 @@ class Cloud {
       'edificio': edificio,
       'guardia': AppState.instance.userNombre ?? 'Admin',
       'detalle': {'modulos': modulosJson},
+      ..._contexto(edificio, null),
     });
   }
 
@@ -253,7 +322,7 @@ class Cloud {
     if (AppState.instance.soloLocal) return null;
     try {
       final params = ['select=created_at,detalle', 'tipo=eq.AdminPass', 'order=created_at.desc', 'limit=1'];
-      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: await _hdr())
           .timeout(const Duration(seconds: 12));
       if (r.statusCode >= 300) return null;
       final list = jsonDecode(r.body) as List;
@@ -280,7 +349,7 @@ class Cloud {
         'order=created_at.desc',
         'limit=1',
       ];
-      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: await _hdr())
           .timeout(const Duration(seconds: 12));
       if (r.statusCode >= 300) return null;
       final list = jsonDecode(r.body) as List;
@@ -308,13 +377,16 @@ class Cloud {
         'edificio': s.edificioId,
         'en_turno': s.turnoActivoId != null,
         'last_seen': DateTime.now().toUtc().toIso8601String(),
+        if (Sesion.vinculado && Estructura.idEdificio(s.edificioId) != null)
+          'building_id': Sesion.esGuardia ? Sesion.buildingId : Estructura.idEdificio(s.edificioId),
+        if (Sesion.esGuardia) 'unit_id': Sesion.unitId,
       };
       if (lat != null && lng != null) {
         body['lat'] = lat;
         body['lng'] = lng;
       }
       final uri = Uri.parse('$_rest/presencia?on_conflict=device_id');
-      final headers = {..._h, 'Prefer': 'resolution=merge-duplicates,return=minimal'};
+      final headers = {...await _hdr(), 'Prefer': 'resolution=merge-duplicates,return=minimal'};
       var r = await http.post(uri, headers: headers, body: jsonEncode(body)).timeout(const Duration(seconds: 12));
       // Si la tabla no tiene columnas lat/lng (no se corrió esa migración en
       // Supabase), reintenta sin ubicacion para no cortar la presencia.
@@ -338,8 +410,8 @@ class Cloud {
     try {
       final params = <String>['select=*', 'order=created_at.desc', 'limit=$limit'];
       if (tipo != null) params.add('tipo=eq.${Uri.encodeComponent(tipo)}');
-      if (edificio != null) params.add('edificio=eq.${Uri.encodeComponent(edificio)}');
-      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+      if (edificio != null) params.add(_filtroEdificio(edificio));
+      final r = await http.get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: await _hdr())
           .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) {
         lastError = 'eventos ${r.statusCode}: ${r.body}';
@@ -375,7 +447,7 @@ class Cloud {
       // 3 después (relevos del borde y eventos subidos tarde, sin señal).
       final desde = DateTime(m.year, m.month, 1).subtract(const Duration(days: 2)).toUtc().toIso8601String();
       final hasta = DateTime(m.year, m.month + 1, 1).add(const Duration(days: 3)).toUtc().toIso8601String();
-      final ed = edificio != null ? ['edificio=eq.${Uri.encodeComponent(edificio)}'] : const <String>[];
+      final ed = edificio != null ? [_filtroEdificio(edificio)] : const <String>[];
       final inval = '("Ingreso de turno","Salida de turno","Doblar turno")';
       final turnos = await _paginas([
         'tipo=in.${Uri.encodeComponent(inval)}',
@@ -397,15 +469,35 @@ class Cloud {
     }
   }
 
+  /// Registros del mes que pertenecen a guardias (con guard_id) de un
+  /// edificio: rondas, incidentes, visitas, etc. Solo columnas livianas.
+  static Future<List<Map<String, dynamic>>> registrosGuardiasMes(String edificio, DateTime mes,
+      {String? guardId, bool completos = false}) async {
+    if (AppState.instance.soloLocal) return [];
+    try {
+      final desde = DateTime(mes.year, mes.month).toUtc().toIso8601String();
+      final hasta = DateTime(mes.year, mes.month + 1).toUtc().toIso8601String();
+      return await _paginas([
+        guardId != null ? 'guard_id=eq.$guardId' : 'guard_id=not.is.null',
+        _filtroEdificio(edificio),
+        'created_at=gte.${Uri.encodeComponent(desde)}',
+        'created_at=lt.${Uri.encodeComponent(hasta)}',
+      ], select: completos ? '*' : 'id,tipo,guard_id,created_at');
+    } catch (e) {
+      lastError = 'registros: $e';
+      return [];
+    }
+  }
+
   /// Lee TODAS las filas de una consulta, de a 1000 (el servidor no entrega
   /// más de 1000 por pedido: con un solo pedido se perdían los más nuevos).
-  static Future<List<Map<String, dynamic>>> _paginas(List<String> filtros) async {
+  static Future<List<Map<String, dynamic>>> _paginas(List<String> filtros, {String select = '*'}) async {
     const pagina = 1000;
     final out = <Map<String, dynamic>>[];
     for (int offset = 0; offset < 50000; offset += pagina) {
-      final params = ['select=*', ...filtros, 'order=created_at.asc,id.asc', 'limit=$pagina', 'offset=$offset'];
+      final params = ['select=$select', ...filtros, 'order=created_at.asc,id.asc', 'limit=$pagina', 'offset=$offset'];
       final r = await http
-          .get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: _h)
+          .get(Uri.parse('$_rest/eventos?${params.join('&')}'), headers: await _hdr())
           .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) throw Exception('turnos ${r.statusCode}: ${r.body}');
       final lote = List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
@@ -431,7 +523,7 @@ class Cloud {
           .delete(
               Uri.parse('$_rest/eventos?created_at=lt.${Uri.encodeComponent(corte)}'
                   '&edificio=eq.${Uri.encodeComponent(ed)}&$_noSync'),
-              headers: _h)
+              headers: await _hdr())
           .timeout(const Duration(seconds: 20));
     } catch (e) {
       lastError = 'borrarViejos: $e';
@@ -448,7 +540,7 @@ class Cloud {
       final filtro = edificio != null
           ? 'edificio=eq.${Uri.encodeComponent(edificio)}&$_noSync'
           : 'id=gte.0&$_noSync';
-      final r = await http.delete(Uri.parse('$_rest/eventos?$filtro'), headers: _h)
+      final r = await http.delete(Uri.parse('$_rest/eventos?$filtro'), headers: await _hdr())
           .timeout(const Duration(seconds: 25));
       if (r.statusCode >= 300) {
         lastError = 'borrar ${r.statusCode}: ${r.body}';
@@ -461,13 +553,23 @@ class Cloud {
     }
   }
 
+  /// Filtro por edificio. Un celular de guardia vinculado filtra por el id
+  /// del edificio (lo que la base le permite ver); el admin, por el código,
+  /// que incluye también el historial anterior a la migración.
+  static String _filtroEdificio(String codigo) {
+    if (Sesion.esGuardia && Sesion.buildingId != null) {
+      return 'building_id=eq.${Sesion.buildingId}';
+    }
+    return 'edificio=eq.${Uri.encodeComponent(codigo)}';
+  }
+
   /// Presencia de los celulares. Con [edificio], solo los de ese edificio
   /// (un guardia no descarga los datos ni la ubicación de otros edificios).
   static Future<List<Map<String, dynamic>>> presencia({String? edificio}) async {
     if (AppState.instance.soloLocal) return [];
     try {
-      final f = edificio == null ? '' : '&edificio=eq.${Uri.encodeComponent(edificio)}';
-      final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc$f'), headers: _h)
+      final f = edificio == null ? '' : '&${_filtroEdificio(edificio)}';
+      final r = await http.get(Uri.parse('$_rest/presencia?select=*&order=last_seen.desc$f'), headers: await _hdr())
           .timeout(const Duration(seconds: 15));
       if (r.statusCode >= 300) {
         lastError = 'presencia ${r.statusCode}: ${r.body}';
@@ -539,7 +641,7 @@ class Cloud {
       final corte = DateTime.now().subtract(Duration(days: dias)).millisecondsSinceEpoch;
       final r = await http
           .post(Uri.parse('$_storage/object/list/$bucket'),
-              headers: _h,
+              headers: _hAnon,
               body: jsonEncode({'prefix': '$ed/', 'limit': 1000, 'sortBy': {'column': 'name', 'order': 'asc'}}))
           .timeout(const Duration(seconds: 20));
       if (r.statusCode >= 300) return;
@@ -562,7 +664,7 @@ class Cloud {
       final ed = _edSafe();
       final r = await http
           .post(Uri.parse('$_storage/object/list/$bucket'),
-              headers: _h,
+              headers: _hAnon,
               body: jsonEncode({'prefix': '$ed/', 'limit': 1000}))
           .timeout(const Duration(seconds: 20));
       if (r.statusCode >= 300) return;
@@ -582,7 +684,7 @@ class Cloud {
     try {
       await http
           .delete(Uri.parse('$_storage/object/$bucket'),
-              headers: {..._h}, body: jsonEncode({'prefixes': rutas}))
+              headers: {..._hAnon}, body: jsonEncode({'prefixes': rutas}))
           .timeout(const Duration(seconds: 25));
     } catch (_) {}
   }

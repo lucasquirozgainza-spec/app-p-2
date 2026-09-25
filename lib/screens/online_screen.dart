@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
+import '../services/estructura.dart';
 import '../services/pdf_export.dart';
 import '../theme.dart';
 import 'config_screen.dart';
@@ -250,7 +251,8 @@ class _OnlineScreenState extends State<OnlineScreen> {
         .toList();
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.soloEdificio ? 'Actividad del edificio' : _tituloEd),
+        title: Text(widget.soloEdificio ? 'Movimientos · ${AppState.instance.edificioNombre}' : _tituloEd,
+            maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           // Un solo menú (⋮) para no llenar la barra de iconos.
           PopupMenuButton<String>(
@@ -451,10 +453,16 @@ class _OnlineScreenState extends State<OnlineScreen> {
       final m = detalle is String ? jsonDecode(detalle) : detalle;
       if (m is Map) {
         bloque = (m['bloque'] ?? '').toString();
-        sub = m.entries.where((x) => x.key != 'bloque' && '${x.value}'.trim().isNotEmpty)
+        // Datos internos (ids, horas técnicas) no se muestran.
+        const ocultos = {'bloque', 'uid', 'ts', 'turno_ref', 'relevos', 'ubicacion', 'foto_url', 'fotos_url', 'nivel'};
+        sub = m.entries.where((x) => !ocultos.contains(x.key) && '${x.value}'.trim().isNotEmpty)
             .map((x) => '${x.value}').join(' · ');
       }
     } catch (_) {}
+    // Torre / dispositivo de origen (estructura nueva) o la etiqueta anterior.
+    final unidad = Estructura.nombreUnidad(e['unit_id']?.toString());
+    if (unidad.isNotEmpty) bloque = unidad;
+    final hora = Cloud.horaEvento(e);
     return Card(
       child: ListTile(
         onTap: () => _verEvento(e),
@@ -479,7 +487,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w600)),
           ),
         ]),
-        subtitle: Text('${e['edificio'] ?? ''}${sub.isNotEmpty ? ' · $sub' : ''}',
+        subtitle: Text('${hora == null ? '' : DateFormat('dd/MM HH:mm').format(hora)}${sub.isNotEmpty ? ' · $sub' : ''}',
             maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: const Icon(Icons.chevron_right, color: Colors.black26),
       ),

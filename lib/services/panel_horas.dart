@@ -26,8 +26,11 @@ class RegistroTurno {
   /// y se cuentan UNA sola vez.
   final String id;
   final String edificio;
-  final String guardia;
-  final String puesto;          // id del celular (o "local")
+  final String guardia;         // nombre (para mostrar)
+  /// Id ÚNICO del guardia (tabla guards). Con él, un guardia nuevo nunca
+  /// comparte horas con otro aunque se llamen igual.
+  final String? guardId;
+  final String puesto;          // unidad (torre/dispositivo); antes: id del celular
   DateTime inicio;
   DateTime? fin;                // null = sigue en turno
   int? nivelDeclarado;          // 12/24/36 marcado por el guardia
@@ -49,6 +52,7 @@ class RegistroTurno {
   RegistroTurno({
     required this.id,
     required this.guardia,
+    this.guardId,
     required this.puesto,
     required this.inicio,
     this.edificio = '',
@@ -58,6 +62,10 @@ class RegistroTurno {
     this.refIngreso,
     this.refSalida,
   });
+
+  /// Identidad para el cálculo: el id del guardia; en registros anteriores
+  /// (sin id), su nombre.
+  String get clave => guardId ?? guardia;
 
   /// 'ok' (cerrado), 'abierto' (en turno) o la marca de un registro que no
   /// entra en el cálculo.
@@ -89,9 +97,10 @@ class RegistroTurno {
 
 /// Resumen de un guardia en el periodo.
 class ResumenGuardia {
-  final String guardia;
+  final String guardia; // nombre
+  final String clave;   // id del guardia (o nombre en registros anteriores)
   final List<RegistroTurno> turnos = [];
-  ResumenGuardia(this.guardia);
+  ResumenGuardia(this.guardia, [String? clave]) : clave = clave ?? guardia;
 
   Iterable<RegistroTurno> get _validos => turnos.where((t) => t.valido);
   Iterable<RegistroTurno> get _cerrados => turnos.where((t) => t.cerrado);
@@ -188,7 +197,7 @@ class PanelHoras {
       for (final t in lista) {
         if (!enPeriodo(t)) continue;
         p.turnos.add(t);
-        p.guardias.putIfAbsent(t.guardia, () => ResumenGuardia(t.guardia)).turnos.add(t);
+        p.guardias.putIfAbsent(t.clave, () => ResumenGuardia(t.guardia, t.clave)).turnos.add(t);
         // Cuenta entre pares: lo que cada uno cubrió por el otro.
         for (final m in t.movimientos) {
           if (m.con == null || m.horas <= 0) continue;
@@ -245,7 +254,7 @@ class PanelHoras {
       RegistroTurno? mejor;
       int mejorDif = 1 << 30;
       for (final b in validos) {
-        if (identical(a, b) || b.guardia == a.guardia || tomados.contains(b)) continue;
+        if (identical(a, b) || b.clave == a.clave || tomados.contains(b)) continue;
         if (b.progInicio != a.progFin) continue;
         final dif = b.inicio.difference(a.fin!).inMinutes.abs();
         if (dif < mejorDif || (dif == mejorDif && mejor != null && b.id.compareTo(mejor.id) < 0)) {
@@ -320,22 +329,23 @@ class PanelHoras {
   /// Panel del mes [mes] desde los eventos de la nube, por edificio.
   /// [tolerancias]: minutos por edificio (los que falten usan 15).
   static Map<String, List<PanelPuesto>> panelNube(List<Map<String, dynamic>> eventos, DateTime mes,
-      {Map<String, int> tolerancias = const {}}) {
-    final nombres = <String, String>{}; // puesto -> "Bloque A"
+      {Map<String, int> tolerancias = const {}, bool soloConGuardia = false, Map<String, String> nombres = const {}}) {
+    final nombresPuesto = <String, String>{...nombres}; // puesto -> "Torre 1"
     for (final e in eventos) {
+      if (e['unit_id'] != null) continue; // las unidades ya tienen nombre
       final d = e['detalle'];
       final bloque = (d is Map ? d['bloque'] ?? '' : '').toString().trim();
-      if (bloque.isNotEmpty) nombres[(e['device_id'] ?? 'sin-celular').toString()] = bloque;
+      if (bloque.isNotEmpty) nombresPuesto.putIfAbsent((e['device_id'] ?? 'sin-celular').toString(), () => bloque);
     }
     final porEd = <String, List<RegistroTurno>>{};
-    for (final t in desdeEventos(eventos)) {
+    for (final t in desdeEventos(eventos, soloConGuardia: soloConGuardia)) {
       porEd.putIfAbsent(t.edificio, () => []).add(t);
     }
     final desde = DateTime(mes.year, mes.month), hasta = DateTime(mes.year, mes.month + 1);
     final out = <String, List<PanelPuesto>>{};
     for (final e in porEd.entries) {
       final p = calcular(e.value,
-          nombres: nombres,
+          nombres: nombresPuesto,
           desde: desde,
           hasta: hasta,
           toleranciaMin: tolerancias[e.key] ?? Turnos.toleranciaPorDefecto);
@@ -349,7 +359,7 @@ class PanelHoras {
     final out = <String, ResumenGuardia>{};
     for (final p in puestos) {
       for (final r in p.guardias.values) {
-        out.putIfAbsent(r.guardia, () => ResumenGuardia(r.guardia)).turnos.addAll(r.turnos);
+        out.putIfAbsent(r.clave, () => ResumenGuardia(r.guardia, r.clave)).turnos.addAll(r.turnos);
       }
     }
     for (final r in out.values) {
@@ -383,13 +393,17 @@ class PanelHoras {
   ///   "sin ingreso"; quedan en el historial pero no suman ni restan.
   /// - Correcciones: la ÚLTIMA corrección de cada turno reemplaza sus datos
   ///   (corregir dos veces no suma dos veces).
-  static List<RegistroTurno> desdeEventos(List<Map<String, dynamic>> eventos, {DateTime? ahora}) {
+  /// [soloConGuardia]: solo los registros con id de guardia (estructura
+  /// nueva). Los anteriores quedan como archivo y no suman a nadie.
+  static List<RegistroTurno> desdeEventos(List<Map<String, dynamic>> eventos,
+      {DateTime? ahora, bool soloConGuardia = false}) {
     final now = ahora ?? DateTime.now();
     final evs = <_Ev>[];
     final vistos = <String>{};
     for (final e in eventos) {
       final ev = _Ev.de(e);
       if (ev == null) continue;
+      if (soloConGuardia && ev.guardId == null) continue;
       if (!vistos.add(ev.uid)) continue; // mismo evento leído dos veces
       evs.add(ev);
     }
@@ -407,7 +421,8 @@ class PanelHoras {
         '${Turnos.fmtHora(t.hour, t.minute)}';
 
     for (final ev in evs) {
-      final k = '${ev.ed}|${ev.g}';
+      // Turno abierto por guardia: por su id (o por nombre en lo anterior).
+      final k = ev.guardId ?? '${ev.ed}|${ev.g}';
       final ref = ev.det['turno_ref']?.toString();
       switch (ev.tipo) {
         case 'Ingreso de turno':
@@ -422,6 +437,7 @@ class PanelHoras {
             id: id,
             edificio: ev.ed,
             guardia: ev.g,
+            guardId: ev.guardId,
             puesto: ev.puesto,
             inicio: ev.t,
             relevos: Turnos.limpiar((ev.det['relevos'] ?? '').toString().split(',')),
@@ -449,6 +465,7 @@ class PanelHoras {
               id: 'salida:${ev.uid}',
               edificio: ev.ed,
               guardia: ev.g,
+              guardId: ev.guardId,
               puesto: ev.puesto,
               inicio: ev.t,
               fin: ev.t,
@@ -507,6 +524,7 @@ class PanelHoras {
     required List<String> relevos,
     String edificio = '',
     DateTime? ahora,
+    bool soloConGuardia = false,
   }) {
     final now = ahora ?? DateTime.now();
     final salida = <int, Map<String, dynamic>>{};
@@ -521,12 +539,17 @@ class PanelHoras {
     for (final ing in ingresos) {
       final ini = DateTime.tryParse('${ing['created_at'] ?? ''}');
       if (ini == null) continue;
+      final gid = ing['guard_uuid']?.toString();
+      final conId = gid != null && gid.isNotEmpty;
+      if (soloConGuardia && !conId) continue; // sistema anterior: archivo
       final s = salida[ing['id']];
+      final uni = ing['unit_id']?.toString();
       final t = RegistroTurno(
         id: 'local:${ing['id']}',
         edificio: edificio,
         guardia: (ing['guardia_nombre'] ?? 'Sin nombre').toString(),
-        puesto: 'local',
+        guardId: conId ? gid : null,
+        puesto: (uni == null || uni.isEmpty) ? 'local' : uni,
         inicio: ini,
         fin: s == null ? null : DateTime.tryParse('${s['created_at'] ?? ''}'),
         nivelDeclarado: Turnos.nivelValido(ing['nivel']),
@@ -562,9 +585,10 @@ class PanelHoras {
 /// Evento de la nube ya normalizado.
 class _Ev {
   final String tipo, ed, g, puesto, uid, ref;
+  final String? guardId;
   final DateTime t;
   final Map det;
-  _Ev(this.tipo, this.ed, this.g, this.puesto, this.t, this.det, this.uid, this.ref);
+  _Ev(this.tipo, this.ed, this.g, this.puesto, this.t, this.det, this.uid, this.ref, this.guardId);
 
   static const _tipos = {'Ingreso de turno', 'Salida de turno', 'Doblar turno', 'Corrección de turno'};
 
@@ -578,7 +602,9 @@ class _Ev {
     if (t == null) return null;
     final ed = (e['edificio'] ?? 'Sin edificio').toString();
     final g = (e['guardia'] ?? 'Sin nombre').toString();
-    final puesto = (e['device_id'] ?? 'sin-celular').toString();
+    // Unidad (torre/dispositivo) de la estructura nueva; antes, el celular.
+    final puesto = (e['unit_id'] ?? e['device_id'] ?? 'sin-celular').toString();
+    final gid = e['guard_id']?.toString();
     final idNube = e['id'];
     // uid: el del celular; eventos viejos: id de la nube; si no, una huella.
     final uid = det['uid']?.toString() ??
@@ -586,6 +612,6 @@ class _Ev {
             ? 'id$idNube'
             : '$tipo|$ed|$g|$puesto|${t.toUtc().toIso8601String().substring(0, 16)}');
     final ref = idNube != null ? 'nube #$idNube' : uid;
-    return _Ev(tipo, ed, g, puesto, t, det, uid, ref);
+    return _Ev(tipo, ed, g, puesto, t, det, uid, ref, (gid == null || gid.isEmpty) ? null : gid);
   }
 }

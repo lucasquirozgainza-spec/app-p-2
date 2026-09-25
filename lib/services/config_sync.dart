@@ -3,6 +3,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import 'app_state.dart';
 import 'cloud.dart';
+import 'estructura.dart';
+import 'guardias_repo.dart';
+import 'sesion.dart';
 
 /// Sincroniza la configuración (módulos) del edificio desde la nube. El admin
 /// la publica con Cloud.pushConfig y los otros dispositivos del mismo edificio
@@ -62,6 +65,15 @@ class ConfigSync {
     _syncGuardiasEnCurso = true;
     try {
       final ed = AppState.instance.edificioId;
+      // Celular vinculado: los guardias vienen de la tabla guards (con id
+      // único). El sistema anterior por NOMBRE ya no se usa (mezclaba
+      // guardias entre torres y hacía que uno nuevo heredara lo de otro).
+      if (Sesion.vinculado) {
+        final bid = Estructura.idEdificio(ed);
+        if (bid != null) await GuardiasRepo.delEdificio(bid);
+        _ultimaSyncGuardias = ahora;
+        return;
+      }
       final res = await Future.wait([
         // lanzar: si UNA de las dos falla no se aplica nada (con solo las
         // altas, un guardia dado de baja volvía a aparecer).

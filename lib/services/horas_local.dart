@@ -1,6 +1,8 @@
 import '../db/database_helper.dart';
 import 'app_state.dart';
 import 'cloud.dart';
+import 'estructura.dart';
+import 'sesion.dart';
 import 'panel_horas.dart';
 
 class HorasEdificio {
@@ -22,13 +24,24 @@ class HorasPanel {
       try {
         await Cloud.vaciarCola(); // lo propio pendiente cuenta ya
         final ev = await Cloud.eventosTurnoMes(mes: mes, edificio: s.edificioId, lanzar: true);
-        final p = PanelHoras.panelNube(ev, mes, tolerancias: {s.edificioId: s.toleranciaMin});
+        final p = PanelHoras.panelNube(ev, mes,
+            tolerancias: {s.edificioId: s.toleranciaMin},
+            soloConGuardia: Sesion.vinculado,
+            nombres: nombresUnidades());
         return HorasEdificio(p[s.edificioId] ?? <PanelPuesto>[], false);
       } catch (_) {
         // Sin señal: lo de este celular (se avisa en pantalla / PDF).
       }
     }
     return HorasEdificio(await local(mes), true);
+  }
+
+  /// Nombre de cada unidad (torre) del edificio activo.
+  static Map<String, String> nombresUnidades() {
+    final bid = Estructura.idEdificio(AppState.instance.edificioId);
+    final m = {for (final u in Estructura.unidades(bid)) u.id: u.name};
+    if (Sesion.unitId != null && Sesion.unitName != null) m.putIfAbsent(Sesion.unitId!, () => Sesion.unitName!);
+    return m;
   }
 
   /// Turnos guardados en ESTE celular.
@@ -52,9 +65,10 @@ class HorasPanel {
         : await db.query('salida_turno',
             where: 'turno_id BETWEEN ? AND ?',
             whereArgs: [ids.reduce((a, b) => a < b ? a : b), ids.reduce((a, b) => a > b ? a : b)]);
-    final regs = PanelHoras.desdeLocal(ingresos, salidas, relevos: s.horarios, edificio: s.edificioId);
+    final regs = PanelHoras.desdeLocal(ingresos, salidas,
+        relevos: s.horarios, edificio: s.edificioId, soloConGuardia: Sesion.vinculado);
     return PanelHoras.calcular(regs,
-        nombres: {'local': s.bloque.isNotEmpty ? s.bloque : 'Este celular'},
+        nombres: {'local': s.bloque.isNotEmpty ? s.bloque : 'Este celular', ...nombresUnidades()},
         desde: desde,
         hasta: hasta,
         toleranciaMin: s.toleranciaMin);

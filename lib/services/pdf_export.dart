@@ -13,6 +13,7 @@ import '../services/app_state.dart';
 import '../services/turnos.dart';
 import '../services/panel_horas.dart';
 import '../services/horas_local.dart';
+import '../services/guardias_repo.dart';
 
 /// Construye el PDF de actividad en un ISOLATE aparte (compute), para que la
 /// interfaz NUNCA se congele aunque haya cientos de filas. Recibe datos ya
@@ -336,7 +337,7 @@ class PdfExport {
     final horas = await HorasPanel.edificio(mes);
     final porGuardia = PanelHoras.porGuardia(horas.puestos);
     for (final g in sinUni.keys) {
-      porGuardia.putIfAbsent(g, () => ResumenGuardia(g));
+      if (!porGuardia.values.any((r) => r.guardia == g)) porGuardia[g] = ResumenGuardia(g);
     }
     final filas = porGuardia.values.toList()..sort((a, b) => b.horas.compareTo(a.horas));
 
@@ -545,6 +546,113 @@ class PdfExport {
     await panelHoras(
         nota: horas.local && !s.soloLocal ? 'Sin conexion al generar: solo incluye los turnos registrados en este celular.' : null,
         porEdificio: {s.edificioNombre: panel}, periodo: DateFormat('MMMM yyyy', 'es').format(mes));
+  }
+
+  /// PDF INDIVIDUAL de un guardia: datos, horas del periodo, ingresos y
+  /// salidas, rondas, incidentes y advertencias. Mismo cálculo que la
+  /// tarjeta (PanelHoras).
+  static Future<void> guardiaPdf({
+    required Guardia g,
+    required String edificio,
+    required String unidad,
+    required String periodo,
+    ResumenGuardia? resumen,
+    List<Advertencia> advertencias = const [],
+    List<Map<String, dynamic>> registros = const [],
+    int toleranciaMin = Turnos.toleranciaPorDefecto,
+  }) async {
+    await _ensureLogo();
+    final fecha = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
+    final dhm = DateFormat('dd/MM/yyyy HH:mm');
+    final dia = DateFormat('EEE dd/MM', 'es');
+    final r = resumen ?? ResumenGuardia(g.nombre, g.id);
+    final turnos = r.turnos.toList()..sort((a, b) => a.inicio.compareTo(b.inicio));
+    String det(Map<String, dynamic> e) {
+      final d = e['detalle'];
+      if (d is! Map) return '';
+      final partes = <String>[
+        for (final k in ['nombre', 'depto', 'tipo', 'lugar', 'descripcion', 'observaciones', 'motivo'])
+          if ('${d[k] ?? ''}'.trim().isNotEmpty) '${d[k]}',
+      ];
+      final t = partes.join(' - ');
+      return t.length > 90 ? '${t.substring(0, 90)}...' : t;
+    }
+
+    final rondas = registros.where((e) => e['tipo'] == 'Ronda').toList();
+    final incidentes = registros.where((e) => e['tipo'] == 'Incidente').toList();
+    final cuerpo = <pw.Widget>[
+      _portada(_safe('Guardia · ${g.nombre} · $periodo'), fecha),
+      _tabla('Datos del guardia', ['Dato', 'Valor'], [
+        ['Nombre', _s(g.nombre)],
+        ['Documento', _s(g.documento ?? '-')],
+        ['Telefono', _s(g.telefono ?? '-')],
+        ['Edificio', _s(edificio)],
+        ['Torre / dispositivo', _s(unidad.isEmpty ? '-' : unidad)],
+        ['Turno', g.diurno ? 'DIURNO (08:00-20:00)' : 'NOCTURNO (20:00-08:00)'],
+        ['Fecha de ingreso', DateFormat('dd/MM/yyyy').format(g.inicio)],
+        ['Estado', g.activo ? 'ACTIVO' : 'INACTIVO desde ${g.fin == null ? '-' : DateFormat('dd/MM/yyyy').format(g.fin!)}'],
+      ]),
+      _tabla('Horas del periodo', ['Trabajadas', 'Extras (a favor)', 'En deuda (en contra)', 'Saldo', '24 h', '36 h'], [
+        [
+          '${r.horas.toStringAsFixed(1)} h',
+          _hm(r.aFavor),
+          _hm(r.enContra),
+          _safe(Turnos.saldo(r.saldo)),
+          '${r.n24}',
+          '${r.n36}',
+        ],
+      ]),
+      pw.SizedBox(height: 4),
+      pw.Text(_safe(_reglaHoras(toleranciaMin)), style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+      _tabla('Ingresos y salidas', ['Dia', 'Ingreso', 'Salida', 'Turno', 'Horas', 'Saldo', 'Detalle'], [
+        for (final t in turnos)
+          [
+            _safe(dia.format(t.inicio)),
+            dhm.format(t.inicio),
+            t.fin == null ? '-' : dhm.format(t.fin!),
+            t.valido ? '${t.nivel} h' : _s(t.estado),
+            t.cerrado ? t.horas.toStringAsFixed(1) : '-',
+            t.movimientos.isEmpty ? '0' : _safe(Turnos.saldo(t.saldo)),
+            _safe([for (final m in t.movimientos) '${Turnos.saldo(m.horas)} ${m.motivo}'].join('; ')),
+          ],
+      ]),
+      _tabla('Rondas realizadas (${rondas.length})', ['Fecha', 'Detalle'],
+          [for (final e in rondas) [_h(e['created_at']), _safe(det(e))]]),
+      _tabla('Incidentes asociados (${incidentes.length})', ['Fecha', 'Detalle'],
+          [for (final e in incidentes) [_h(e['created_at']), _safe(det(e))]]),
+      _tabla('Advertencias (${advertencias.length})', ['Fecha', 'Motivo', 'Descripcion', 'Registro', 'Estado', 'Obs.'], [
+        for (final a in advertencias)
+          [
+            dhm.format(a.fecha),
+            _s(a.motivo),
+            _s(a.descripcion ?? '-'),
+            _s(a.registradoPor ?? '-'),
+            a.estado,
+            _s(a.observaciones ?? '-'),
+          ],
+      ]),
+      if (turnos.isEmpty && registros.isEmpty && advertencias.isEmpty)
+        pw.Padding(padding: const pw.EdgeInsets.all(16), child: pw.Text('Sin registros en este periodo.')),
+      pw.SizedBox(height: 16),
+      pw.Text('Informe generado el $fecha', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+    ];
+    final doc = pw.Document();
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(28),
+      header: (ctx) => ctx.pageNumber == 1 ? pw.SizedBox() : _miniHeader(),
+      footer: (ctx) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        child: pw.Text('Pagina ${ctx.pageNumber} de ${ctx.pagesCount}',
+            style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+      ),
+      build: (_) => cuerpo,
+    ));
+    final dir = await getApplicationDocumentsDirectory();
+    final nombre = g.nombre.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
+    final file = File(p.join(dir.path, 'Guardia_${nombre}_${DateTime.now().millisecondsSinceEpoch}.pdf'));
+    await file.writeAsBytes(await doc.save());
+    await Share.shareXFiles([XFile(file.path)], text: 'OSIRIS - ${g.nombre} - $periodo');
   }
 
   /// PANEL DE HORAS del mes: por edificio y puesto (celular), cada guardia con
