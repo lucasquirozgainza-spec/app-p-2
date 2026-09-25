@@ -439,9 +439,10 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       } catch (_) {}
       // Si mientras tanto se tomó otra foto, este resultado ya no vale.
       if (!mounted || _fotoTarjeta != path) return;
-      if (num != null && num.length == dig) {
-        setState(() => _tarjetaNum.text = num);
-        TopToast.show(context, 'N° de tarjeta: $num');
+      final leido = num; // final: se puede usar dentro del setState
+      if (leido != null && leido.length == dig) {
+        setState(() => _tarjetaNum.text = leido);
+        TopToast.show(context, 'N° de tarjeta: $leido');
       } else {
         TopToast.show(context, 'No se leyó la tarjeta, escríbela o repite la foto',
             color: AppColors.rojo, icon: Icons.error_outline);
