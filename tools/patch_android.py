@@ -152,7 +152,10 @@ for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
     if "camera-extensions" not in b:
         libs = ["androidx.camera:camera-core:1.4.1", "androidx.camera:camera-camera2:1.4.1",
                 "androidx.camera:camera-lifecycle:1.4.1", "androidx.camera:camera-view:1.4.1",
-                "androidx.camera:camera-extensions:1.4.1"]
+                "androidx.camera:camera-extensions:1.4.1",
+                # ListenableFuture (lo usan las APIs de CameraX desde Java).
+                "com.google.guava:listenablefuture:1.0",
+                "androidx.concurrent:concurrent-futures:1.2.0"]
         if kts:
             dep = "\ndependencies {\n" + "".join(f'    implementation("{l}")\n' for l in libs) + "}\n"
         else:
