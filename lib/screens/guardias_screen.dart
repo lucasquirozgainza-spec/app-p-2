@@ -347,6 +347,53 @@ class _GuardiaDetalleScreenState extends State<GuardiaDetalleScreen> {
     Navigator.pop(context);
   }
 
+  /// Eliminar del edificio (y opcionalmente sus registros de la nube de
+  /// ESTE edificio).
+  Future<void> _eliminar() async {
+    bool borrarDatos = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          scrollable: true,
+          icon: const Icon(Icons.delete_forever, color: AppColors.rojo, size: 36),
+          title: Text('Eliminar a ${g.nombre}'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('Se quita de ${g.edificio} en todos los celulares. No se puede deshacer.'),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: borrarDatos,
+              onChanged: (v) => setD(() => borrarDatos = v ?? false),
+              title: const Text('Borrar también sus registros de la nube'),
+              subtitle: Text('Solo de ${g.edificio}: ingresos, salidas, rondas, visitas, incidentes.'),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Eliminar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    String? error;
+    await conEspera(context, () async {
+      error = await GuardiasService.eliminar(g, borrarDatos: borrarDatos);
+    }, mensaje: 'Eliminando…', error: 'No se pudo eliminar');
+    if (!mounted) return;
+    final e = error;
+    if (e != null) {
+      TopToast.show(context, e, color: AppColors.rojo, icon: Icons.error_outline);
+      return;
+    }
+    TopToast.show(context, '${g.nombre} eliminado');
+    Navigator.pop(context);
+  }
+
   Widget _dato(String etiqueta, String valor, Color color) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(10)),
@@ -392,11 +439,17 @@ class _GuardiaDetalleScreenState extends State<GuardiaDetalleScreen> {
         title: Text(g.nombre, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Descargar PDF', onPressed: _cargando ? null : _pdf),
-          if (g.activo && AppState.instance.isAdmin)
+          if (AppState.instance.isAdmin)
             PopupMenuButton<String>(
-              onSelected: (_) => _baja(),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'baja', child: ListTile(leading: Icon(Icons.person_off_outlined), title: Text('Dar de baja'))),
+              onSelected: (v) => v == 'baja' ? _baja() : _eliminar(),
+              itemBuilder: (_) => [
+                if (g.activo)
+                  const PopupMenuItem(
+                      value: 'baja', child: ListTile(leading: Icon(Icons.person_off_outlined), title: Text('Dar de baja'))),
+                const PopupMenuItem(
+                    value: 'eliminar',
+                    child: ListTile(
+                        leading: Icon(Icons.delete_forever, color: AppColors.rojo), title: Text('Eliminar guardia'))),
               ],
             ),
         ],

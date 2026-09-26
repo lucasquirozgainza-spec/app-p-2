@@ -11,7 +11,7 @@ import '../db/database_helper.dart';
 import 'app_state.dart';
 import 'img_util.dart';
 
-/// Comprime una foto para la nube: máx 1080 px y JPEG calidad 55 (~80-150 KB).
+/// Copia para la nube (respaldo en Dart): máx 1920 px, JPEG calidad 82.
 /// Se ejecuta en un isolate (compute) para no trabar la interfaz.
 Uint8List? _comprimirFotoBytes(Uint8List input) {
   try {
@@ -19,8 +19,8 @@ Uint8List? _comprimirFotoBytes(Uint8List input) {
     if (decoded == null) return null;
     // Aplicar la orientación EXIF para que la miniatura no salga volteada.
     final upright = img.bakeOrientation(decoded);
-    final resized = upright.width > 1080 ? img.copyResize(upright, width: 1080) : upright;
-    return Uint8List.fromList(img.encodeJpg(resized, quality: 55));
+    final resized = upright.width > 1920 ? img.copyResize(upright, width: 1920) : upright;
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 82));
   } catch (_) {
     return null;
   }
@@ -504,6 +504,38 @@ class Cloud {
     }
   }
 
+  /// Borra de la nube, SOLO del edificio indicado, las altas/bajas de un
+  /// guardia (por su CI) y, con [conRegistros], todos sus registros.
+  static Future<bool> borrarGuardiaNube(String edificio, String ci, {bool conRegistros = false}) async {
+    if (AppState.instance.soloLocal) return true;
+    try {
+      await vaciarCola(); // que no quede nada suyo pendiente de subir
+      final ed = Uri.encodeComponent(edificio);
+      final c = Uri.encodeComponent(ci);
+      final r1 = await http
+          .delete(Uri.parse('$_rest/eventos?edificio=eq.$ed&tipo=in.(Guardia,GuardiaBaja)&detalle->>ci=eq.$c'),
+              headers: await _hdr())
+          .timeout(const Duration(seconds: 20));
+      if (r1.statusCode >= 300) {
+        lastError = 'borrarGuardia ${r1.statusCode}: ${r1.body}';
+        return false;
+      }
+      if (conRegistros) {
+        final r2 = await http
+            .delete(Uri.parse('$_rest/eventos?edificio=eq.$ed&detalle->>guard_ci=eq.$c'), headers: await _hdr())
+            .timeout(const Duration(seconds: 25));
+        if (r2.statusCode >= 300) {
+          lastError = 'borrarGuardia ${r2.statusCode}: ${r2.body}';
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      lastError = 'borrarGuardia: $e';
+      return false;
+    }
+  }
+
   static final String _noSync =
       'tipo=not.in.${Uri.encodeComponent('(Config,AdminPass,Guardia,GuardiaBaja)')}';
 
@@ -565,6 +597,8 @@ class Cloud {
     try {
       // Si la foto aún se está enderezando en la cola, esperar (tope corto).
       await ImgUtil.esperarPendientes();
+      // Documentos: se sube la copia legible (si ya está lista).
+      path = await ImgUtil.legible(path);
       final f = File(path);
       if (!await f.exists()) return null;
       // Miniatura NATIVA (rápida, poca memoria). Respaldo: Dart en isolate.

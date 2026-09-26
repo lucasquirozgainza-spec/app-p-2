@@ -154,8 +154,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
       builder: (_) => AlertDialog(
         icon: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00), size: 38),
         title: const Text('¿Vaciar la nube?'),
-        content: const Text('Se borrará TODA la actividad guardada en la nube (todos los '
-            'edificios) para liberar espacio. Los registros locales de cada celular NO se tocan.'),
+        content: Text('Se borrará de la nube la actividad y las fotos SOLO de '
+            '${AppState.instance.edificioNombre} (el edificio activo). Los demás edificios no se tocan, '
+            'ni los registros guardados en cada celular.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(
@@ -169,7 +170,13 @@ class _ConfigScreenState extends State<ConfigScreen> {
     if (ok != true) return;
     if (!mounted) return;
     showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    final okB = await Cloud.borrarEventos(edificio: null);
+    // Solo el edificio activo (nunca todos a la vez).
+    final okB = await Cloud.borrarEventos(edificio: AppState.instance.edificioId);
+    if (okB) {
+      try {
+        await Cloud.borrarStorageEdificio();
+      } catch (_) {}
+    }
     if (!mounted) return;
     Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -974,8 +981,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
               ListTile(
                 dense: true,
                 leading: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00)),
-                title: const Text('Vaciar la nube ahora'),
-                subtitle: const Text('Borra la actividad de la nube (se limpia sola cada 3 meses).'),
+                title: const Text('Vaciar la nube de este edificio'),
+                subtitle: Text('Solo ${AppState.instance.edificioNombre} (se limpia sola cada 3 meses).'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _vaciarNube,
               ),

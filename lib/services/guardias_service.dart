@@ -131,6 +131,39 @@ class GuardiasService {
     Cloud.evento('GuardiaBaja', guardia: g.nombre, edificio: g.edificio, detalle: {'ci': g.ci, 'nombre': g.nombre});
   }
 
+  /// ELIMINA al guardia del edificio (en este y en los demás celulares).
+  /// Con [borrarDatos]: también borra de la nube SOLO de este edificio sus
+  /// registros (ingresos, salidas, rondas, visitas...) y sus turnos locales.
+  /// Devuelve null si salió bien o el mensaje de error.
+  static Future<String?> eliminar(Guardia g, {bool borrarDatos = false}) async {
+    // 1) En la nube: sus altas/bajas anteriores (si no, se "revive" al
+    //    sincronizar) y, si se pidió, todos sus registros de este edificio.
+    final ok = await Cloud.borrarGuardiaNube(g.edificio, g.ci, conRegistros: borrarDatos);
+    if (!ok && !AppState.instance.soloLocal) {
+      return 'No se pudo borrar en la nube (sin conexión). Intenta con internet.';
+    }
+    // 2) En este celular.
+    final db = await DB.instance.database;
+    final k = clave(g.edificio, g.ci);
+    final u = await db.query('usuarios', columns: ['id'], where: 'guard_uuid=?', whereArgs: [k]);
+    if (borrarDatos) {
+      final ids = [for (final r in u) r['id']];
+      await db.delete('ingreso_turno', where: 'edificio=? AND guard_uuid=?', whereArgs: [g.edificio, g.ci]);
+      for (final id in ids) {
+        await db.delete('salida_turno', where: 'guardia_id=?', whereArgs: [id]);
+      }
+    } else {
+      // Sus turnos quedan como historial, cerrados.
+      await db.update('ingreso_turno', {'activo': 0}, where: 'edificio=? AND guard_uuid=? AND activo=1',
+          whereArgs: [g.edificio, g.ci]);
+    }
+    await db.delete('usuarios', where: 'guard_uuid=?', whereArgs: [k]);
+    // 3) Aviso a los demás celulares del edificio para que también lo quiten.
+    Cloud.evento('GuardiaBaja', guardia: g.nombre, edificio: g.edificio,
+        detalle: {'ci': g.ci, 'nombre': g.nombre, 'eliminado': true});
+    return null;
+  }
+
   /// Aplica en ESTE celular un alta/baja publicada por otro celular.
   static Future<void> aplicarRemoto(String edificio, Map det, {required bool baja}) async {
     final c = limpiarCi('${det['ci'] ?? ''}');
@@ -138,7 +171,11 @@ class GuardiasService {
     final db = await DB.instance.database;
     final k = clave(edificio, c);
     if (baja) {
-      await db.update('usuarios', {'activo': 0}, where: 'guard_uuid=?', whereArgs: [k]);
+      if (det['eliminado'] == true) {
+        await db.delete('usuarios', where: 'guard_uuid=?', whereArgs: [k]);
+      } else {
+        await db.update('usuarios', {'activo': 0}, where: 'guard_uuid=?', whereArgs: [k]);
+      }
       return;
     }
     final turno = '${det['turno'] ?? 'DIURNO'}';

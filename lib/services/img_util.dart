@@ -30,15 +30,58 @@ class ImgUtil {
   static Future<void> encolar(String path, {String? album}) {
     _pendientes++;
     final tarea = _cola.then((_) async {
-      try {
-        await normalizarNativa(path);
-      } catch (_) {
-        // normalizarNativa ya tiene respaldo; nunca debe cortar la cola.
-      } finally {
-        _pendientes--;
-      }
+      // La foto ORIGINAL queda tal cual la entregó la cámara (100 % de la
+      // resolución y la calidad del sensor): ya no se re-comprime ni se achica.
+      // La orientación va en el EXIF, que respetan la galería, WhatsApp, el
+      // OCR y los PDF.
+      _pendientes--;
       // La galería no hace falta esperarla: va aparte.
       unawaited(Gallery.guardar(path, album: album));
+    });
+    _cola = tarea;
+    return tarea;
+  }
+
+  /// Ruta de la copia LEGIBLE de un documento (junto a la original).
+  static String rutaLegible(String path) =>
+      '${path.replaceFirst(RegExp(r'\.jpe?g$', caseSensitive: false), '')}_doc.jpg';
+
+  /// La copia legible si ya existe; si no, la original.
+  static Future<String> legible(String path) async {
+    final d = rutaLegible(path);
+    try {
+      if (await File(d).exists()) return d;
+    } catch (_) {}
+    return path;
+  }
+
+  /// DOCUMENTOS (carnet, placa, tarjeta): arma en segundo plano una copia
+  /// legible — derecha, 2400 px de lado corto, más contraste y más nitidez —
+  /// SIN tocar la original (que queda como evidencia). No demora la foto.
+  static Future<void> encolarDocumento(String path) {
+    _pendientes++;
+    final tarea = _cola.then((_) async {
+      final destino = rutaLegible(path);
+      final tmp = '$destino.base.jpg';
+      try {
+        // 1) Nativo (rápido y con poca memoria): derecha y tamaño de lectura.
+        final base = await FlutterImageCompress.compressAndGetFile(
+          path, tmp,
+          minWidth: 2400,
+          minHeight: 2400,
+          quality: 98,
+          keepExif: false,
+          autoCorrectionAngle: true,
+        );
+        if (base == null) return;
+        // 2) Contraste y nitidez en otro hilo (no traba la pantalla).
+        final ok = await compute(_mejorarDocumento, [tmp, destino]);
+        if (ok) unawaited(Gallery.guardar(destino, album: 'OSIRIS Documentos'));
+      } catch (_) {
+      } finally {
+        await _borrar(tmp);
+        _pendientes--;
+      }
     });
     _cola = tarea;
     return tarea;
@@ -90,14 +133,15 @@ class ImgUtil {
     } catch (_) {}
   }
 
-  /// Versión chica para subir a la nube (~1080 px, ~100-200 KB). Nativa.
+  /// Copia para la NUBE (verla desde otros celulares): 1920 px y buena
+  /// calidad, para que se lean placas, documentos y detalles. Nativa.
   static Future<Uint8List?> miniaturaNube(String path) async {
     try {
       final b = await FlutterImageCompress.compressWithFile(
         path,
-        minWidth: 1080,
-        minHeight: 1080,
-        quality: 60,
+        minWidth: 1920,
+        minHeight: 1920,
+        quality: 82,
         keepExif: false,
         autoCorrectionAngle: true,
       );
@@ -134,6 +178,54 @@ bool _bakeOrient(String path) {
       try { if (tmp.existsSync()) tmp.deleteSync(); } catch (_) {}
       return false;
     }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Mejora para LEER documentos: estira los niveles (el papel se ve blanco y
+/// la tinta oscura) y aplica un enfoque suave. [a] = [origen, destino].
+bool _mejorarDocumento(List<String> a) {
+  try {
+    final im = img.decodeJpg(File(a[0]).readAsBytesSync());
+    if (im == null) return false;
+    // Histograma de luminancia para hallar el 1 % más oscuro y más claro.
+    final hist = List<int>.filled(256, 0);
+    for (final p in im) {
+      final l = img.getLuminanceRgb(p.r, p.g, p.b).round().clamp(0, 255);
+      hist[l]++;
+    }
+    final total = im.width * im.height;
+    int acum = 0, lo = 0, hi = 255;
+    for (int i = 0; i < 256; i++) {
+      acum += hist[i];
+      if (acum >= total * 0.01) {
+        lo = i;
+        break;
+      }
+    }
+    acum = 0;
+    for (int i = 255; i >= 0; i--) {
+      acum += hist[i];
+      if (acum >= total * 0.01) {
+        hi = i;
+        break;
+      }
+    }
+    if (hi - lo >= 20) {
+      final f = 255.0 / (hi - lo);
+      for (final p in im) {
+        p.r = ((p.r - lo) * f).clamp(0, 255);
+        p.g = ((p.g - lo) * f).clamp(0, 255);
+        p.b = ((p.b - lo) * f).clamp(0, 255);
+      }
+    }
+    // Enfoque suave (bordes de letras y números más definidos).
+    final nitida = img.convolution(im, filter: [0, -1, 0, -1, 5, -1, 0, -1, 0], amount: 0.6);
+    final tmp = File('${a[1]}.tmp');
+    tmp.writeAsBytesSync(img.encodeJpg(nitida, quality: 95), flush: true);
+    tmp.renameSync(a[1]);
     return true;
   } catch (_) {
     return false;

@@ -426,7 +426,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   /// Captura la tarjeta (cámara propia, sin confirmar) y lee el número en
   /// SEGUNDO PLANO para no demorar. Si no lo lee, avisa para repetir manual.
   Future<void> _capturarTarjeta() async {
-    final res = await Camara.tomar(context, multi: false, album: 'OSIRIS Tarjetas');
+    final res = await Camara.tomar(context, multi: false, album: 'OSIRIS Tarjetas', documento: true);
     if (res == null || res.isEmpty || !mounted) return;
     final path = res.first;
     final dig = AppState.instance.tarjetaDigitos;
@@ -453,7 +453,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
   /// Captura los DOS lados del carnet en UNA sola sesión (sin reabrir) y lee
   /// CI+nombre en SEGUNDO PLANO para no demorar el registro.
   Future<void> _capturarCarnet() async {
-    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
+    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet', documento: true);
     if (res == null || res.isEmpty || !mounted) return;
     final seq = ++_ocrSeq;
     setState(() {
@@ -496,7 +496,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
 
   /// Carnet de un visitante ADICIONAL: toma los 2 lados y llena su nombre/CI.
   Future<void> _carnetAcompanante(_Acompanante a) async {
-    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
+    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet', documento: true);
     if (res == null || res.isEmpty || !mounted) return;
     setState(() { a.fotos = res; a.leyendo = true; });
     () async {

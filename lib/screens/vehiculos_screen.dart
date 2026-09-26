@@ -181,7 +181,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
   }
 
   Future<void> _escanearPlaca() async {
-    final res = await Camara.tomar(context, multi: false, album: 'OSIRIS Placas');
+    final res = await Camara.tomar(context, multi: false, album: 'OSIRIS Placas', documento: true);
     if (res == null || res.isEmpty) return;
     final placa = await OcrService.leerPlaca(res.first);
     if (!mounted) return;

@@ -56,8 +56,30 @@ if "roundIcon" not in txt:
     txt = txt.replace('android:icon="@mipmap/ic_launcher"',
                       'android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"', 1)
 
+# Cámara procesada (procesamiento del fabricante) para las rondas.
+if "ExtCameraActivity" not in txt:
+    act = ('        <activity android:name=".ExtCameraActivity" android:exported="false"\n'
+           '            android:screenOrientation="portrait"\n'
+           '            android:configChanges="orientation|screenSize|keyboardHidden"\n'
+           '            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>\n')
+    txt = txt.replace("</application>", act + "    </application>", 1)
+
 manifest.write_text(txt, encoding="utf-8")
 print("Manifest parcheado OK (nombre: OSIRIS)")
+
+# --- Código Android propio: MainActivity (canal de la cámara) y la cámara
+#     procesada. Reemplaza el MainActivity.kt que genera flutter create. ---
+java_src = pathlib.Path("tools/android")
+if java_src.exists():
+    for kt in pathlib.Path("android/app/src/main").rglob("MainActivity.kt"):
+        kt.unlink()
+    for jv in pathlib.Path("android/app/src/main").rglob("MainActivity.java"):
+        jv.unlink()
+    dst = pathlib.Path("android/app/src/main/java/com/condocontrol/condocontrol")
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in java_src.glob("*.java"):
+        shutil.copyfile(f, dst / f.name)
+    print("Código Android (cámara procesada) copiado")
 
 # --- Icono OSIRIS (copia iconos pre-generados a res/mipmap-*) ---
 res = pathlib.Path("android/app/src/main/res")
@@ -123,6 +145,18 @@ for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
             dep = '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")\n}\n'
         else:
             dep = "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'\n}\n"
+        b = b + dep
+
+    # Librerías de cámara (CameraX + extensiones del fabricante). Las
+    # versiones de androidx.camera se alinean solas con las del plugin camera.
+    if "camera-extensions" not in b:
+        libs = ["androidx.camera:camera-core:1.4.1", "androidx.camera:camera-camera2:1.4.1",
+                "androidx.camera:camera-lifecycle:1.4.1", "androidx.camera:camera-view:1.4.1",
+                "androidx.camera:camera-extensions:1.4.1"]
+        if kts:
+            dep = "\ndependencies {\n" + "".join(f'    implementation("{l}")\n' for l in libs) + "}\n"
+        else:
+            dep = "\ndependencies {\n" + "".join(f"    implementation '{l}'\n" for l in libs) + "}\n"
         b = b + dep
 
     # Desactivar R8/minificacion en release (evita errores de clases faltantes de ML Kit).

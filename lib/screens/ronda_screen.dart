@@ -73,7 +73,7 @@ class _RondaScreenState extends State<RondaScreen> {
   void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
 
   Future<void> _tomarFotos() async {
-    final res = await Camara.tomar(context, multi: true, minFotos: _min, album: 'OSIRIS Rondas');
+    final res = await Camara.tomar(context, multi: true, minFotos: _min, album: 'OSIRIS Rondas', procesada: true);
     if (res != null && res.isNotEmpty && mounted) setState(() => _fotos.addAll(res));
   }
 

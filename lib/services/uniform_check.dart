@@ -30,8 +30,11 @@ List<double> _revisar(String path) {
       final bytes = File(path).readAsBytesSync();
       final full = img.decodeImage(bytes);
       if (full == null) return [1, 0, 0]; // no se pudo leer: no molestar
-      // Reducir para acelerar el analisis.
-      final im = img.copyResize(full, width: 200);
+      // Reducir para acelerar el analisis (con la orientación del EXIF: la
+      // foto original ya no se re-graba derecha).
+      final chica = img.copyResize(full, width: 200);
+      chica.exif = full.exif;
+      final im = img.bakeOrientation(chica);
       final w = im.width, h = im.height;
       // Zona del torso: centro-horizontal, mitad-inferior de la imagen.
       final x0 = (w * 0.22).round(), x1 = (w * 0.78).round();

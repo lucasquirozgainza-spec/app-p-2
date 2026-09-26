@@ -172,8 +172,14 @@ class PanelHoras {
       DateTime? hasta,
       int toleranciaMin = Turnos.toleranciaPorDefecto}) {
     final tol = toleranciaMin / 60.0;
-    bool enPeriodo(RegistroTurno t) =>
-        (desde == null || !t.inicio.isBefore(desde)) && (hasta == null || t.inicio.isBefore(hasta));
+    // El MES de un turno lo da su hora de relevo PROGRAMADA: el mes empieza
+    // con el turno diurno del día 1 y termina con el nocturno del último día
+    // (aunque ese nocturno salga el día 1 del mes siguiente, o alguien entre
+    // tarde pasada la medianoche). Así las horas de cada mes no se mezclan.
+    bool enPeriodo(RegistroTurno t) {
+      final ref = t.progInicio ?? t.inicio;
+      return (desde == null || !ref.isBefore(desde)) && (hasta == null || ref.isBefore(hasta));
+    }
 
     // Un turno repetido (mismo id) se cuenta una sola vez.
     final vistos = <String>{};

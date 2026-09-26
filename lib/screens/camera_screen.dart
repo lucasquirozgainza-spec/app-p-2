@@ -17,7 +17,7 @@ class CameraScreen extends StatefulWidget {
   final int minFotos;
   final bool frontal;
   final String? album;
-  final bool rapida; // true = 720p rápido (selfie de turno). No para documentos.
+  final bool rapida; // (sin efecto: todas las fotos van a resolución máxima)
   const CameraScreen({super.key, this.multi = false, this.minFotos = 0, this.frontal = false, this.album, this.rapida = false});
 
   @override
@@ -113,7 +113,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     // Pedido viejo (se cambió de cámara, se salió de la app o se cerró).
     if (!mounted || gen != _gen) return;
 
-    final preset = widget.rapida ? ResolutionPreset.high : ResolutionPreset.max;
+    // Siempre la MÁXIMA resolución del sensor (también en la selfie de
+    // turno): antes la selfie iba a 720p y se perdía detalle.
+    const preset = ResolutionPreset.max;
     final c = CameraController(_cams[_idx], preset,
         enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
     try {

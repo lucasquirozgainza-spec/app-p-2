@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -56,6 +57,11 @@ class Camara {
     bool frontal = false,
     String? album,
     bool rapida = false,
+    // Rondas: cámara con el procesamiento del FABRICANTE (HDR / automático).
+    bool procesada = false,
+    // Carnets, placas, tarjetas: además de la original, una copia LEGIBLE
+    // (derecha, con más contraste y nitidez) hecha en segundo plano.
+    bool documento = false,
   }) async {
     // Un doble toque abría dos cámaras (dos controladores sobre el mismo lente
     // o "already_active" en la nativa) y dos pedidos de permiso a la vez.
@@ -65,21 +71,72 @@ class Camara {
       if (!await Permisos.camara(context)) return null;
       if (!context.mounted) return null;
       if (AppState.instance.camaraNativa) {
-        return await _nativa(context, multi: multi, minFotos: minFotos, frontal: frontal, album: album);
+        return _despues(
+            await _nativa(context, multi: multi, minFotos: minFotos, frontal: frontal, album: album), documento);
       }
-      return await Navigator.push<List<String>>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => CameraScreen(
-              multi: multi, minFotos: minFotos, frontal: frontal, album: album, rapida: rapida),
-        ),
-      );
+      if (procesada && !_proFalla && Platform.isAndroid) {
+        try {
+          return _despues(
+              await _procesada(multi: multi, minFotos: minFotos, frontal: frontal, album: album), documento);
+        } on MissingPluginException {
+          _proFalla = true; // versión sin la cámara procesada: la de siempre
+        } on PlatformException catch (e) {
+          if (e.code == 'ocupada') return null;
+          _proFalla = true; // este celular no pudo abrirla: la de siempre
+        }
+        if (!context.mounted) return null;
+      }
+      return _despues(
+          await Navigator.push<List<String>>(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CameraScreen(
+                  multi: multi, minFotos: minFotos, frontal: frontal, album: album, rapida: rapida),
+            ),
+          ),
+          documento);
     } finally {
       _abierta = false;
     }
   }
 
   static bool _abierta = false;
+  static bool _proFalla = false;
+  static const _canal = MethodChannel('osiris/camara_pro');
+
+  /// Documentos: la copia legible se arma en segundo plano (la foto queda
+  /// lista al instante).
+  static List<String>? _despues(List<String>? fotos, bool documento) {
+    if (documento && fotos != null) {
+      for (final f in fotos) {
+        ImgUtil.encolarDocumento(f);
+      }
+    }
+    return fotos;
+  }
+
+  /// Cámara procesada (código Android propio): procesamiento del fabricante
+  /// cuando el celular lo tiene; si no, resolución y calidad máximas.
+  static Future<List<String>?> _procesada({
+    required bool multi,
+    required int minFotos,
+    required bool frontal,
+    String? album,
+  }) async {
+    final dir = await carpetaFotos();
+    final r = await _canal.invokeMethod<List<Object?>>('tomar', {
+      'multi': multi,
+      'minFotos': minFotos,
+      'frontal': frontal,
+      'dir': dir.path,
+    });
+    if (r == null) return null;
+    final fotos = [for (final x in r) if (x != null && '$x'.isNotEmpty) '$x'];
+    for (final f in fotos) {
+      ImgUtil.encolar(f, album: album); // copia a la galería
+    }
+    return fotos.isEmpty ? null : fotos;
+  }
 
   /// Si Android cerró OSIRIS mientras estaba abierta la cámara nativa (poca
   /// memoria), la foto sólo se recupera con retrieveLostData. La guardamos en

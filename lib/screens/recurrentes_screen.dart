@@ -341,7 +341,7 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
   }
 
   Future<void> _fotoCarnet() async {
-    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet');
+    final res = await Camara.tomar(context, multi: true, minFotos: 2, album: 'OSIRIS Carnet', documento: true);
     if (res == null || res.isEmpty || !mounted) return;
     setState(() { _fotosCarnet = res; _leyendo = true; });
     () async {

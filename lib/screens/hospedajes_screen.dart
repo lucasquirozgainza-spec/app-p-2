@@ -230,7 +230,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
   Future<void> _fotosDoc(_Huesped h) async {
     final carnet = h.tipo == 'Carnet';
     // Cámara propia, sin confirmar cada foto. Carnet: 2 lados en una sesión.
-    final res = await Camara.tomar(context, multi: carnet, minFotos: carnet ? 2 : 0, album: 'OSIRIS Documentos');
+    final res = await Camara.tomar(context, multi: carnet, minFotos: carnet ? 2 : 0, album: 'OSIRIS Documentos', documento: true);
     if (res == null || res.isEmpty || !mounted) return;
     setState(() { h.fotos = res; h.leyendo = true; });
     // OCR en SEGUNDO PLANO: autocompleta nombre (y número si es pasaporte).
