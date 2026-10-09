@@ -271,6 +271,19 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
           'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
         });
     Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+    // Selfie del ingreso a la nube (segundo plano; el ingreso ya quedó
+    // registrado con su hora). Se une al turno por turno_ref.
+    final fotoTurno = _foto;
+    final refTurno = Turnos.ref(Cloud.deviceId, id);
+    if (fotoTurno != null) {
+      () async {
+        final url = await Cloud.subirFoto(fotoTurno, sufijo: '_ingreso');
+        if (url != null) {
+          await Cloud.evento('Foto de turno',
+              guardia: nombre, detalle: {'turno_ref': refTurno, 'momento': 'ingreso', 'foto_url': url});
+        }
+      }();
+    }
     if (!mounted) return;
     Navigator.pop(context);
   }

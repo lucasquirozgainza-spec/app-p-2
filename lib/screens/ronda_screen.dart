@@ -172,10 +172,12 @@ class _RondaScreenState extends State<RondaScreen> {
     // Subida a la nube en SEGUNDO PLANO (no demora el WhatsApp): sube hasta 6
     // fotos comprimidas para verlas desde otros equipos y publica el evento.
     final fotosCopia = List<String>.from(_fotos);
+    final obsRonda = _obs.text.trim();
     final puntosTxt = _puntos.isNotEmpty ? '${_escaneados.length}/${_puntos.length}' : null;
     () async {
       final fotosUrl = await Cloud.subirFotos(fotosCopia, max: 6);
       await Cloud.evento('Ronda', detalle: {
+        if (obsRonda.isNotEmpty) 'observaciones': obsRonda,
         'fotos': fotosCopia.length,
         if (puntosTxt != null) 'puntos': puntosTxt,
         if (fotosUrl.isNotEmpty) 'fotos_url': fotosUrl,

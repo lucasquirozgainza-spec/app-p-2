@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/sync_remoto.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
@@ -196,6 +197,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
         'parentesco': par.text, 'celular': cel.text,
       });
       await Audit.log('CREAR', 'residentes', '$id', detalle: 'depto ${p['depto']}');
+      SyncRemoto.publicarDatos('residentes');
       _loadResidentes();
     }
   }
@@ -252,6 +254,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
       final data = {for (final e in ctrls.entries) e.key: e.value.text};
       await db.update('propietarios', data, where: 'id=?', whereArgs: [p['id']]);
       await Audit.log('EDITAR', 'propietarios', p['id'].toString());
+      SyncRemoto.publicarDatos('propietarios');
       if (!mounted) return;
       setState(() => p.addAll(data));
       widget.onChanged();
@@ -415,6 +418,7 @@ class _PropietarioFormState extends State<PropietarioForm> {
       'observaciones': _obs.text,
     });
     await Audit.log('CREAR', 'propietarios', id, detalle: 'depto ${_depto.text}');
+    SyncRemoto.publicarDatos('propietarios');
     if (!mounted) return;
     Navigator.pop(context);
   }

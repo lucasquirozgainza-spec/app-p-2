@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import '../services/sync_remoto.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
@@ -360,6 +361,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
       return;
     }
     await Audit.log('IMPORTAR', 'propietarios', _selId, detalle: '${r.propietarios} prop, ${r.residentes} resi');
+    if (_selId == AppState.instance.edificioId) {
+      SyncRemoto.publicarDatos('propietarios');
+      if (r.residentes > 0) SyncRemoto.publicarDatos('residentes');
+    }
     if (!mounted) return;
     showDialog(
       context: context,

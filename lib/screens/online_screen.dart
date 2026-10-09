@@ -31,15 +31,17 @@ class _OnlineScreenState extends State<OnlineScreen> {
 
   static const _tipos = {
     'Visita': 'Visitas',
+    'Salida de visita': 'Salidas de visita',
     'Ronda': 'Rondas',
     'Incidente': 'Incidentes',
     'Ingreso de turno': 'Ingresos de turno',
     'Salida de turno': 'Salidas de turno',
     'Encomienda': 'Encomiendas',
+    'Entrega de encomienda': 'Entregas de encomienda',
     'Hospedaje': 'Hospedajes',
     'Advertencia': 'Advertencias',
   };
-  static const _internos = <String>{'Config', 'AdminPass', 'Guardia', 'GuardiaBaja', 'Corrección de turno', 'Prueba de conexión'};
+  static const _internos = <String>{'Config', 'AdminPass', 'Guardia', 'GuardiaBaja', 'Corrección de turno', 'Prueba de conexión', 'Foto de turno', 'Equipo', 'AjustesEquipo', 'Datos'};
 
   String get _ed => AppState.instance.edificioId;
 

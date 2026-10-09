@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/sync_remoto.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
 import '../services/config_sync.dart';
@@ -69,6 +70,8 @@ class _HomeScreenState extends State<HomeScreen> {
       if (await ConfigSync.aplicarRemota() && mounted) setState(() {});
       await ConfigSync.aplicarAdminPassRemota();
       await ConfigSync.sincronizarGuardias(); // como máximo cada 10 min
+      // Ajustes y datos que se manejan desde el monitor web.
+      if (await SyncRemoto.latido() && mounted) setState(() {});
     } catch (_) {
     } finally {
       _latiendo = false;

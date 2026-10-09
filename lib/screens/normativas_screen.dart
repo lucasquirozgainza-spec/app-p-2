@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../services/sync_remoto.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
@@ -71,6 +72,7 @@ class _NormativasScreenState extends State<NormativasScreen> {
       'pdf_path': dest,
     });
     await Audit.log('CREAR', 'normativas', '$id');
+    SyncRemoto.publicarDatos('normativas');
     _load();
   }
 
@@ -100,11 +102,24 @@ class _NormativasScreenState extends State<NormativasScreen> {
       if (path.isNotEmpty && File(path).existsSync()) await File(path).delete();
     } catch (_) {}
     await Audit.log('ELIMINAR', 'normativas', '${n['id']}');
+    SyncRemoto.publicarDatos('normativas');
     _load();
   }
 
   Future<void> _abrir(Map<String, dynamic> n) async {
-    final path = n['pdf_path']?.toString() ?? '';
+    var path = n['pdf_path']?.toString() ?? '';
+    // Documento cargado desde el monitor web: se descarga la primera vez.
+    if (path.startsWith('http')) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Abriendo documento…')));
+      final local = await SyncRemoto.descargar(path);
+      if (!mounted) return;
+      if (local == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No se pudo descargar el documento. Revisa el internet.')));
+        return;
+      }
+      path = local;
+    }
     if (path.isEmpty || !File(path).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Archivo no disponible')));
       return;

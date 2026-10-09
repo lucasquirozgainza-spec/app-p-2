@@ -89,7 +89,8 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
       await db.update('recurrentes', {'dentro': 1, 'visita_abierta': vid},
           where: 'id=?', whereArgs: [r['id']]);
       Cloud.evento('Visita', detalle: {
-        'nombre': r['nombre'], 'depto': depto, 'motivo': r['motivo'], 'tipo': 'recurrente ingreso',
+        'ref': '${Cloud.deviceId}_v$vid',
+        'nombre': r['nombre'], 'ci': r['ci'] ?? '', 'depto': depto, 'motivo': r['motivo'], 'tipo': 'recurrente ingreso',
       });
       if (mounted) TopToast.show(context, 'Ingreso de ${r['nombre']}${deptoOverride != null ? ' a depto $depto' : ''}');
     } else {
@@ -101,7 +102,10 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
       }
       await db.update('recurrentes', {'dentro': 0, 'visita_abierta': null},
           where: 'id=?', whereArgs: [r['id']]);
-      Cloud.evento('Visita', detalle: {'nombre': r['nombre'], 'depto': r['depto'], 'tipo': 'recurrente salida'});
+      Cloud.evento('Salida de visita', detalle: {
+        if (vid != null) 'ref': '${Cloud.deviceId}_v$vid',
+        'nombre': r['nombre'], 'ci': r['ci'] ?? '', 'depto': r['depto'], 'tipo': 'recurrente',
+      });
       if (mounted) TopToast.show(context, 'Salida de ${r['nombre']}');
     }
     await Audit.log('RECURRENTE', 'recurrentes', '${r['id']}', detalle: dentro ? 'salida' : 'ingreso');

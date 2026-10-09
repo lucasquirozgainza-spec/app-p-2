@@ -9,6 +9,12 @@ IconData iconoEvento(String? tipo) {
   switch (tipo) {
     case 'Visita':
       return Icons.badge;
+    case 'Salida de visita':
+      return Icons.directions_walk_outlined;
+    case 'Entrega de encomienda':
+      return Icons.assignment_turned_in_outlined;
+    case 'Salida de hospedaje':
+      return Icons.luggage;
     case 'Ronda':
       return Icons.directions_walk;
     case 'Incidente':
@@ -44,7 +50,7 @@ Map _detalle(Map<String, dynamic> e) {
 /// Datos internos que no se muestran (ids, horas técnicas, fotos, GPS).
 const _ocultos = {
   'bloque', 'uid', 'ts', 'turno_ref', 'relevos', 'ubicacion', 'foto_url', 'fotos_url', 'nivel', 'guard_ci',
-  'device', 'cargo',
+  'device', 'cargo', 'ref',
 };
 
 /// Resumen corto del detalle de un registro.
@@ -52,7 +58,9 @@ String resumenEvento(Map<String, dynamic> e) {
   final m = _detalle(e);
   return m.entries
       .where((x) => !_ocultos.contains(x.key) && '${x.value}'.trim().isNotEmpty)
-      .map((x) => '${x.value}')
+      .map((x) => x.key == 'tarjeta_devuelta'
+          ? (x.value == true ? 'Tarjeta devuelta' : 'Tarjeta NO devuelta')
+          : (x.key == 'tarjeta' ? 'Tarjeta ${x.value}' : '${x.value}'))
       .join(' · ');
 }
 

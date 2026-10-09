@@ -164,6 +164,7 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
     // Nube en segundo plano (registro instantáneo aunque el internet sea lento).
     final foto = _foto;
     final det = {
+      'ref': '${Cloud.deviceId}_e$id', // une la llegada con SU entrega
       'depto': _depto.text.trim(),
       'destinatario': _dest.text.trim(),
       'empresa': _empresa.text.trim(),
@@ -301,6 +302,19 @@ class _EntregaEncomiendaState extends State<EntregaEncomienda> {
       'hora_entrega': DateTime.now().toIso8601String(),
     }, where: 'id=?', whereArgs: [widget.encomienda['id']]);
     await Audit.log('ENTREGAR', 'encomiendas', '${widget.encomienda['id']}');
+    // A la nube (segundo plano): quién y cuándo la entregó.
+    final e = widget.encomienda;
+    final foto = _foto;
+    () async {
+      final url = foto != null ? await Cloud.subirFoto(foto) : null;
+      await Cloud.evento('Entrega de encomienda', detalle: {
+        'ref': '${Cloud.deviceId}_e${e['id']}',
+        'depto': '${e['depto'] ?? ''}',
+        'destinatario': '${e['destinatario'] ?? ''}',
+        'empresa': '${e['empresa'] ?? ''}',
+        if (url != null) 'foto_url': url,
+      });
+    }();
     if (!mounted) return;
     Navigator.pop(context);
   }

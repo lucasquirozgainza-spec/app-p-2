@@ -123,9 +123,8 @@ class Cloud {
     if (AppState.instance.soloLocal) return; // edificio sin conexión
     final ed = edificio ?? AppState.instance.edificioId;
     // Altas/bajas/config no son registros de un guardia de turno.
-    final ci = const {'Guardia', 'GuardiaBaja', 'Config', 'AdminPass'}.contains(tipo)
-        ? null
-        : AppState.instance.guardCi;
+    final interno = const {'Guardia', 'GuardiaBaja', 'Config', 'AdminPass', 'Equipo', 'AjustesEquipo', 'Datos'}.contains(tipo);
+    final ci = interno ? null : AppState.instance.guardCi;
     await _encolar({
       'tipo': tipo,
       'edificio': ed,
@@ -135,7 +134,8 @@ class Cloud {
       'detalle': {
         if (ci != null && ci.isNotEmpty) 'guard_ci': ci,
         ...(detalle ?? const {}),
-        if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
+        // (en altas/bajas el bloque es el del GUARDIA, no el del celular)
+        if (!interno && AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
       },
     });
   }
@@ -537,7 +537,7 @@ class Cloud {
   }
 
   static final String _noSync =
-      'tipo=not.in.${Uri.encodeComponent('(Config,AdminPass,Guardia,GuardiaBaja)')}';
+      'tipo=not.in.${Uri.encodeComponent('(Config,AdminPass,Guardia,GuardiaBaja,Equipo,AjustesEquipo,Datos)')}';
 
   static Future<bool> borrarEventos({String? edificio}) async {
     try {
@@ -590,6 +590,48 @@ class Cloud {
 
   static String _edSafe() =>
       AppState.instance.edificioId.replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
+
+  /// Lectura directa de la API (para la sincronización con el monitor web).
+  static Future<List<Map<String, dynamic>>> leer(String consulta) async {
+    final r = await http.get(Uri.parse('$_rest/$consulta'), headers: await _hdr()).timeout(const Duration(seconds: 25));
+    if (r.statusCode >= 300) throw Exception('leer ${r.statusCode}: ${r.body}');
+    return List<Map<String, dynamic>>.from(jsonDecode(r.body) as List);
+  }
+
+  /// Borra eventos que cumplan [filtro] (ej. reportes viejos de este equipo).
+  static Future<bool> borrarDonde(String filtro) async {
+    try {
+      final r = await http.delete(Uri.parse('$_rest/eventos?$filtro'), headers: await _hdr())
+          .timeout(const Duration(seconds: 20));
+      return r.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Sube un archivo TAL CUAL (PDF o imagen de normativas) y devuelve su URL.
+  static Future<String?> subirArchivo(String path) async {
+    if (AppState.instance.soloLocal) return null;
+    try {
+      final f = File(path);
+      if (!await f.exists()) return null;
+      final ext = path.contains('.') ? path.substring(path.lastIndexOf('.') + 1).toLowerCase() : 'pdf';
+      final tipo = ext == 'pdf' ? 'application/pdf' : (ext == 'png' ? 'image/png' : 'image/jpeg');
+      final name = '${_edSafe()}/docs/${DateTime.now().millisecondsSinceEpoch}_$deviceId.$ext';
+      final r = await http
+          .post(Uri.parse('$_storage/object/$bucket/$name'),
+              headers: {'apikey': anonKey, 'Content-Type': tipo, 'x-upsert': 'true'}, body: await f.readAsBytes())
+          .timeout(const Duration(seconds: 60));
+      if (r.statusCode >= 300) {
+        lastError = 'subirArchivo ${r.statusCode}: ${r.body}';
+        return null;
+      }
+      return '$_storage/object/public/$bucket/$name';
+    } catch (e) {
+      lastError = 'subirArchivo: $e';
+      return null;
+    }
+  }
 
   /// Sube UNA foto comprimida y devuelve su URL pública (o null si falla).
   static Future<String?> subirFoto(String path, {String sufijo = ''}) async {

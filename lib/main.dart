@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'theme.dart';
 import 'db/database_helper.dart';
+import 'services/sync_remoto.dart';
 import 'services/app_state.dart';
 import 'services/retention.dart';
 import 'services/notifications_service.dart';
@@ -78,6 +79,9 @@ class _BootState extends State<_Boot> {
       await ConfigSync.aplicarRemota();
       await ConfigSync.aplicarAdminPassRemota();
       await ConfigSync.sincronizarGuardias();
+    } catch (_) {}
+    try {
+      await SyncRemoto.latido();
     } catch (_) {}
     // La purga (local + nube) corre DESPUÉS de iniciar la nube, así el borrado
     // de fotos viejas en Supabase Storage se ejecuta cada vez que se abre la app.

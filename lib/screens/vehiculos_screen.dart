@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../services/sync_remoto.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
@@ -222,6 +223,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
       final id = await db.insert('vehiculos', data);
       await Audit.log('CREAR', 'vehiculos', '$id', detalle: _placa.text);
     }
+    SyncRemoto.publicarDatos('vehiculos');
     if (!mounted) return;
     Navigator.pop(context);
   }

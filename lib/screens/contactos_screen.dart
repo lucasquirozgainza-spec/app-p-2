@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/sync_remoto.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/contact_launch.dart';
@@ -78,6 +79,7 @@ class _ContactosScreenState extends State<ContactosScreen> {
         await db.update('contactos', datos, where: 'id=?', whereArgs: [existente['id']]);
       }
     }
+    SyncRemoto.publicarDatos('contactos');
     if (mounted) TopToast.show(context, 'Contactos actualizados');
     _load();
   }

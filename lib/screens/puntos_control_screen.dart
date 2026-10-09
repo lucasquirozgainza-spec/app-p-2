@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/sync_remoto.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/pdf_export.dart';
@@ -58,6 +59,7 @@ class _PuntosControlScreenState extends State<PuntosControlScreen> {
       'codigo': codigo,
       'created_at': DateTime.now().toIso8601String(),
     });
+    SyncRemoto.publicarDatos('puntos_control');
     _load();
   }
 
@@ -77,6 +79,7 @@ class _PuntosControlScreenState extends State<PuntosControlScreen> {
     if (ok != true) return;
     final db = await DB.instance.database;
     await db.delete('puntos_control', where: 'id=?', whereArgs: [p['id']]);
+    SyncRemoto.publicarDatos('puntos_control');
     _load();
   }
 

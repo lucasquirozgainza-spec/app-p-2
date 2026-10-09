@@ -84,7 +84,21 @@ class _VisitasScreenState extends State<VisitasScreen> {
       'hora_salida': DateTime.now().toIso8601String(),
       'tarjeta_devuelta': devuelta ? 1 : 0,
     }, where: 'id=?', whereArgs: [v['id']]);
+    // A la nube: hora de salida y si devolvió la tarjeta (informe mensual).
+    Cloud.evento('Salida de visita', detalle: {
+      'ref': '${Cloud.deviceId}_v${v['id']}',
+      'nombre': '${v['nombre_visita'] ?? ''}',
+      'ci': '${v['ci'] ?? ''}',
+      'depto': '${v['depto'] ?? ''}',
+      if (tieneTarjeta) 'tarjeta': '${v['tarjeta_num'] ?? ''}',
+      if (tieneTarjeta) 'tarjeta_devuelta': devuelta,
+    });
     if (tieneTarjeta && !devuelta) {
+      Cloud.evento('Advertencia', detalle: {
+        'tipo': 'tarjeta',
+        'motivo': 'Tarjeta N° ${v['tarjeta_num'] ?? '-'} NO devuelta - visita ${v['nombre_visita'] ?? ''} '
+            '(depto ${v['depto'] ?? ''}). La asignó: ${v['guardia_nombre'] ?? 'desconocido'}.',
+      });
       final guardiaActual = AppState.instance.userNombre ?? 'Sin turno';
       final guardiaAsigno = v['guardia_nombre']?.toString() ?? 'desconocido';
       await db.insert('advertencias', {
@@ -417,7 +431,10 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await db.update('recurrentes', {'dentro': 1, 'visita_abierta': vid}, where: 'id=?', whereArgs: [r['id']]);
-    Cloud.evento('Visita', detalle: {'nombre': r['nombre'], 'depto': depto, 'tipo': 'recurrente ingreso'});
+    Cloud.evento('Visita', detalle: {
+      'ref': '${Cloud.deviceId}_v$vid',
+      'nombre': r['nombre'], 'ci': r['ci'] ?? '', 'depto': depto, 'tipo': 'recurrente ingreso',
+    });
     if (!mounted) return;
     TopToast.show(context, 'Ingreso de ${r['nombre']}');
     Navigator.pop(context);
@@ -707,6 +724,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     // Todo lo lento (GPS, dispositivo, subir foto, evento) en SEGUNDO PLANO.
     final fotoNube = _carnetAnverso ?? _fotoTarjeta ?? _carnetReverso;
     final det = {
+      'ref': '${Cloud.deviceId}_v$id', // une este ingreso con SU salida
       'nombre': _nombre.text.trim(),
       'ci': _ci.text.trim(),
       'depto': _depto.text.trim(),
@@ -754,6 +772,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       () async {
         final url = fotoA != null ? await Cloud.subirFoto(fotoA) : null;
         await Cloud.evento('Visita', detalle: {
+          'ref': '${Cloud.deviceId}_v$aid',
           'nombre': nombreA, 'ci': ciA, 'depto': deptoA, 'motivo': 'acompañante',
           if (url != null) 'foto_url': url,
         });

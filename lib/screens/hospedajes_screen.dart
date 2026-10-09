@@ -74,6 +74,12 @@ class _HospedajesScreenState extends State<HospedajesScreen> {
         {'estado': 'finalizado', 'salida_real': ahora.toIso8601String()},
         where: 'id=?', whereArgs: [x['id']]);
     await Audit.log('EDITAR', 'hospedajes', '${x['id']}', detalle: 'salida real');
+    Cloud.evento('Salida de hospedaje', detalle: {
+      'ref': '${Cloud.deviceId}_h${x['id']}',
+      'huesped': '${x['huesped'] ?? ''}',
+      'depto': '${x['depto'] ?? ''}',
+      if (dias != null) 'dias': dias,
+    });
     _load();
   }
 
@@ -303,6 +309,8 @@ class _HospedajeFormState extends State<HospedajeForm> {
     // Nube en segundo plano (no demora el registro).
     final fotoNube = principal.fotos.isNotEmpty ? principal.fotos.first : null;
     final det = {
+      'ref': '${Cloud.deviceId}_h$id', // une el ingreso con SU salida
+      'documento': principal.doc.text.trim(),
       'huesped': principal.nombre.text.trim(),
       'depto': _depto.text.trim(),
       'plataforma': _plataforma,
