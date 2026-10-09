@@ -17,8 +17,8 @@ import 'notifications_service.dart';
 /// - "Datos": listas completas del edificio (propietarios, vehículos...). La
 ///   última publicada manda; un cambio hecho en el celular se publica entero.
 class SyncRemoto {
-  static const version = '12.6';
-  static const clases = ['propietarios', 'residentes', 'vehiculos', 'contactos', 'normativas', 'puntos_control'];
+  static const version = '12.7';
+  static const clases = ['propietarios', 'residentes', 'vehiculos', 'contactos', 'normativas', 'puntos_control', 'recurrentes'];
 
   /// Columnas que viajan por la nube (las fotos locales no viajan).
   static const Map<String, List<String>> _cols = {
@@ -30,6 +30,7 @@ class SyncRemoto {
     'contactos': ['nombre', 'telefono'],
     'normativas': ['nombre'],
     'puntos_control': ['nombre', 'codigo'],
+    'recurrentes': ['nombre', 'ci', 'depto', 'motivo', 'placa'],
   };
 
   static DateTime? _ultimaDatos;
@@ -245,16 +246,23 @@ class SyncRemoto {
 
   static String _k(String clase, Map r) => clase == 'vehiculos'
       ? '${r['placa'] ?? ''}|${r['depto'] ?? ''}'.toLowerCase()
-      : '${r['depto'] ?? ''}|${r['nombre'] ?? ''}'.toLowerCase();
+      : clase == 'recurrentes'
+          ? '${r['nombre'] ?? ''}'.trim().toLowerCase()
+          : '${r['depto'] ?? ''}|${r['nombre'] ?? ''}'.toLowerCase();
 
   static Future<void> _aplicarDatos(String clase, String ed, List filas) async {
     final db = await DB.instance.database;
     final prefs = await SharedPreferences.getInstance();
     // Las fotos locales (vehículos, residentes) se conservan si el registro sigue.
     final fotos = <String, Object?>{};
-    if (clase == 'vehiculos' || clase == 'residentes') {
+    // Recurrentes: se conserva si está DENTRO ahora (y su visita abierta).
+    final estado = <String, Map<String, Object?>>{};
+    if (clase == 'vehiculos' || clase == 'residentes' || clase == 'recurrentes') {
       for (final v in await db.query(clase, where: 'edificio=?', whereArgs: [ed])) {
         if (v['foto'] != null) fotos[_k(clase, v)] = v['foto'];
+        if (clase == 'recurrentes') {
+          estado[_k(clase, v)] = {'dentro': v['dentro'], 'visita_abierta': v['visita_abierta'], 'created_at': v['created_at']};
+        }
       }
     }
     // Normativas: si el archivo lo subió este celular, se sigue usando el local.
@@ -286,6 +294,12 @@ class SyncRemoto {
           row['pdf_path'] = (local != null && File(local).existsSync()) ? local : url;
         }
         if (clase == 'puntos_control') row['created_at'] = DateTime.now().toIso8601String();
+        if (clase == 'recurrentes') {
+          final e = estado[_k(clase, row)];
+          row['dentro'] = e?['dentro'] ?? 0;
+          row['visita_abierta'] = e?['visita_abierta'];
+          row['created_at'] = e?['created_at'] ?? DateTime.now().toIso8601String();
+        }
         final foto = fotos[_k(clase, row)];
         if (foto != null) row['foto'] = foto;
         b.insert(clase, row, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -315,11 +329,63 @@ class SyncRemoto {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // EDIFICIOS creados en otro celular o desde el monitor web
+  // ---------------------------------------------------------------------------
+
+  static DateTime? _ultimaEdificios;
+
+  /// Agrega a este celular los edificios que existen en la nube (tienen
+  /// configuración publicada) y todavía no están aquí. No borra ninguno.
+  static Future<bool> sincronizarEdificios({bool forzar = false}) async {
+    if (AppState.instance.soloLocal) return false;
+    final ahora = DateTime.now();
+    if (!forzar && _ultimaEdificios != null && ahora.difference(_ultimaEdificios!) < const Duration(minutes: 10)) {
+      return false;
+    }
+    _ultimaEdificios = ahora;
+    try {
+      final r = await Cloud.leer('eventos?select=edificio,detalle&tipo=eq.Config&order=created_at.desc&limit=2000');
+      final db = await DB.instance.database;
+      final locales = {for (final e in await db.query('edificios', columns: ['id'])) '${e['id']}'.toLowerCase()};
+      final nuevos = <String, String>{}; // edificio -> modulos (el más reciente)
+      for (final row in r) {
+        final ed = '${row['edificio'] ?? ''}'.trim();
+        if (ed.isEmpty || ed == '*' || ed.startsWith('__') || locales.contains(ed.toLowerCase()) || nuevos.containsKey(ed)) continue;
+        final det = row['detalle'];
+        final m = det is Map ? det['modulos'] : null;
+        final txt = m is String ? m : (m is Map ? jsonEncode(m) : '');
+        try {
+          if (jsonDecode(txt) is! Map) continue;
+        } catch (_) {
+          continue;
+        }
+        nuevos[ed] = txt;
+      }
+      for (final e in nuevos.entries) {
+        final mod = jsonDecode(e.value) as Map;
+        final torres = mod['torres'] is List ? [for (final t in mod['torres'] as List) '$t'] : <String>[];
+        await db.insert('edificios', {
+          'id': e.key,
+          'nombre': e.key,
+          'torres': jsonEncode(torres),
+          'modulos': e.value,
+          'cant_deptos': 0,
+          'cant_pisos': 0,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      return nuevos.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Todo junto (latido): ajustes de la web, reporte del equipo y datos.
   static Future<bool> latido() async {
+    final e = await sincronizarEdificios();
     final a = await aplicarAjustes();
     await reportarEquipo();
     final d = await sincronizarDatos();
-    return a || d;
+    return e || a || d;
   }
 }

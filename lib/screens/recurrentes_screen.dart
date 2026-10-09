@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
+import '../services/sync_remoto.dart';
 import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/depto_field.dart';
@@ -212,6 +213,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
     if (ok != true) return;
     final db = await DB.instance.database;
     await db.delete('recurrentes', where: 'id=?', whereArgs: [r['id']]);
+    SyncRemoto.publicarDatos('recurrentes');
     _load();
   }
 
@@ -440,6 +442,7 @@ class _RecurrenteFormState extends State<RecurrenteForm> {
       'edificio': s.edificioId,
       'created_at': DateTime.now().toIso8601String(),
     });
+    SyncRemoto.publicarDatos('recurrentes');
     if (!mounted) return;
     Navigator.pop(context);
   }

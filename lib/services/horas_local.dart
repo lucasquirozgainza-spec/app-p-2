@@ -36,7 +36,10 @@ class HorasPanel {
         await Cloud.vaciarCola(); // lo propio pendiente cuenta ya
         final ev = await Cloud.eventosTurnoMes(mes: mes, edificio: s.edificioId, lanzar: true);
         final p = PanelHoras.panelNube(ev, mes,
-            tolerancias: {s.edificioId: s.toleranciaMin}, soloConGuardia: soloCi, franqueros: await _franqueros());
+            tolerancias: {s.edificioId: s.toleranciaMin},
+            soloConGuardia: soloCi,
+            franqueros: await _franqueros(),
+            unGuardia: {if (s.modulos['un_guardia'] == true) s.edificioId});
         return HorasEdificio(p[s.edificioId] ?? <PanelPuesto>[], false);
       } catch (_) {
         // Sin señal: lo de este celular (se avisa en pantalla / PDF).
@@ -73,6 +76,7 @@ class HorasPanel {
         desde: desde,
         hasta: hasta,
         toleranciaMin: s.toleranciaMin,
-        franqueros: await _franqueros());
+        franqueros: await _franqueros(),
+        unGuardia: s.modulos['un_guardia'] == true);
   }
 }

@@ -174,7 +174,8 @@ class PanelHoras {
       DateTime? desde,
       DateTime? hasta,
       int toleranciaMin = Turnos.toleranciaPorDefecto,
-      Set<String> franqueros = const {}}) {
+      Set<String> franqueros = const {},
+      bool unGuardia = false}) {
     final tol = toleranciaMin / 60.0;
     // El MES de un turno lo da su hora de relevo PROGRAMADA: el mes empieza
     // con el turno diurno del día 1 y termina con el nocturno del último día
@@ -199,7 +200,7 @@ class PanelHoras {
     for (final puesto in (porPuesto.keys.toList()..sort())) {
       n++;
       final lista = porPuesto[puesto]!..sort(_orden);
-      _calcularPuesto(lista, tol, franqueros);
+      _calcularPuesto(lista, tol, franqueros, unGuardia);
 
       final p = PanelPuesto(puesto, nombres[puesto] ?? '')..toleranciaMin = toleranciaMin;
       if (p.nombre.isEmpty) p.nombre = puesto == 'local' ? 'Este celular' : 'Puesto $n';
@@ -235,7 +236,9 @@ class PanelHoras {
 
   static double _h(DateTime a, DateTime b) => a.difference(b).inMinutes / 60.0;
 
-  static void _calcularPuesto(List<RegistroTurno> lista, double tol, Set<String> franqueros) {
+  /// [unGuardia]: edificio con UN solo guardia (sin relevo): se compara con
+  /// su propio horario (quedarse después suma; llegar tarde o irse antes resta).
+  static void _calcularPuesto(List<RegistroTurno> lista, double tol, Set<String> franqueros, bool unGuardia) {
     bool franq(RegistroTurno t) => t.guardId != null && franqueros.contains(t.guardId);
     // Horario de cada turno: el que traía su ingreso; si no (registros
     // viejos), el último conocido de ese puesto; si no, el normal 08/20.
@@ -285,11 +288,11 @@ class PanelHoras {
           _relevo(a, mejor, a.progFin!, tol);
         }
       } else if (!franq(a)) {
-        _finSinRelevo(a, tol);
+        _finSinRelevo(a, tol, unGuardia);
       }
     }
     for (final b in validos) {
-      if (!tomados.contains(b) && !franq(b)) _inicioSinRelevo(b, tol);
+      if (!tomados.contains(b) && !franq(b)) _inicioSinRelevo(b, tol, unGuardia);
     }
   }
 
@@ -323,16 +326,27 @@ class PanelHoras {
 
   /// Sin relevo registrado no hay a quién cargarle la diferencia: no suma ni
   /// resta (solo queda la nota para revisarlo).
-  static void _finSinRelevo(RegistroTurno a, double tol) {
+  static void _finSinRelevo(RegistroTurno a, double tol, bool cuenta) {
     final d = _h(a.fin!, a.progFin!);
+    if (cuenta && d.abs() > tol) {
+      a.movimientos.add(Movimiento(
+          programado: a.progFin!, real: a.fin!, horas: d,
+          motivo: d > 0 ? 'Se quedó después de su hora' : 'Salió antes de su hora'));
+      return;
+    }
     if (d.abs() > tol) {
       a.notas.add('${d > 0 ? 'Salió después' : 'Salió antes'} de su hora '
           '(${Turnos.duracion(Duration(minutes: (d.abs() * 60).round()))}) sin relevo registrado: no cuenta');
     }
   }
 
-  static void _inicioSinRelevo(RegistroTurno b, double tol) {
+  static void _inicioSinRelevo(RegistroTurno b, double tol, bool cuenta) {
     final tarde = _h(b.inicio, b.progInicio!);
+    if (cuenta && tarde > tol) {
+      b.movimientos.add(Movimiento(
+          programado: b.progInicio!, real: b.inicio, horas: -tarde, motivo: 'Llegó tarde'));
+      return;
+    }
     if (tarde > tol) {
       b.notas.add('Entró ${Turnos.duracion(Duration(minutes: (tarde * 60).round()))} tarde sin relevo registrado: no cuenta');
     }
@@ -344,7 +358,8 @@ class PanelHoras {
       {Map<String, int> tolerancias = const {},
       bool soloConGuardia = false,
       Map<String, String> nombres = const {},
-      Set<String> franqueros = const {}}) {
+      Set<String> franqueros = const {},
+      Set<String> unGuardia = const {}}) {
     final nombresPuesto = <String, String>{...nombres}; // puesto -> "Torre 1"
     for (final e in eventos) {
       if (e['unit_id'] != null) continue; // las unidades ya tienen nombre
@@ -364,7 +379,8 @@ class PanelHoras {
           desde: desde,
           hasta: hasta,
           toleranciaMin: tolerancias[e.key] ?? Turnos.toleranciaPorDefecto,
-          franqueros: franqueros);
+          franqueros: franqueros,
+          unGuardia: unGuardia.contains(e.key));
       if (p.isNotEmpty) out[e.key] = p;
     }
     return out;

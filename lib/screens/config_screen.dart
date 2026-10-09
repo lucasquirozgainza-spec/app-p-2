@@ -45,6 +45,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
   void initState() {
     super.initState();
     _load();
+    // Edificios creados desde el monitor web u otro celular.
+    SyncRemoto.sincronizarEdificios(forzar: true).then((hay) {
+      if (hay && mounted) _load();
+    });
   }
 
   Future<void> _load() async {
@@ -724,6 +728,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ),
           ]),
           _seccion('Horas de guardias', Icons.timer_outlined, const Color(0xFF00838F), [
+            SwitchListTile(
+              dense: true,
+              value: _modulos['un_guardia'] == true,
+              onChanged: (v) => _toggle('un_guardia', v),
+              secondary: const Icon(Icons.person_outline, color: Color(0xFF00838F)),
+              title: const Text('Un solo guardia (sin relevo)'),
+              subtitle: const Text('Las horas extras se cuentan contra su propio horario.'),
+              activeColor: AppColors.verde,
+            ),
             ListTile(
               dense: true,
               leading: const Icon(Icons.more_time, color: Color(0xFF00838F)),
