@@ -8,6 +8,7 @@ import '../services/ocr_service.dart';
 import '../theme.dart';
 import '../widgets/depto_field.dart';
 import '../widgets/toast.dart';
+import '../widgets/tarjeta_recurrente.dart';
 import '../services/camara.dart';
 
 const _colorRecu = Color(0xFF00695C);
@@ -72,7 +73,12 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
     final dentro = (r['dentro'] ?? 0) == 1;
     if (!dentro) {
       final depto = (deptoOverride ?? r['depto'] ?? '').toString().trim();
+      // Edificios con tarjetas: foto a la tarjeta + OCR (opcional por visita).
+      final tarjeta = await pedirTarjetaRecurrente(context, '${r['nombre'] ?? ''}');
+      if (tarjeta == null) return; // canceló
       final vid = await db.insert('visitas', {
+        if (tarjeta.foto != null) 'tarjeta': tarjeta.foto,
+        if (tarjeta.numero.isNotEmpty) 'tarjeta_num': tarjeta.numero,
         'guardia_id': s.userId,
         'guardia_nombre': s.userNombre,
         'nombre_visita': r['nombre'],
@@ -88,25 +94,73 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
       });
       await db.update('recurrentes', {'dentro': 1, 'visita_abierta': vid},
           where: 'id=?', whereArgs: [r['id']]);
-      Cloud.evento('Visita', detalle: {
+      final det = <String, dynamic>{
         'ref': '${Cloud.deviceId}_v$vid',
         'nombre': r['nombre'], 'ci': r['ci'] ?? '', 'depto': depto, 'motivo': r['motivo'], 'tipo': 'recurrente ingreso',
-      });
-      if (mounted) TopToast.show(context, 'Ingreso de ${r['nombre']}${deptoOverride != null ? ' a depto $depto' : ''}');
+        if (tarjeta.numero.isNotEmpty) 'tarjeta': tarjeta.numero,
+        'ts': DateTime.now().toUtc().toIso8601String(),
+      };
+      final fotoTarjeta = tarjeta.foto;
+      if (fotoTarjeta == null) {
+        Cloud.evento('Visita', detalle: det);
+      } else {
+        () async {
+          final url = await Cloud.subirFoto(fotoTarjeta);
+          await Cloud.evento('Visita', detalle: {...det, if (url != null) 'foto_url': url});
+        }();
+      }
+      if (mounted) {
+        TopToast.show(context, 'Ingreso de ${r['nombre']}${deptoOverride != null ? ' a depto $depto' : ''}'
+            '${tarjeta.numero.isNotEmpty ? ' · tarjeta ${tarjeta.numero}' : ''}');
+      }
     } else {
       final vid = r['visita_abierta'];
+      // ¿Se le entregó tarjeta al ingresar? Entonces se pregunta si la devolvió.
+      Map<String, dynamic>? v;
       if (vid != null) {
-        await db.update('visitas',
-            {'estado': 'salio', 'hora_salida': DateTime.now().toIso8601String()},
-            where: 'id=?', whereArgs: [vid]);
+        final q = await db.query('visitas', where: 'id=?', whereArgs: [vid], limit: 1);
+        if (q.isNotEmpty) v = q.first;
+      }
+      final numTarjeta = '${v?['tarjeta_num'] ?? ''}'.trim();
+      final conTarjeta = v != null && ('${v['tarjeta'] ?? ''}'.isNotEmpty || numTarjeta.isNotEmpty);
+      bool? devuelta;
+      if (conTarjeta) {
+        if (!mounted) return;
+        devuelta = await preguntarDevolucion(context, '${r['nombre'] ?? ''}', numTarjeta);
+        if (devuelta == null) return; // canceló
+      }
+      if (vid != null) {
+        await db.update('visitas', {
+          'estado': 'salio',
+          'hora_salida': DateTime.now().toIso8601String(),
+          if (devuelta != null) 'tarjeta_devuelta': devuelta ? 1 : 0,
+        }, where: 'id=?', whereArgs: [vid]);
       }
       await db.update('recurrentes', {'dentro': 0, 'visita_abierta': null},
           where: 'id=?', whereArgs: [r['id']]);
       Cloud.evento('Salida de visita', detalle: {
         if (vid != null) 'ref': '${Cloud.deviceId}_v$vid',
         'nombre': r['nombre'], 'ci': r['ci'] ?? '', 'depto': r['depto'], 'tipo': 'recurrente',
+        if (conTarjeta) 'tarjeta': numTarjeta,
+        if (devuelta != null) 'tarjeta_devuelta': devuelta,
       });
-      if (mounted) TopToast.show(context, 'Salida de ${r['nombre']}');
+      if (devuelta == false) {
+        final guardia = s.userNombre ?? 'Sin turno';
+        final msg = 'Tarjeta N° ${numTarjeta.isEmpty ? '-' : numTarjeta} NO devuelta - visita recurrente ${r['nombre'] ?? ''} '
+            '(depto ${r['depto'] ?? ''}). La asignó: ${v?['guardia_nombre'] ?? 'desconocido'}. Registró la salida: $guardia.';
+        await db.insert('advertencias', {
+          'guardia_nombre': guardia,
+          'mensaje': msg,
+          'tipo': 'tarjeta',
+          'edificio': s.edificioId,
+          'created_at': DateTime.now().toIso8601String(),
+        });
+        Cloud.evento('Advertencia', detalle: {'tipo': 'tarjeta', 'motivo': msg});
+      }
+      if (mounted) {
+        TopToast.show(context, 'Salida de ${r['nombre']}${devuelta == false ? ' · tarjeta NO devuelta' : ''}',
+            color: devuelta == false ? AppColors.rojo : const Color(0xFF2E7D32));
+      }
     }
     await Audit.log('RECURRENTE', 'recurrentes', '${r['id']}', detalle: dentro ? 'salida' : 'ingreso');
     _load();

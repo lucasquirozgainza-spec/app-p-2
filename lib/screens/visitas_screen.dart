@@ -9,6 +9,7 @@ import '../services/cloud.dart';
 import '../services/contact_launch.dart';
 import '../services/contactos_repo.dart';
 import '../services/ocr_service.dart';
+import '../widgets/tarjeta_recurrente.dart';
 import '../services/camara.dart';
 import '../services/device_context.dart';
 import '../theme.dart';
@@ -416,7 +417,11 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     final db = await DB.instance.database;
     final s = AppState.instance;
     final depto = (_depto.text.trim().isNotEmpty ? _depto.text.trim() : (r['depto'] ?? '').toString());
+    final tarjeta = await pedirTarjetaRecurrente(context, '${r['nombre'] ?? ''}');
+    if (tarjeta == null) return; // canceló
     final vid = await db.insert('visitas', {
+      if (tarjeta.foto != null) 'tarjeta': tarjeta.foto,
+      if (tarjeta.numero.isNotEmpty) 'tarjeta_num': tarjeta.numero,
       'guardia_id': s.userId,
       'guardia_nombre': s.userNombre,
       'nombre_visita': r['nombre'],
@@ -431,10 +436,21 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'created_at': DateTime.now().toIso8601String(),
     });
     await db.update('recurrentes', {'dentro': 1, 'visita_abierta': vid}, where: 'id=?', whereArgs: [r['id']]);
-    Cloud.evento('Visita', detalle: {
+    final det = <String, dynamic>{
       'ref': '${Cloud.deviceId}_v$vid',
       'nombre': r['nombre'], 'ci': r['ci'] ?? '', 'depto': depto, 'tipo': 'recurrente ingreso',
-    });
+      if (tarjeta.numero.isNotEmpty) 'tarjeta': tarjeta.numero,
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    };
+    final fotoTarjeta = tarjeta.foto;
+    if (fotoTarjeta == null) {
+      Cloud.evento('Visita', detalle: det);
+    } else {
+      () async {
+        final url = await Cloud.subirFoto(fotoTarjeta);
+        await Cloud.evento('Visita', detalle: {...det, if (url != null) 'foto_url': url});
+      }();
+    }
     if (!mounted) return;
     TopToast.show(context, 'Ingreso de ${r['nombre']}');
     Navigator.pop(context);

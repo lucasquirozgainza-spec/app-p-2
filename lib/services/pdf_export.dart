@@ -854,11 +854,12 @@ class PdfExport {
   }
 
   static String _reglaHoras(int tolMin) =>
-      'Turno normal 12 h (diurno 08:00-20:00, nocturno 20:00-08:00, o el horario de relevo del celular). '
-      'En cada relevo: si el que entra llega tarde, esas horas son A FAVOR del que espero y EN CONTRA del '
-      'que llego tarde; si el que sale se va antes, son EN CONTRA suyo y A FAVOR del que lo cubrio. '
-      'Saldo = a favor - en contra. Tolerancia $tolMin min: hasta ese margen no cuenta; pasado el margen '
-      'se cuentan todos los minutos. Beneficiario = el que hizo cubrir mas horas al otro en el mes.';
+      'Horas extras solo entre los guardias fijos (diurno y nocturno), en espejo: lo que uno tiene a favor '
+      'el otro lo tiene en contra. En cada relevo: si el que entra llega tarde, lo que el otro lo espero es A FAVOR '
+      'del que espero y EN CONTRA del que llego tarde; si el que sale se va antes, lo que lo cubrieron es EN CONTRA '
+      'suyo y A FAVOR del que lo cubrio. Los franqueros no suman ni restan. Turno de 24 h: sale a la misma hora '
+      'del dia siguiente; turno de 36 h: es un dia extra trabajado (no horas extras). Tolerancia $tolMin min: hasta '
+      'ese margen no cuenta; pasado el margen se cuentan todos los minutos.';
 
   static String _s(Object? v) {
     final s = _safe(v?.toString() ?? '');

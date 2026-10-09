@@ -19,6 +19,12 @@ class HorasPanel {
   static Future<bool> _soloCi() async =>
       (await GuardiasService.delEdificio(AppState.instance.edificioId, incluirInactivos: true)).isNotEmpty;
 
+  /// CI de los franqueros del edificio: no suman ni restan horas extras.
+  static Future<Set<String>> _franqueros() async => {
+        for (final g in await GuardiasService.delEdificio(AppState.instance.edificioId, incluirInactivos: true))
+          if (g.franquero) g.ci
+      };
+
   /// Horas del edificio activo en el mes: desde la nube (todos los celulares
   /// del edificio) o, en edificios sin conexión o sin señal, desde este
   /// celular. [local] indica de dónde salieron.
@@ -30,7 +36,7 @@ class HorasPanel {
         await Cloud.vaciarCola(); // lo propio pendiente cuenta ya
         final ev = await Cloud.eventosTurnoMes(mes: mes, edificio: s.edificioId, lanzar: true);
         final p = PanelHoras.panelNube(ev, mes,
-            tolerancias: {s.edificioId: s.toleranciaMin}, soloConGuardia: soloCi);
+            tolerancias: {s.edificioId: s.toleranciaMin}, soloConGuardia: soloCi, franqueros: await _franqueros());
         return HorasEdificio(p[s.edificioId] ?? <PanelPuesto>[], false);
       } catch (_) {
         // Sin señal: lo de este celular (se avisa en pantalla / PDF).
@@ -66,6 +72,7 @@ class HorasPanel {
         nombres: {'local': s.bloque.isNotEmpty ? s.bloque : 'Este celular'},
         desde: desde,
         hasta: hasta,
-        toleranciaMin: s.toleranciaMin);
+        toleranciaMin: s.toleranciaMin,
+        franqueros: await _franqueros());
   }
 }

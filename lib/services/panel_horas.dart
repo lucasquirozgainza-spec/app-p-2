@@ -150,13 +150,16 @@ class PanelPuesto {
 /// Cálculo ÚNICO de horas a favor / en contra (pantalla, PDF y reportes usan
 /// esto; no hay otro cálculo que pueda dar un número distinto).
 ///
+/// Horas extras SOLO entre los guardias FIJOS (diurno y nocturno), y siempre
+/// en espejo: lo que uno tiene a favor, el otro lo tiene en contra.
 /// Regla por relevo (A sale, B entra, P = hora de relevo programada):
-/// - B llega después de P: B −(llegada − P). A +(lo que realmente esperó,
-///   hasta que llegó B o hasta que se fue).
-/// - A se va antes de P: A −(P − salida). B +(lo que cubrió antes de P).
-/// - Sin relevo registrado: salir después del fin programado = a favor;
-///   salir antes = en contra; llegar tarde = en contra. Llegar temprano por
-///   voluntad propia (sin reemplazar a nadie) no suma.
+/// - B llega después de P: lo que A lo esperó (hasta que llegó B o hasta que
+///   A se fue) es +A y −B, por la MISMA cantidad.
+/// - A se va antes de P y B ya estaba: lo que B lo cubrió es +B y −A.
+/// - Franqueros: no suman ni restan horas (ni ellos ni a quien relevan).
+/// - Sin relevo registrado: no hay a quién cargarle la diferencia; no cuenta.
+/// - Turnos de 24 y 36 h: el turno termina 24/36 h después del relevo de
+///   ingreso; las horas de más de un 36 h no son extras sino un día extra.
 /// - Tolerancia (editable por edificio, 15 min por defecto): hasta ese margen
 ///   no cuenta; pasado el margen se cuentan los minutos COMPLETOS (con 15 min,
 ///   20 min tarde = 20 min, no 5).
@@ -170,7 +173,8 @@ class PanelHoras {
       {Map<String, String> nombres = const {},
       DateTime? desde,
       DateTime? hasta,
-      int toleranciaMin = Turnos.toleranciaPorDefecto}) {
+      int toleranciaMin = Turnos.toleranciaPorDefecto,
+      Set<String> franqueros = const {}}) {
     final tol = toleranciaMin / 60.0;
     // El MES de un turno lo da su hora de relevo PROGRAMADA: el mes empieza
     // con el turno diurno del día 1 y termina con el nocturno del último día
@@ -195,7 +199,7 @@ class PanelHoras {
     for (final puesto in (porPuesto.keys.toList()..sort())) {
       n++;
       final lista = porPuesto[puesto]!..sort(_orden);
-      _calcularPuesto(lista, tol);
+      _calcularPuesto(lista, tol, franqueros);
 
       final p = PanelPuesto(puesto, nombres[puesto] ?? '')..toleranciaMin = toleranciaMin;
       if (p.nombre.isEmpty) p.nombre = puesto == 'local' ? 'Este celular' : 'Puesto $n';
@@ -231,7 +235,8 @@ class PanelHoras {
 
   static double _h(DateTime a, DateTime b) => a.difference(b).inMinutes / 60.0;
 
-  static void _calcularPuesto(List<RegistroTurno> lista, double tol) {
+  static void _calcularPuesto(List<RegistroTurno> lista, double tol, Set<String> franqueros) {
+    bool franq(RegistroTurno t) => t.guardId != null && franqueros.contains(t.guardId);
     // Horario de cada turno: el que traía su ingreso; si no (registros
     // viejos), el último conocido de ese puesto; si no, el normal 08/20.
     List<String>? ultimo;
@@ -272,70 +277,74 @@ class PanelHoras {
         tomados.add(mejor);
         a.relevadoPor = mejor.guardia;
         mejor.releveA = a.guardia;
-        _relevo(a, mejor, a.progFin!, tol);
-      } else {
+        if (franq(a) || franq(mejor)) {
+          final f = franq(a) ? a : mejor;
+          a.notas.add('Relevo con franquero (${f.guardia}): no cuenta para horas extras');
+          if (!identical(f, a)) mejor.notas.add('Franquero: no suma ni resta horas extras');
+        } else {
+          _relevo(a, mejor, a.progFin!, tol);
+        }
+      } else if (!franq(a)) {
         _finSinRelevo(a, tol);
       }
     }
     for (final b in validos) {
-      if (!tomados.contains(b)) _inicioSinRelevo(b, tol);
+      if (!tomados.contains(b) && !franq(b)) _inicioSinRelevo(b, tol);
     }
   }
 
+  /// Relevo entre dos FIJOS: siempre en espejo (+ para uno, − para el otro).
   static void _relevo(RegistroTurno a, RegistroTurno b, DateTime p, double tol) {
     final entra = b.inicio, sale = a.fin!;
     if (entra.isAfter(p)) {
-      final tarde = _h(entra, p);
-      if (tarde > tol) {
-        b.movimientos.add(Movimiento(
-            programado: p, real: entra, horas: -tarde, motivo: 'Llegó tarde al relevo', con: a.guardia));
-      }
+      // B llegó tarde: A lo esperó desde P hasta que llegó B (o hasta que A se fue).
       final espero = _h(sale.isBefore(entra) ? sale : entra, p);
       if (espero > tol) {
         a.movimientos.add(Movimiento(
             programado: p, real: sale, horas: espero, motivo: 'Esperó a su relevo', con: b.guardia));
+        b.movimientos.add(Movimiento(
+            programado: p, real: entra, horas: -espero, motivo: 'Llegó tarde al relevo', con: a.guardia));
+      }
+      if (sale.isBefore(entra) && _h(entra, sale) > tol) {
+        a.notas.add('Se fue antes de que llegara su relevo: ${Turnos.duracion(entra.difference(sale))} sin cubrir');
       }
     }
     if (sale.isBefore(p)) {
-      final antes = _h(p, sale);
-      if (antes > tol) {
-        a.movimientos.add(Movimiento(
-            programado: p, real: sale, horas: -antes, motivo: 'Salió antes del relevo', con: b.guardia));
-      }
+      // A se fue antes: lo que B ya estaba cubriendo es +B y −A.
       final cubrio = _h(p, entra.isAfter(sale) ? entra : sale);
       if (cubrio > tol) {
         b.movimientos.add(Movimiento(
             programado: p, real: entra, horas: cubrio, motivo: 'Entró antes y lo cubrió', con: a.guardia));
+        a.movimientos.add(Movimiento(
+            programado: p, real: sale, horas: -cubrio, motivo: 'Salió antes del relevo', con: b.guardia));
       }
     }
   }
 
+  /// Sin relevo registrado no hay a quién cargarle la diferencia: no suma ni
+  /// resta (solo queda la nota para revisarlo).
   static void _finSinRelevo(RegistroTurno a, double tol) {
     final d = _h(a.fin!, a.progFin!);
-    if (d > tol) {
-      a.movimientos.add(Movimiento(
-          programado: a.progFin!, real: a.fin!, horas: d,
-          motivo: 'Se quedó después de su hora (sin relevo registrado)'));
-    } else if (d < -tol) {
-      a.movimientos.add(Movimiento(
-          programado: a.progFin!, real: a.fin!, horas: d,
-          motivo: 'Salió antes de su hora (sin relevo registrado)'));
+    if (d.abs() > tol) {
+      a.notas.add('${d > 0 ? 'Salió después' : 'Salió antes'} de su hora '
+          '(${Turnos.duracion(Duration(minutes: (d.abs() * 60).round()))}) sin relevo registrado: no cuenta');
     }
   }
 
   static void _inicioSinRelevo(RegistroTurno b, double tol) {
     final tarde = _h(b.inicio, b.progInicio!);
     if (tarde > tol) {
-      b.movimientos.add(Movimiento(
-          programado: b.progInicio!, real: b.inicio, horas: -tarde,
-          motivo: 'Llegó tarde (sin relevo registrado)'));
+      b.notas.add('Entró ${Turnos.duracion(Duration(minutes: (tarde * 60).round()))} tarde sin relevo registrado: no cuenta');
     }
   }
 
   /// Panel del mes [mes] desde los eventos de la nube, por edificio.
   /// [tolerancias]: minutos por edificio (los que falten usan 15).
   static Map<String, List<PanelPuesto>> panelNube(List<Map<String, dynamic>> eventos, DateTime mes,
-      {Map<String, int> tolerancias = const {}, bool soloConGuardia = false, Map<String, String> nombres = const {}}) {
+      {Map<String, int> tolerancias = const {},
+      bool soloConGuardia = false,
+      Map<String, String> nombres = const {},
+      Set<String> franqueros = const {}}) {
     final nombresPuesto = <String, String>{...nombres}; // puesto -> "Torre 1"
     for (final e in eventos) {
       if (e['unit_id'] != null) continue; // las unidades ya tienen nombre
@@ -354,7 +363,8 @@ class PanelHoras {
           nombres: nombresPuesto,
           desde: desde,
           hasta: hasta,
-          toleranciaMin: tolerancias[e.key] ?? Turnos.toleranciaPorDefecto);
+          toleranciaMin: tolerancias[e.key] ?? Turnos.toleranciaPorDefecto,
+          franqueros: franqueros);
       if (p.isNotEmpty) out[e.key] = p;
     }
     return out;

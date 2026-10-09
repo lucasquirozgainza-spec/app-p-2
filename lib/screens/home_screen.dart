@@ -36,7 +36,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   Timer? _hb;
 
@@ -45,12 +45,22 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // Mantiene la presencia "en linea" + ubicacion actualizada (monitoreo
     // constante) mientras la app este abierta.
+    WidgetsBinding.instance.addObserver(this);
     _latido();
     _hb = Timer.periodic(const Duration(seconds: 60), (_) => _latido());
   }
 
+  /// Al volver a la app (desbloquear el celular, regresar de WhatsApp o de la
+  /// cámara) se envía YA lo que quedó pendiente: antes esperaba al siguiente
+  /// latido y, si Android había dormido la app, solo salía al reiniciarla.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _latido();
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _hb?.cancel();
     super.dispose();
   }

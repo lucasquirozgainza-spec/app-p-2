@@ -96,7 +96,10 @@ class Cloud {
       ).timeout(const Duration(seconds: 15));
       if (r.statusCode >= 200 && r.statusCode < 300) {
         await heartbeat();
-        return 'OK · La nube respondió (código ${r.statusCode}). Los datos deberían cruzarse entre celulares.';
+        await vaciarCola(); // aprovecha para enviar lo pendiente
+        final n = await pendientes();
+        return 'OK · La nube respondió (código ${r.statusCode}).\n'
+            '${n == 0 ? 'Todo lo registrado en este celular ya está en la nube.' : 'Quedan $n registro(s) por subir en este celular.${lastError != null ? '\nÚltimo error: $lastError' : ''}'}';
       }
       lastError = 'probar ${r.statusCode}: ${r.body}';
       return 'ERROR ${r.statusCode}: ${r.body}';

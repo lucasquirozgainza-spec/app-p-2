@@ -228,8 +228,20 @@ class _IncidenteFormState extends State<IncidenteForm> {
     });
     await Audit.log('CREAR', 'incidentes', '$id');
     // Nube en segundo plano: sin señal no demora el aviso al admin.
-    Cloud.evento('Incidente',
-        detalle: {'tipo': _tipo, 'lugar': _lugar.text, 'descripcion': _desc.text});
+    // Nube en segundo plano: primero las fotos (para verlas y certificarlas
+    // desde el monitor web) y luego el registro con su hora REAL.
+    final fotosCopia = List<String>.from(_fotos);
+    final det = {
+      'tipo': _tipo,
+      'lugar': _lugar.text,
+      'descripcion': _desc.text,
+      if (_involucrados.text.trim().isNotEmpty) 'involucrados': _involucrados.text.trim(),
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    };
+    () async {
+      final urls = await Cloud.subirFotos(fotosCopia, max: 6);
+      await Cloud.evento('Incidente', detalle: {...det, if (urls.isNotEmpty) 'fotos_url': urls});
+    }();
     // Aviso automático al administrador (correo y/o WhatsApp según config).
     if (mounted) {
       await NotifyService.incidente(
