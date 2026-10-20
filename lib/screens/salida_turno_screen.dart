@@ -188,15 +188,9 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
     final refSalida = Turnos.ref(Cloud.deviceId, sel['id']);
     final nombreSalida = sel['guardia_nombre'] as String?;
     final edSalida = _edificioDe(sel);
-    if (fotoSalida != null) {
-      () async {
-        final url = await Cloud.subirFoto(fotoSalida, sufijo: '_salida');
-        if (url != null) {
-          await Cloud.evento('Foto de turno', guardia: nombreSalida, edificio: edSalida,
-              detalle: {'turno_ref': refSalida, 'momento': 'salida', 'foto_url': url});
-        }
-      }();
-    }
+    await Cloud.eventoConFotos('Foto de turno', guardia: nombreSalida, edificio: edSalida,
+        detalle: {'turno_ref': refSalida, 'momento': 'salida'},
+        fotos: [fotoSalida], sufijo: '_salida', soloSiHayFoto: true);
 
     // Advertencia: tarjetas de visita que NO fueron devueltas.
     final pend = await db.query('visitas',

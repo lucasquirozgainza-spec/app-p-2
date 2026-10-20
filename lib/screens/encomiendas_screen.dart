@@ -169,10 +169,7 @@ class _EncomiendaFormState extends State<EncomiendaForm> {
       'destinatario': _dest.text.trim(),
       'empresa': _empresa.text.trim(),
     };
-    () async {
-      final fotoUrl = foto != null ? await Cloud.subirFoto(foto) : null;
-      await Cloud.evento('Encomienda', detalle: {...det, if (fotoUrl != null) 'foto_url': fotoUrl});
-    }();
+    await Cloud.eventoConFotos('Encomienda', detalle: det, fotos: [foto]);
     if (!mounted) return;
     await _avisarDepto();
     if (!mounted) return;
@@ -305,16 +302,12 @@ class _EntregaEncomiendaState extends State<EntregaEncomienda> {
     // A la nube (segundo plano): quién y cuándo la entregó.
     final e = widget.encomienda;
     final foto = _foto;
-    () async {
-      final url = foto != null ? await Cloud.subirFoto(foto) : null;
-      await Cloud.evento('Entrega de encomienda', detalle: {
-        'ref': '${Cloud.deviceId}_e${e['id']}',
-        'depto': '${e['depto'] ?? ''}',
-        'destinatario': '${e['destinatario'] ?? ''}',
-        'empresa': '${e['empresa'] ?? ''}',
-        if (url != null) 'foto_url': url,
-      });
-    }();
+    await Cloud.eventoConFotos('Entrega de encomienda', detalle: {
+      'ref': '${Cloud.deviceId}_e${e['id']}',
+      'depto': '${e['depto'] ?? ''}',
+      'destinatario': '${e['destinatario'] ?? ''}',
+      'empresa': '${e['empresa'] ?? ''}',
+    }, fotos: [foto]);
     if (!mounted) return;
     Navigator.pop(context);
   }

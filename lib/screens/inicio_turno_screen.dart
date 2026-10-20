@@ -275,15 +275,9 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     // registrado con su hora). Se une al turno por turno_ref.
     final fotoTurno = _foto;
     final refTurno = Turnos.ref(Cloud.deviceId, id);
-    if (fotoTurno != null) {
-      () async {
-        final url = await Cloud.subirFoto(fotoTurno, sufijo: '_ingreso');
-        if (url != null) {
-          await Cloud.evento('Foto de turno',
-              guardia: nombre, detalle: {'turno_ref': refTurno, 'momento': 'ingreso', 'foto_url': url});
-        }
-      }();
-    }
+    await Cloud.eventoConFotos('Foto de turno',
+        guardia: nombre, detalle: {'turno_ref': refTurno, 'momento': 'ingreso'},
+        fotos: [fotoTurno], sufijo: '_ingreso', soloSiHayFoto: true);
     if (!mounted) return;
     Navigator.pop(context);
   }

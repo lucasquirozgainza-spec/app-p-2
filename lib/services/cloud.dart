@@ -143,6 +143,67 @@ class Cloud {
     });
   }
 
+  /// Evento CON fotos: se guarda en la cola AL INSTANTE (con su hora real) y
+  /// las fotos se suben cuando la cola lo envía. Antes se subían primero y el
+  /// evento se creaba recién al terminar: si Android cerraba la app (p. ej. al
+  /// abrir WhatsApp) o no había señal, la ronda se perdía sin dejar rastro.
+  static Future<void> eventoConFotos(String tipo,
+      {String? guardia, String? edificio, Map<String, dynamic>? detalle,
+      List<String?> fotos = const [], String campo = 'foto_url', String sufijo = '', int max = 6,
+      bool soloSiHayFoto = false}) async {
+    if (AppState.instance.soloLocal) return;
+    final locales = fotos.whereType<String>().where((f) => f.isNotEmpty).take(max).toList();
+    if (soloSiHayFoto && locales.isEmpty) return;
+    final ed = edificio ?? AppState.instance.edificioId;
+    final ci = AppState.instance.guardCi;
+    await _encolar({
+      'tipo': tipo,
+      'edificio': ed,
+      'guardia': guardia ?? AppState.instance.userNombre,
+      'detalle': {
+        if (ci != null && ci.isNotEmpty) 'guard_ci': ci,
+        ...(detalle ?? const {}),
+        if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
+      },
+      if (locales.isNotEmpty) '_fotos': {'rutas': locales, 'campo': campo, 'sufijo': sufijo},
+    });
+  }
+
+  /// Sube las fotos pendientes de una fila de la cola y deja el cuerpo listo
+  /// para enviar (sin la marca interna `_fotos`).
+  static Future<String> _prepararFotos(String body, int intentos) async {
+    final m = jsonDecode(body);
+    if (m is! Map || m['_fotos'] == null) return body;
+    final f = Map<String, dynamic>.from(m['_fotos'] as Map);
+    final rutas = List<String>.from((f['rutas'] as List?) ?? const []);
+    final campo = (f['campo'] as String?) ?? 'foto_url';
+    final sufijo = (f['sufijo'] as String?) ?? '';
+    final urls = <String>[];
+    for (int i = 0; i < rutas.length; i++) {
+      if (!await File(rutas[i]).exists()) continue; // foto borrada: el evento va igual
+      final u = await subirFoto(rutas[i], sufijo: rutas.length > 1 ? '${sufijo}_$i' : sufijo);
+      if (u == null) {
+        // Sin señal: se reintenta luego. Tras muchos intentos, el evento sale
+        // igual sin esa foto para no trabar la cola.
+        if (intentos < 8) throw Exception('foto sin subir');
+        continue;
+      }
+      urls.add(u);
+    }
+    final det = Map<String, dynamic>.from((m['detalle'] as Map?) ?? const {});
+    if (urls.isNotEmpty) {
+      if (campo == 'fotos_url') {
+        det['fotos_url'] = urls;
+      } else {
+        det['foto_url'] = urls.first;
+        if (urls.length > 1) det['fotos_url'] = urls;
+      }
+    }
+    final out = Map<String, dynamic>.from(m)..remove('_fotos');
+    out['detalle'] = det;
+    return jsonEncode(out);
+  }
+
   static int _seq = 0;
   static String nuevoUid() =>
       '${deviceId}_${DateTime.now().microsecondsSinceEpoch}_${(_seq++) % 1000}';
@@ -209,10 +270,17 @@ class Cloud {
               continue;
             }
           }
+          // Fotos pendientes: se suben ahora y el cuerpo queda guardado ya con
+          // los links (si se corta, no se vuelven a subir).
           await db.rawUpdate('UPDATE cola_nube SET intentos = intentos + 1 WHERE uid=?', [uid]);
+          var body = row['body'] as String;
+          if (body.contains('"_fotos"')) {
+            body = await _prepararFotos(body, intentos);
+            await db.update('cola_nube', {'body': body}, where: 'uid=?', whereArgs: [uid]);
+          }
           final r = await http
               .post(Uri.parse('$_rest/$tabla'),
-                  headers: {...await _hdr(), 'Prefer': 'return=minimal'}, body: row['body'] as String)
+                  headers: {...await _hdr(), 'Prefer': 'return=minimal'}, body: body)
               .timeout(const Duration(seconds: 12));
           final c = r.statusCode;
           if (c < 300 || c == 409) {

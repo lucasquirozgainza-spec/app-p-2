@@ -120,7 +120,7 @@ class _RondaScreenState extends State<RondaScreen> {
     // se saltó una o más => "no hizo ronda". Se avisa al guardia y se guarda la
     // advertencia para llevar la cuenta.
     try {
-      final cada = s.rondaHoras.clamp(1, 12).toDouble();
+      final cada = s.rondaCada.clamp(1, 12).toDouble();
       // Inicio del turno activo: solo comparamos rondas DENTRO del mismo turno,
       // para no marcar falsas advertencias entre un turno y el siguiente.
       DateTime? turnoIni;
@@ -174,15 +174,12 @@ class _RondaScreenState extends State<RondaScreen> {
     final fotosCopia = List<String>.from(_fotos);
     final obsRonda = _obs.text.trim();
     final puntosTxt = _puntos.isNotEmpty ? '${_escaneados.length}/${_puntos.length}' : null;
-    () async {
-      final fotosUrl = await Cloud.subirFotos(fotosCopia, max: 6);
-      await Cloud.evento('Ronda', detalle: {
-        if (obsRonda.isNotEmpty) 'observaciones': obsRonda,
-        'fotos': fotosCopia.length,
-        if (puntosTxt != null) 'puntos': puntosTxt,
-        if (fotosUrl.isNotEmpty) 'fotos_url': fotosUrl,
-      });
-    }();
+    // La ronda queda en la cola AL INSTANTE; las fotos se suben desde ahí.
+    await Cloud.eventoConFotos('Ronda', detalle: {
+      if (obsRonda.isNotEmpty) 'observaciones': obsRonda,
+      'fotos': fotosCopia.length,
+      if (puntosTxt != null) 'puntos': puntosTxt,
+    }, fotos: fotosCopia, campo: 'fotos_url');
 
     // Compartir las fotos por WhatsApp en 1 clic, a la resolución máxima.
     final guardia = s.userNombre ?? 'Guardia';

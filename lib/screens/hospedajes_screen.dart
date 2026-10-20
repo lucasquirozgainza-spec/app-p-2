@@ -317,10 +317,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
       'noches': '$_n',
       'huespedes': '${_huespedes.length}',
     };
-    () async {
-      final url = fotoNube != null ? await Cloud.subirFoto(fotoNube) : null;
-      await Cloud.evento('Hospedaje', detalle: {...det, if (url != null) 'foto_url': url});
-    }();
+    await Cloud.eventoConFotos('Hospedaje', detalle: det, fotos: [fotoNube]);
     if (!mounted) return;
     Navigator.pop(context);
   }

@@ -63,7 +63,16 @@ class AppState {
   /// 08:00 / 20:00.
   List<String> get horarios {
     final h = horariosConfigurados;
-    return h.isEmpty ? Turnos.porDefecto : h;
+    if (h.isNotEmpty) return h;
+    // Horario del EDIFICIO (lo define supervisión desde la web).
+    final ed = Turnos.limpiar('${modulos['relevos'] ?? ''}'.split(','));
+    return ed.isEmpty ? Turnos.porDefecto : ed;
+  }
+
+  /// Cada cuántas horas va la ronda: la del edificio (web) manda; si no, la del celular.
+  int get rondaCada {
+    final v = int.tryParse('${modulos['ronda_cada'] ?? ''}');
+    return (v != null && v >= 1 && v <= 12) ? v : rondaHoras;
   }
 
   /// Tolerancia de relevo del edificio (minutos, editable por el admin).

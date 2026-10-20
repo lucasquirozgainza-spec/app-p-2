@@ -443,14 +443,7 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       'ts': DateTime.now().toUtc().toIso8601String(),
     };
     final fotoTarjeta = tarjeta.foto;
-    if (fotoTarjeta == null) {
-      Cloud.evento('Visita', detalle: det);
-    } else {
-      () async {
-        final url = await Cloud.subirFoto(fotoTarjeta);
-        await Cloud.evento('Visita', detalle: {...det, if (url != null) 'foto_url': url});
-      }();
-    }
+    await Cloud.eventoConFotos('Visita', detalle: det, fotos: [fotoTarjeta]);
     if (!mounted) return;
     TopToast.show(context, 'Ingreso de ${r['nombre']}');
     Navigator.pop(context);
@@ -757,9 +750,8 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
             {'gps_lat': gps?['lat'], 'gps_lng': gps?['lng'], 'dispositivo': disp},
             where: 'id=?', whereArgs: [id]);
       } catch (_) {}
-      final fotoUrl = fotoNube != null ? await Cloud.subirFoto(fotoNube) : null;
-      await Cloud.evento('Visita', detalle: {...det, if (fotoUrl != null) 'foto_url': fotoUrl});
     }();
+    await Cloud.eventoConFotos('Visita', detalle: det, fotos: [fotoNube]);
 
     // Visitantes adicionales: cada uno se guarda como su propia visita (con su
     // carnet) para que tenga registro único en el historial.
@@ -785,14 +777,10 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       final nombreA = a.nombre.text.trim();
       final ciA = a.ci.text.trim();
       final deptoA = _depto.text.trim();
-      () async {
-        final url = fotoA != null ? await Cloud.subirFoto(fotoA) : null;
-        await Cloud.evento('Visita', detalle: {
-          'ref': '${Cloud.deviceId}_v$aid',
-          'nombre': nombreA, 'ci': ciA, 'depto': deptoA, 'motivo': 'acompañante',
-          if (url != null) 'foto_url': url,
-        });
-      }();
+      await Cloud.eventoConFotos('Visita', detalle: {
+        'ref': '${Cloud.deviceId}_v$aid',
+        'nombre': nombreA, 'ci': ciA, 'depto': deptoA, 'motivo': 'acompañante',
+      }, fotos: [fotoA]);
       await Audit.log('CREAR', 'visitas', '$aid', detalle: nombreA);
     }
 

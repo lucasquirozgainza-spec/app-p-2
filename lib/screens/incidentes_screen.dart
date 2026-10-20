@@ -238,10 +238,7 @@ class _IncidenteFormState extends State<IncidenteForm> {
       if (_involucrados.text.trim().isNotEmpty) 'involucrados': _involucrados.text.trim(),
       'ts': DateTime.now().toUtc().toIso8601String(),
     };
-    () async {
-      final urls = await Cloud.subirFotos(fotosCopia, max: 6);
-      await Cloud.evento('Incidente', detalle: {...det, if (urls.isNotEmpty) 'fotos_url': urls});
-    }();
+    await Cloud.eventoConFotos('Incidente', detalle: det, fotos: fotosCopia, campo: 'fotos_url');
     // Aviso automático al administrador (correo y/o WhatsApp según config).
     if (mounted) {
       await NotifyService.incidente(

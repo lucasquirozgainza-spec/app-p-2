@@ -102,14 +102,7 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
         'ts': DateTime.now().toUtc().toIso8601String(),
       };
       final fotoTarjeta = tarjeta.foto;
-      if (fotoTarjeta == null) {
-        Cloud.evento('Visita', detalle: det);
-      } else {
-        () async {
-          final url = await Cloud.subirFoto(fotoTarjeta);
-          await Cloud.evento('Visita', detalle: {...det, if (url != null) 'foto_url': url});
-        }();
-      }
+      await Cloud.eventoConFotos('Visita', detalle: det, fotos: [fotoTarjeta]);
       if (mounted) {
         TopToast.show(context, 'Ingreso de ${r['nombre']}${deptoOverride != null ? ' a depto $depto' : ''}'
             '${tarjeta.numero.isNotEmpty ? ' · tarjeta ${tarjeta.numero}' : ''}');
