@@ -64,6 +64,13 @@ class Turnos {
       final f = fmtHora(p[0], p[1]);
       if (!out.contains(f)) out.add(f);
     }
+    // Un solo horario (ej. el celular con solo "08:00"): el otro relevo es
+    // 12 h después. Sin esto los relevos de la noche no se emparejaban y no
+    // salían horas extras.
+    if (out.length == 1) {
+      final p = parseHora(out.first)!;
+      out.add(fmtHora((p[0] + 12) % 24, p[1]));
+    }
     return out;
   }
 

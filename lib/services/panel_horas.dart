@@ -10,8 +10,12 @@ class Movimiento {
   final double horas;        // + a favor / − en contra
   final String motivo;
   final String? con;         // el otro guardia del relevo (si hubo)
+  /// Fecha que decide el MES: inicio programado del turno que termina en ese
+  /// relevo (el mes empieza con el ingreso del diurno del día 1).
+  final DateTime? mes;
   const Movimiento({
     required this.programado,
+    this.mes,
     required this.real,
     required this.horas,
     required this.motivo,
@@ -39,7 +43,7 @@ class RegistroTurno {
   String? refSalida;            // registro que dio la salida (auditoría)
   final List<String> notas = []; // correcciones, duplicados ignorados, etc.
   bool corregido = false;
-  /// Estado forzado: 'sin salida', 'sin ingreso', 'anulado', 'inconsistente'.
+  /// Estado forzado: 'sin salida', 'sin ingreso', 'anulado', 'inconsistente', 'muy corto'.
   String? marca;
 
   // ---- Calculado por PanelHoras.calcular ----
@@ -100,6 +104,9 @@ class ResumenGuardia {
   final String guardia; // nombre
   final String clave;   // id del guardia (o nombre en registros anteriores)
   final List<RegistroTurno> turnos = [];
+  /// Horas a favor / en contra del periodo. Cada relevo cuenta en el mes del
+  /// turno que termina en él, para los DOS guardias (siempre en espejo).
+  final List<Movimiento> movs = [];
   ResumenGuardia(this.guardia, [String? clave]) : clave = clave ?? guardia;
 
   Iterable<RegistroTurno> get _validos => turnos.where((t) => t.valido);
@@ -110,10 +117,10 @@ class ResumenGuardia {
   int get n36 => _cerrados.where((t) => t.nivel == 36).length;
   int get dobles => _cerrados.fold(0, (a, t) => a + Turnos.dobles(t.nivel));
   double get horas => _cerrados.fold(0.0, (a, t) => a + t.horas);
-  double get aFavor => _validos.fold(0.0, (a, t) => a + t.aFavor);
-  double get enContra => _validos.fold(0.0, (a, t) => a + t.enContra);
+  double get aFavor => movs.fold(0.0, (a, m) => m.horas > 0 ? a + m.horas : a);
+  double get enContra => movs.fold(0.0, (a, m) => m.horas < 0 ? a - m.horas : a);
   double get saldo => aFavor - enContra;
-  int get vecesTarde => _validos.where((t) => t.llegoTarde).length;
+  int get vecesTarde => movs.where((m) => m.horas < 0 && m.motivo.startsWith('Llegó tarde')).length;
   int get incompletos => turnos.where((t) => !t.valido).length;
   double get extra => aFavor; // compatibilidad
 }
@@ -205,12 +212,22 @@ class PanelHoras {
       final p = PanelPuesto(puesto, nombres[puesto] ?? '')..toleranciaMin = toleranciaMin;
       if (p.nombre.isEmpty) p.nombre = puesto == 'local' ? 'Este celular' : 'Puesto $n';
       final pares = <String, BalancePar>{};
+      // El relevo cuenta en el mes del turno que TERMINA en él (el mes empieza
+      // con el ingreso del diurno del día 1): igual para los dos, en espejo.
+      bool movEnPeriodo(Movimiento m) {
+        final r = m.mes ?? m.programado;
+        return (desde == null || !r.isBefore(desde)) && (hasta == null || r.isBefore(hasta));
+      }
       for (final t in lista) {
-        if (!enPeriodo(t)) continue;
-        p.turnos.add(t);
-        p.guardias.putIfAbsent(t.clave, () => ResumenGuardia(t.guardia, t.clave)).turnos.add(t);
-        // Cuenta entre pares: lo que cada uno cubrió por el otro.
+        if (enPeriodo(t)) {
+          p.turnos.add(t);
+          p.guardias.putIfAbsent(t.clave, () => ResumenGuardia(t.guardia, t.clave)).turnos.add(t);
+        }
+        if (!t.valido) continue;
         for (final m in t.movimientos) {
+          if (!movEnPeriodo(m)) continue;
+          p.guardias.putIfAbsent(t.clave, () => ResumenGuardia(t.guardia, t.clave)).movs.add(m);
+          // Cuenta entre pares: lo que cada uno cubrió por el otro.
           if (m.con == null || m.horas <= 0) continue;
           final ab = [t.guardia, m.con!]..sort();
           final par = pares.putIfAbsent('${ab[0]}|${ab[1]}', () => BalancePar(ab[0], ab[1]));
@@ -304,9 +321,9 @@ class PanelHoras {
       final espero = _h(sale.isBefore(entra) ? sale : entra, p);
       if (espero > tol) {
         a.movimientos.add(Movimiento(
-            programado: p, real: sale, horas: espero, motivo: 'Esperó a su relevo', con: b.guardia));
+            programado: p, mes: a.progInicio, real: sale, horas: espero, motivo: 'Esperó a su relevo', con: b.guardia));
         b.movimientos.add(Movimiento(
-            programado: p, real: entra, horas: -espero, motivo: 'Llegó tarde al relevo', con: a.guardia));
+            programado: p, mes: a.progInicio, real: entra, horas: -espero, motivo: 'Llegó tarde al relevo', con: a.guardia));
       }
       if (sale.isBefore(entra) && _h(entra, sale) > tol) {
         a.notas.add('Se fue antes de que llegara su relevo: ${Turnos.duracion(entra.difference(sale))} sin cubrir');
@@ -317,9 +334,9 @@ class PanelHoras {
       final cubrio = _h(p, entra.isAfter(sale) ? entra : sale);
       if (cubrio > tol) {
         b.movimientos.add(Movimiento(
-            programado: p, real: entra, horas: cubrio, motivo: 'Entró antes y lo cubrió', con: a.guardia));
+            programado: p, mes: a.progInicio, real: entra, horas: cubrio, motivo: 'Entró antes y lo cubrió', con: a.guardia));
         a.movimientos.add(Movimiento(
-            programado: p, real: sale, horas: -cubrio, motivo: 'Salió antes del relevo', con: b.guardia));
+            programado: p, mes: a.progInicio, real: sale, horas: -cubrio, motivo: 'Salió antes del relevo', con: b.guardia));
       }
     }
   }
@@ -330,7 +347,7 @@ class PanelHoras {
     final d = _h(a.fin!, a.progFin!);
     if (cuenta && d.abs() > tol) {
       a.movimientos.add(Movimiento(
-          programado: a.progFin!, real: a.fin!, horas: d,
+          programado: a.progFin!, mes: a.progInicio, real: a.fin!, horas: d,
           motivo: d > 0 ? 'Se quedó después de su hora' : 'Salió antes de su hora'));
       return;
     }
@@ -344,7 +361,7 @@ class PanelHoras {
     final tarde = _h(b.inicio, b.progInicio!);
     if (cuenta && tarde > tol) {
       b.movimientos.add(Movimiento(
-          programado: b.progInicio!, real: b.inicio, horas: -tarde, motivo: 'Llegó tarde'));
+          programado: b.progInicio!, mes: b.progInicio, real: b.inicio, horas: -tarde, motivo: 'Llegó tarde'));
       return;
     }
     if (tarde > tol) {
@@ -391,7 +408,9 @@ class PanelHoras {
     final out = <String, ResumenGuardia>{};
     for (final p in puestos) {
       for (final r in p.guardias.values) {
-        out.putIfAbsent(r.clave, () => ResumenGuardia(r.guardia, r.clave)).turnos.addAll(r.turnos);
+        out.putIfAbsent(r.clave, () => ResumenGuardia(r.guardia, r.clave))
+          ..turnos.addAll(r.turnos)
+          ..movs.addAll(r.movs);
       }
     }
     for (final r in out.values) {
@@ -606,6 +625,11 @@ class PanelHoras {
       if (m <= 0 || m > 60 * 60) {
         t.marca = 'inconsistente';
         t.notas.add('Salida antes del ingreso o turno de más de 60 h: no se calcula');
+      } else if (m < 60) {
+        // Ingreso y salida en menos de 1 h: registro por error (ej. en el
+        // celular de otro bloque). No cuenta ni empareja relevos.
+        t.marca = 'muy corto';
+        t.notas.add('Turno de $m min: parece un registro por error, no se calcula');
       }
     } else if (now.difference(t.inicio).inHours > t.nivel + 12) {
       t.marca = 'sin salida';

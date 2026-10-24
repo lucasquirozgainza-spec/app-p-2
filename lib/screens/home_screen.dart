@@ -29,6 +29,10 @@ import 'online_screen.dart';
 import 'rondas_historial_screen.dart';
 import 'reporte_personal_screen.dart';
 import 'recurrentes_screen.dart';
+import 'solicitudes_screen.dart';
+import '../services/solicitudes.dart';
+import '../services/turno_remoto.dart';
+import '../widgets/toast.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -82,6 +86,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await ConfigSync.sincronizarGuardias(); // como máximo cada 10 min
       // Ajustes y datos que se manejan desde el monitor web.
       if (await SyncRemoto.latido() && mounted) setState(() {});
+      await Solicitudes.revisarRespuestas(); // adelantos y días libres
+      // Turno de este celular finalizado desde otro celular del edificio.
+      if (await TurnoRemoto.aplicarSalidasRemotas() && mounted) setState(() {});
     } catch (_) {
     } finally {
       _latiendo = false;
@@ -183,7 +190,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _greeting(saludo, s, ahora),
               const SizedBox(height: 14),
               _turnoButton(s),
-              const SizedBox(height: 20),
+              if (!s.soloLocal)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _finalizarOtro,
+                    child: const Text('Finalizar un turno abierto en otro celular'),
+                  ),
+                ),
+              const SizedBox(height: 12),
               const _SectionTitle('Acciones rapidas'),
               const SizedBox(height: 8),
               _acciones(s),
@@ -244,6 +259,78 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+
+  /// Un guardia que entró en otro celular del edificio (ej. Bloque B) y está
+  /// aquí (Bloque A) finaliza su turno desde este celular.
+  Future<void> _finalizarOtro() async {
+    List<TurnoAbierto> lista;
+    try {
+      lista = await TurnoRemoto.abiertosEnOtros();
+    } catch (_) {
+      if (mounted) {
+        TopToast.show(context, 'Sin conexión: no se pueden ver los turnos de otros celulares',
+            color: AppColors.rojo, icon: Icons.wifi_off);
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (lista.isEmpty) {
+      TopToast.show(context, 'No hay turnos abiertos en otros celulares del edificio',
+          color: const Color(0xFF455A64), icon: Icons.info_outline);
+      return;
+    }
+    final t = await showModalBottomSheet<TurnoAbierto>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text('¿Qué turno finalizas?', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          ),
+          for (final x in lista)
+            ListTile(
+              leading: const Icon(Icons.logout, color: AppColors.azulMarino),
+              title: Text(x.guardia),
+              subtitle: Text('Entró ${DateFormat('dd/MM HH:mm').format(x.inicio)}'
+                  '${x.bloque.isNotEmpty ? ' en ${x.bloque}' : ' en otro celular'}'),
+              onTap: () => Navigator.pop(ctx, x),
+            ),
+        ]),
+      ),
+    );
+    if (t == null || !mounted) return;
+    int nivel = t.nivel;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, set) => AlertDialog(
+          title: Text('Finalizar turno de ${t.guardia}'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Entró el ${DateFormat('dd/MM HH:mm').format(t.inicio)}. La salida queda con la hora de ahora '
+                'y el turno sigue contando para su bloque.'),
+            const SizedBox(height: 12),
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 12, label: Text('12 h')),
+                ButtonSegment(value: 24, label: Text('24 h')),
+                ButtonSegment(value: 36, label: Text('36 h')),
+              ],
+              selected: {nivel},
+              onSelectionChanged: (v) => set(() => nivel = v.first),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Finalizar')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await TurnoRemoto.finalizar(t, nivel);
+    if (mounted) TopToast.show(context, 'Turno de ${t.guardia} finalizado');
   }
 
   Widget _turnoButton(AppState s) {
@@ -314,6 +401,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _Mod('encomiendas', Icons.inventory_2, 'Encomiendas', const Color(0xFFEF6C00), () => const EncomiendasScreen()),
       _Mod('hospedajes', Icons.hotel, 'Hospedajes', const Color(0xFF00838F), () => const HospedajesScreen()),
       _Mod('mantenimiento', Icons.build, 'Mantenim.', const Color(0xFF5D4037), () => const MantenimientoScreen()),
+      // Adelanto / día libre: siempre visible (salvo edificio sin conexión).
+      // Pide el guardia de turno (queda en su historial).
+      if (!s.soloLocal)
+        _Mod('solicitudes', Icons.request_page, 'Solicitudes', const Color(0xFF6D4C41), () => const SolicitudesScreen(),
+            always: true, conTurno: true),
     ];
     final visibles = all.where((m) => m.always || s.modulo(m.key)).toList();
     if (visibles.isEmpty) return const SizedBox.shrink();
@@ -322,7 +414,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final m = visibles.first;
       return SizedBox(
         height: 120, width: double.infinity,
-        child: ModuleCard(icon: m.icon, label: m.label, color: m.color, onTap: () => _open(m.build())),
+        child: ModuleCard(icon: m.icon, label: m.label, color: m.color,
+            onTap: () => m.conTurno ? _accionConTurno(m.build()) : _open(m.build())),
       );
     }
     return GridView.extent(
@@ -331,7 +424,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       childAspectRatio: 0.92, mainAxisSpacing: 6, crossAxisSpacing: 6,
       children: [
         for (final m in visibles)
-          ModuleCard(icon: m.icon, label: m.label, color: m.color, onTap: () => _open(m.build())),
+          ModuleCard(icon: m.icon, label: m.label, color: m.color,
+              onTap: () => m.conTurno ? _accionConTurno(m.build()) : _open(m.build())),
       ],
     );
   }
@@ -432,5 +526,6 @@ class _Mod {
   final Color color;
   final Widget Function() build;
   final bool always;
-  _Mod(this.key, this.icon, this.label, this.color, this.build, {this.always = false});
+  final bool conTurno;
+  _Mod(this.key, this.icon, this.label, this.color, this.build, {this.always = false, this.conTurno = false});
 }

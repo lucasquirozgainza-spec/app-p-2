@@ -108,7 +108,7 @@ class Notificaciones {
   static Future<void> programarRondas() => programarRecordatorios();
 
   /// Muestra un aviso inmediato (por ejemplo: guardia sin uniforme).
-  static Future<void> mostrarAviso(String titulo, String cuerpo) async {
+  static Future<void> mostrarAviso(String titulo, String cuerpo, {int? id}) async {
     await init();
     const detalles = NotificationDetails(
       android: AndroidNotificationDetails(
@@ -118,7 +118,7 @@ class Notificaciones {
       ),
     );
     try {
-      await _plugin.show(DateTime.now().millisecondsSinceEpoch ~/ 1000 % 100000, titulo, cuerpo, detalles);
+      await _plugin.show(id ?? DateTime.now().millisecondsSinceEpoch ~/ 1000 % 100000, titulo, cuerpo, detalles);
     } catch (_) {}
   }
 

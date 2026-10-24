@@ -41,7 +41,7 @@ class _OnlineScreenState extends State<OnlineScreen> {
     'Hospedaje': 'Hospedajes',
     'Advertencia': 'Advertencias',
   };
-  static const _internos = <String>{'Config', 'AdminPass', 'Guardia', 'GuardiaBaja', 'Corrección de turno', 'Prueba de conexión', 'Foto de turno', 'Equipo', 'AjustesEquipo', 'Datos'};
+  static const _internos = <String>{'Config', 'AdminPass', 'Guardia', 'GuardiaBaja', 'Corrección de turno', 'Prueba de conexión', 'Foto de turno', 'Equipo', 'AjustesEquipo', 'Datos', 'Solicitud', 'Respuesta'};
 
   String get _ed => AppState.instance.edificioId;
 
