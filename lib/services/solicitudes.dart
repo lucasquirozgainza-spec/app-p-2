@@ -230,8 +230,15 @@ class Solicitudes {
       final r = await Cloud.leer('eventos?select=detalle,created_at&tipo=eq.Respuesta'
           '&edificio=eq.${_enc(s.edificioId)}&created_at=gt.${_enc(visto)}&order=created_at.asc&limit=50');
       if (r.isEmpty) return;
-      int n = 0;
+      // Si supervisión cambió de opinión varias veces, solo se avisa la última
+      // respuesta de cada pedido (antes llegaba una notificación por cada toque).
+      final ultima = <String, Map<String, dynamic>>{};
       for (final e in r) {
+        final d = e['detalle'];
+        if (d is Map) ultima['${d['sid']}|${d['estado'] == 'confirmado' || d['estado'] == 'no_entregado' ? 'monto' : 'resp'}'] = e;
+      }
+      int n = 0;
+      for (final e in ultima.values) {
         final d = e['detalle'];
         if (d is! Map) continue;
         final quien = '${d['guardia'] ?? ''}'.trim();
