@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:image/image.dart' as img;
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -202,7 +204,24 @@ class OcrService {
     try {
       final t1 = await _textoUtil(rec, frontPath);
       final t2 = (backPath != null && backPath.isNotEmpty) ? await _textoUtil(rec, backPath) : '';
-      return parseDosLados(t1, t2);
+      final r = parseDosLados(t1, t2);
+      if (r.ci != null) return r;
+      // El N° del carnet viene impreso en ROJO: si no salió, se reintenta con
+      // el canal verde de la foto, donde el rojo queda oscuro y se lee.
+      for (final par in [[frontPath, t2], [backPath, t1]]) {
+        final ruta = par[0];
+        if (ruta == null || ruta.isEmpty) continue;
+        final verde = await _canalVerde(ruta);
+        if (verde == null) continue;
+        try {
+          final tv = await _texto(rec, verde);
+          final ci = parseDosLados(tv, par[1] ?? '').ci;
+          if (ci != null) return CarnetData(ci, r.nombre);
+        } finally {
+          try { await File(verde).delete(); } catch (_) {}
+        }
+      }
+      return r;
     } finally {
       await rec.close();
     }
@@ -276,6 +295,37 @@ class OcrService {
       }
     }
     return t;
+  }
+
+  /// Copia de la foto en gris tomando solo el canal verde (el texto rojo sale negro).
+  static Future<String?> _canalVerde(String path) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final out = p.join(dir.path, 'ocr_v_${DateTime.now().microsecondsSinceEpoch}.jpg');
+      final ok = await compute(_verdeIsolate, [path, out]);
+      return ok ? out : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> _verdeIsolate(List<String> a) async {
+    final bytes = await File(a[0]).readAsBytes();
+    var im = img.decodeImage(bytes);
+    if (im == null) return false;
+    im = img.bakeOrientation(im);
+    final lado = im.width > im.height ? im.width : im.height;
+    if (lado > 2400) {
+      im = im.width >= im.height ? img.copyResize(im, width: 2400) : img.copyResize(im, height: 2400);
+    }
+    for (final px in im) {
+      final g = px.g;
+      px
+        ..r = g
+        ..b = g;
+    }
+    await File(a[1]).writeAsBytes(img.encodeJpg(im, quality: 92));
+    return true;
   }
 
   static Future<String?> _rotada(String path, int grados) async {
@@ -398,6 +448,7 @@ class OcrService {
     final nums = RegExp(r'(?<![\d/\-.])(\d{6,8})(?![\d/\-.])')
         .allMatches(texto)
         .map((e) => e.group(1)!)
+        .where((n) => !n.startsWith('0')) // un CI no empieza con 0 (el número rojo de costado sí)
         .toList();
     if (nums.isEmpty) return null;
     nums.sort((a, b) => b.length.compareTo(a.length));
