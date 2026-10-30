@@ -93,7 +93,37 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
   Future<void> _cambiarNivel(int nivel) async {
     final sel = _sel;
     if (sel == null) return _snack('Selecciona el guardia');
-    if (((sel['nivel'] as int?) ?? 12) == nivel) return;
+    final actual = (sel['nivel'] as int?) ?? 12;
+    if (actual == nivel) return;
+    if (_cambiando) return; // doble toque
+    // Ya estaba declarado (24 o 36 h): se pide confirmar el cambio. Así no se
+    // marca varias veces por error ni se vuelve a 12 h sin querer.
+    if (actual != 12) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('Cambiar el tipo de turno'),
+          content: Text('Este turno ya está marcado como turno de $actual h.\n\n'
+              '¿Cambiarlo a $nivel h${nivel == 12 ? ' (turno normal)' : ''}?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: Text('No, dejar $actual h')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: Text('Sí, cambiar a $nivel h')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
+    _cambiando = true;
+    try {
+      await _guardarNivel(sel, nivel);
+    } finally {
+      _cambiando = false;
+    }
+  }
+
+  bool _cambiando = false;
+
+  Future<void> _guardarNivel(Map<String, dynamic> sel, int nivel) async {
     final db = await DB.instance.database;
     await db.update('ingreso_turno', {'nivel': nivel}, where: 'id=?', whereArgs: [sel['id']]);
     await Audit.log('DOBLAR_TURNO', 'ingreso_turno', '${sel['id']}', detalle: 'nivel=$nivel');

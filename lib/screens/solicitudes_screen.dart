@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
+import '../services/guardias_service.dart';
+import '../services/turnos.dart';
 import '../services/solicitudes.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/toast.dart';
+import 'pedido_screen.dart';
 
 /// Pedir adelanto o día libre, y ver cómo va cada pedido. Pide el guardia
 /// que está de turno en el celular (la pantalla se abre solo con turno iniciado).
@@ -58,84 +61,86 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
     await _cargar();
   }
 
+  // Reglas: el adelanto se pide con 24 h de anticipación y el día libre con
+  // 48 h (antes de que empiece el turno de ese día). La lista de días solo
+  // ofrece los que cumplen la regla, y el mensaje lo explica.
+  static const _hAdelanto = 24, _hLibre = 48;
+
+  /// Hora en que empieza el turno del guardia ese día (diurno: 1er relevo;
+  /// nocturno: 2do relevo; franquero o sin dato: 00:00).
+  Future<DateTime> Function(DateTime) _inicioDeTurno() {
+    final s = AppState.instance;
+    final h = [...s.horarios]..sort();
+    String? turno;
+    return (DateTime d) async {
+      if (turno == null) {
+        try {
+          final gs = await GuardiasService.delEdificio(s.edificioId);
+          final ci = GuardiasService.limpiarCi(s.guardCi ?? '');
+          turno = gs.where((g) => GuardiasService.limpiarCi(g.ci) == ci).map((g) => g.turno).firstOrNull ?? '';
+        } catch (_) {
+          turno = '';
+        }
+      }
+      final hh = turno == 'NOCTURNO' && h.length > 1 ? h[1] : (turno == 'DIURNO' && h.isNotEmpty ? h[0] : '00:00');
+      final p = Turnos.parseHora(hh) ?? [0, 0];
+      return DateTime(d.year, d.month, d.day, p[0], p[1]);
+    };
+  }
+
   Future<void> _pedirAdelanto() async {
-    final motivo = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Pedir adelanto'),
-        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Si supervisión lo aprueba te llega un aviso. Cuando recibas el dinero, escribe aquí el monto.',
-              style: TextStyle(color: Colors.black54)),
-          const SizedBox(height: 12),
-          TextField(
-            controller: motivo,
-            maxLines: 2,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(labelText: 'Motivo (opcional)', border: OutlineInputBorder()),
-          ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Enviar')),
-        ],
+    // Se puede pedir para un día que empiece 24 h (o más) después del pedido.
+    final desde = DateTime.now().add(const Duration(hours: _hAdelanto));
+    final primero = DateTime(desde.year, desde.month, desde.day);
+    final dias = {for (int i = 0; i < 60; i++) DateTime(primero.year, primero.month, primero.day + i)};
+    final r = await Navigator.push<PedidoDatos>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PedidoScreen(
+          adelanto: true,
+          diasPermitidos: dias,
+          regla: 'El adelanto se pide con $_hAdelanto horas de anticipación: el primer día que puedes elegir es el '
+              '${DateFormat("EEEE d 'de' MMMM", 'es').format(primero)}.',
+        ),
       ),
     );
-    if (ok != true || _enviando) return;
+    if (r == null || _enviando || !mounted) return;
     _enviando = true;
     try {
-      await Solicitudes.pedirAdelanto(_quien!, motivo.text.trim());
-      await _hecho('Pedido de adelanto enviado');
+      await Solicitudes.pedirAdelanto(_quien!, r.motivo, r.dia, r.monto!);
+      await _hecho('Pedido de adelanto enviado: Bs ${Solicitudes.bs(r.monto)}');
     } finally {
       _enviando = false;
     }
   }
 
   Future<void> _pedirLibre() async {
-    final hoy = DateTime.now();
-    final dias = [for (int i = 0; i < 60; i++) DateTime(hoy.year, hoy.month, hoy.day + i)];
-    DateTime dia = dias[1];
-    final motivo = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, set) => AlertDialog(
-          title: const Text('Pedir día libre'),
-          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            DropdownButtonFormField<DateTime>(
-              value: dia,
-              isExpanded: true,
-              menuMaxHeight: 360,
-              decoration: const InputDecoration(labelText: 'Día', border: OutlineInputBorder()),
-              items: [
-                for (final d in dias)
-                  DropdownMenuItem(
-                    value: d,
-                    child: Text((d == dias[0] ? 'Hoy · ' : d == dias[1] ? 'Mañana · ' : '') +
-                        DateFormat("EEEE dd 'de' MMMM", 'es').format(d)),
-                  ),
-              ],
-              onChanged: (v) => set(() => dia = v ?? dia),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: motivo,
-              maxLines: 2,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(labelText: 'Motivo (opcional)', border: OutlineInputBorder()),
-            ),
-          ]),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Enviar')),
-          ],
+    // Se puede pedir un día cuyo turno empiece 48 h (o más) después del pedido.
+    final ahora = DateTime.now();
+    final limite = ahora.add(const Duration(hours: _hLibre));
+    final inicio = _inicioDeTurno();
+    final dias = <DateTime>{};
+    for (int i = 0; i < 100 && dias.length < 60; i++) {
+      final d = DateTime(ahora.year, ahora.month, ahora.day + i);
+      if (!(await inicio(d)).isBefore(limite)) dias.add(d);
+    }
+    if (!mounted || dias.isEmpty) return;
+    final primero = (dias.toList()..sort()).first;
+    final r = await Navigator.push<PedidoDatos>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PedidoScreen(
+          adelanto: false,
+          diasPermitidos: dias,
+          regla: 'El día libre se pide con $_hLibre horas de anticipación (antes de que empiece tu turno): el primer día '
+              'que puedes elegir es el ${DateFormat("EEEE d 'de' MMMM", 'es').format(primero)}.',
         ),
       ),
     );
-    if (ok != true || _enviando) return;
+    if (r == null || _enviando || !mounted) return;
     _enviando = true;
     try {
-      await Solicitudes.pedirLibre(_quien!, dia, motivo.text.trim());
+      await Solicitudes.pedirLibre(_quien!, r.dia, r.motivo);
       await _hecho('Pedido de día libre enviado');
     } finally {
       _enviando = false;
@@ -143,7 +148,7 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
   }
 
   Future<void> _escribirMonto(Solicitud x) async {
-    final c = TextEditingController();
+    final c = TextEditingController(text: x.montoPedido != null ? Solicitudes.bs(x.montoPedido) : '');
     String? err;
     final monto = await showDialog<double>(
       context: context,

@@ -19,8 +19,8 @@ Uint8List? _comprimirFotoBytes(Uint8List input) {
     if (decoded == null) return null;
     // Aplicar la orientación EXIF para que la miniatura no salga volteada.
     final upright = img.bakeOrientation(decoded);
-    final resized = upright.width > 1920 ? img.copyResize(upright, width: 1920) : upright;
-    return Uint8List.fromList(img.encodeJpg(resized, quality: 82));
+    final resized = upright.width > 1600 ? img.copyResize(upright, width: 1600) : upright;
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 72));
   } catch (_) {
     return null;
   }
@@ -33,9 +33,48 @@ Uint8List? _comprimirFotoBytes(Uint8List input) {
 /// usamos REST directo (y no la librería supabase_flutter, que manda el Bearer
 /// y provocaba error 401 → los datos no se cruzaban).
 class Cloud {
-  static const String url = 'https://idwsbukgtogiwvfrurlc.supabase.co';
-  static const String anonKey = 'sb_publishable_-uuIV9H6rYYWjhyGNNtQww_0oww_OyF';
-  static const String _rest = '$url/rest/v1';
+  /// Servidor por defecto. Se puede cambiar SIN reinstalar la app: al abrir,
+  /// la app lee servidor.json en la página de Osiris (GitHub) y, si indica otro
+  /// servidor, lo usa y lo recuerda.
+  static const String _urlDef = 'https://sxyxklzgjukokgvmxiif.supabase.co';
+  static const String _keyDef = 'sb_publishable_1sl0nTk6US5BygdM-_Zd0w_SIlGcLpp';
+  static const List<String> _fuentesServidor = [
+    'https://lucasquirozgainza-spec.github.io/SUPERVISION-OSIRIS/servidor.json',
+  ];
+  static String url = _urlDef;
+  static String anonKey = _keyDef;
+  static String get _rest => '$url/rest/v1';
+
+  /// Carga el servidor guardado y, en segundo plano, revisa si cambió.
+  static Future<void> cargarServidor() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final u = prefs.getString('srv_url'), k = prefs.getString('srv_key');
+      if (u != null && u.startsWith('https://') && k != null && k.isNotEmpty) {
+        url = u;
+        anonKey = k;
+      }
+    } catch (_) {}
+    () async {
+      for (final f in _fuentesServidor) {
+        try {
+          final r = await http.get(Uri.parse('$f?t=${DateTime.now().millisecondsSinceEpoch}')).timeout(const Duration(seconds: 8));
+          if (r.statusCode != 200) continue;
+          final j = jsonDecode(r.body);
+          final u = '${j['url'] ?? ''}'.trim(), k = '${j['key'] ?? ''}'.trim();
+          if (!u.startsWith('https://') || !u.contains('.supabase.co') || k.isEmpty) continue;
+          if (u != url || k != anonKey) {
+            url = u;
+            anonKey = k;
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('srv_url', u);
+            await prefs.setString('srv_key', k);
+          }
+          return;
+        } catch (_) {}
+      }
+    }();
+  }
 
   static bool enabled = true;
   static String deviceId = 'device';
@@ -53,6 +92,7 @@ class Cloud {
   static Future<Map<String, String>> _hdr() async => _hAnon;
 
   static Future<void> init() async {
+    await cargarServidor();
     // ID ÚNICO por instalación. OJO: androidInfo.id es el Build.ID del sistema
     // y es IGUAL en teléfonos del mismo modelo/firmware, así que NO sirve para
     // distinguir dispositivos (hacía que las presencias se pisaran entre sí y
@@ -286,7 +326,8 @@ class Cloud {
           if (c < 300 || c == 409) {
             // 409 = ya existía (mismo uid): no se sube dos veces.
             await db.delete('cola_nube', where: 'uid=?', whereArgs: [uid]);
-          } else if (c >= 400 && c < 500 && c != 401 && c != 403 && c != 408 && c != 429) {
+          } else if (c == 400 || c == 413 || c == 415 || c == 422) {
+            // 402 = nube suspendida por cuota: NO se descarta, se reintenta.
             // Rechazo definitivo (fila inválida): se descarta para no trabar
             // la cola para siempre.
             lastError = '$tabla $c: ${r.body}';
@@ -656,7 +697,7 @@ class Cloud {
   // Sube una copia COMPRIMIDA (para ver entre dispositivos). El original en
   // máxima calidad se queda en el teléfono y se comparte por WhatsApp.
   // ---------------------------------------------------------------------------
-  static const String _storage = '$url/storage/v1';
+  static String get _storage => '$url/storage/v1';
   static const String bucket = 'osiris';
 
   static String _edSafe() =>

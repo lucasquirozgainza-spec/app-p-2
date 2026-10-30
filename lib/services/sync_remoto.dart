@@ -17,7 +17,7 @@ import 'notifications_service.dart';
 /// - "Datos": listas completas del edificio (propietarios, vehículos...). La
 ///   última publicada manda; un cambio hecho en el celular se publica entero.
 class SyncRemoto {
-  static const version = '12.9';
+  static const version = '12.10';
   static const clases = ['propietarios', 'residentes', 'vehiculos', 'contactos', 'normativas', 'puntos_control', 'recurrentes'];
 
   /// Columnas que viajan por la nube (las fotos locales no viajan).

@@ -139,9 +139,11 @@ class ImgUtil {
     try {
       final b = await FlutterImageCompress.compressWithFile(
         path,
-        minWidth: 1920,
-        minHeight: 1920,
-        quality: 82,
+        // Copia para la nube: ~1600 x 1200 px y calidad 72 (unos 200 KB).
+        // Antes 1920 por el lado CORTO (2560 px, ~800 KB): llenaba la nube.
+        minWidth: 1200,
+        minHeight: 1200,
+        quality: 72,
         keepExif: false,
         autoCorrectionAngle: true,
       );

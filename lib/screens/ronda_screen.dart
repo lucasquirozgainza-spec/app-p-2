@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:geolocator/geolocator.dart';
+import '../services/device_context.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
@@ -32,8 +35,16 @@ class _RondaScreenState extends State<RondaScreen> {
   // Cantidad de fotos obligatorias por ronda (configurable por el admin).
   int get _min => AppState.instance.rondaFotos;
 
+  // RECORRIDO: mientras la pantalla de ronda está abierta se registra el GPS.
+  // A la nube va el recorrido y la ubicación de cada foto (las fotos NO).
+  StreamSubscription<Position>? _gpsSub;
+  final List<Position> _ruta = [];
+  final Map<String, Position> _gpsFoto = {};
+
   @override
   void dispose() {
+    _gpsSub?.cancel();
+    Camara.alTomar = null;
     _obs.dispose();
     super.dispose();
   }
@@ -42,6 +53,81 @@ class _RondaScreenState extends State<RondaScreen> {
   void initState() {
     super.initState();
     _cargarPuntos();
+    _iniciarGps();
+    // cámara nativa: la app queda atrás mientras se toma la foto; al volver
+    // cada foto se pide la ubicación de ese momento.
+    Camara.alTomar = (f) async {
+      try {
+        final p = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high, timeLimit: const Duration(seconds: 8));
+        _gpsFoto[f] = p;
+        if (_ruta.length < 3000) _ruta.add(p);
+      } catch (_) {}
+    };
+  }
+
+  Future<void> _iniciarGps() async {
+    await DeviceContext.gps(); // pide el permiso si hace falta
+    try {
+      _gpsSub = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 4),
+      ).listen((p) {
+        if (_ruta.length < 3000) _ruta.add(p);
+      }, onError: (_) {});
+    } catch (_) {}
+  }
+
+  /// Ubicación de una foto: la tomada al volver de la cámara o, si no, el punto
+  /// del recorrido más cercano en el tiempo (máx. 2 min de diferencia).
+  Map<String, dynamic> _ubicacionFoto(String f, int i) {
+    DateTime? t = Camara.tomadaEn[f];
+    if (t == null) {
+      try { t = File(f).lastModifiedSync(); } catch (_) {}
+    }
+    Position? p = _gpsFoto[f];
+    if (p == null && t != null && _ruta.isNotEmpty) {
+      Position mejor = _ruta.first;
+      for (final x in _ruta) {
+        if ((x.timestamp.difference(t)).abs() < (mejor.timestamp.difference(t)).abs()) mejor = x;
+      }
+      if ((mejor.timestamp.difference(t)).abs() <= const Duration(minutes: 2)) p = mejor;
+    }
+    return {
+      'n': i + 1,
+      if (t != null) 't': t.toUtc().toIso8601String(),
+      if (p != null) 'lat': double.parse(p.latitude.toStringAsFixed(6)),
+      if (p != null) 'lng': double.parse(p.longitude.toStringAsFixed(6)),
+      if (p != null) 'prec': p.accuracy.round(),
+    };
+  }
+
+  /// Recorrido compacto: hasta 120 puntos [lat, lng, segundos desde el inicio].
+  List<List<num>> _rutaCompacta() {
+    final r = [..._ruta]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    if (r.isEmpty) return const [];
+    final paso = (r.length / 120).ceil().clamp(1, 1000);
+    final out = <List<num>>[];
+    for (int i = 0; i < r.length; i += paso) {
+      final p = r[i];
+      out.add([double.parse(p.latitude.toStringAsFixed(6)), double.parse(p.longitude.toStringAsFixed(6)),
+        p.timestamp.difference(_inicio).inSeconds]);
+    }
+    final u = r.last;
+    if (out.isEmpty || out.last[2] != u.timestamp.difference(_inicio).inSeconds) {
+      out.add([double.parse(u.latitude.toStringAsFixed(6)), double.parse(u.longitude.toStringAsFixed(6)),
+        u.timestamp.difference(_inicio).inSeconds]);
+    }
+    return out;
+  }
+
+  int _metrosRecorridos() {
+    final r = [..._ruta]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    double m = 0;
+    for (int i = 1; i < r.length; i++) {
+      final d = Geolocator.distanceBetween(r[i - 1].latitude, r[i - 1].longitude, r[i].latitude, r[i].longitude);
+      if (d < 200) m += d; // saltos raros del GPS no cuentan
+    }
+    return m.round();
   }
 
   Future<void> _cargarPuntos() async {
@@ -169,17 +255,22 @@ class _RondaScreenState extends State<RondaScreen> {
       }
     } catch (_) {}
 
-    // Subida a la nube en SEGUNDO PLANO (no demora el WhatsApp): sube hasta 6
-    // fotos comprimidas para verlas desde otros equipos y publica el evento.
-    final fotosCopia = List<String>.from(_fotos);
+    // A la nube va SOLO el registro de la ronda (hora, guardia, puntos y
+    // cuántas fotos tomó). Las fotos quedan ÚNICAMENTE en este celular
+    // (álbum "OSIRIS Rondas"): así no se llena el espacio de la nube.
     final obsRonda = _obs.text.trim();
     final puntosTxt = _puntos.isNotEmpty ? '${_escaneados.length}/${_puntos.length}' : null;
-    // La ronda queda en la cola AL INSTANTE; las fotos se suben desde ahí.
-    await Cloud.eventoConFotos('Ronda', detalle: {
+    final fotosGps = [for (int i = 0; i < _fotos.length; i++) _ubicacionFoto(_fotos[i], i)];
+    Cloud.evento('Ronda', detalle: {
       if (obsRonda.isNotEmpty) 'observaciones': obsRonda,
-      'fotos': fotosCopia.length,
+      'fotos': _fotos.length,
+      'fotos_en': 'celular',
       if (puntosTxt != null) 'puntos': puntosTxt,
-    }, fotos: fotosCopia, campo: 'fotos_url');
+      'fotos_gps': fotosGps,
+      'ruta': _rutaCompacta(),
+      'ruta_inicio': _inicio.toUtc().toIso8601String(),
+      'recorrido_m': _metrosRecorridos(),
+    });
 
     // Compartir las fotos por WhatsApp en 1 clic, a la resolución máxima.
     final guardia = s.userNombre ?? 'Guardia';

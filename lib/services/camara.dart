@@ -49,6 +49,11 @@ class Camara {
     return dest;
   }
 
+  /// Hora exacta en que se tomó cada foto (rondas: para ubicarla con el GPS).
+  static final Map<String, DateTime> tomadaEn = {};
+  /// Se llama apenas vuelve cada foto de la cámara nativa (rondas: GPS de ese momento).
+  static void Function(String foto)? alTomar;
+
   /// Devuelve las rutas de las fotos tomadas (o null si se canceló).
   static Future<List<String>?> tomar(
     BuildContext context, {
@@ -133,6 +138,7 @@ class Camara {
     if (r == null) return null;
     final fotos = [for (final x in r) if (x != null && '$x'.isNotEmpty) '$x'];
     for (final f in fotos) {
+      try { tomadaEn[f] = File(f).lastModifiedSync(); } catch (_) {} // hora de la toma
       ImgUtil.encolar(f, album: album); // copia a la galería
     }
     return fotos.isEmpty ? null : fotos;
@@ -188,6 +194,8 @@ class Camara {
 
       try {
         final dest = await moverAFotos(x.path);
+        tomadaEn[dest] = DateTime.now();
+        try { alTomar?.call(dest); } catch (_) {}
         fotos.add(dest);
         ImgUtil.encolar(dest, album: album); // segundo plano
       } catch (_) {}

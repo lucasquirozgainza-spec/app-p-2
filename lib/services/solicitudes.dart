@@ -26,6 +26,7 @@ class Solicitud {
   double? montoGuardia; // lo que escribió el guardia
   double? montoFinal; // lo que confirmó supervisión
   String nota = '';
+  double? montoPedido; // lo que pidió el guardia
   bool enviado = true; // false = todavía en la cola del celular
 
   Solicitud({
@@ -40,7 +41,9 @@ class Solicitud {
 
   bool get esAdelanto => clase == 'adelanto';
 
-  String get titulo => esAdelanto ? 'Adelanto' : 'Día libre${fecha.isNotEmpty ? ' · ${Solicitudes.fechaTxt(fecha)}' : ''}';
+  String get titulo => (esAdelanto ? 'Adelanto' : 'Día libre') +
+      (esAdelanto && montoPedido != null ? ' de Bs ${Solicitudes.bs(montoPedido)}' : '') +
+      (fecha.isNotEmpty ? ' · ${Solicitudes.fechaTxt(fecha)}' : '');
 
   String get estadoTxt {
     switch (estado) {
@@ -87,7 +90,8 @@ class Solicitudes {
   // ENVIAR
   // ---------------------------------------------------------------------------
 
-  static Future<void> pedirAdelanto(Quien q, String motivo) => _pedir(q, {'clase': 'adelanto', 'motivo': motivo});
+  static Future<void> pedirAdelanto(Quien q, String motivo, DateTime para, double monto) =>
+      _pedir(q, {'clase': 'adelanto', 'motivo': motivo, 'fecha': DateFormat('yyyy-MM-dd').format(para), 'monto_pedido': monto});
 
   static Future<void> pedirLibre(Quien q, DateTime dia, String motivo) =>
       _pedir(q, {'clase': 'libre', 'fecha': DateFormat('yyyy-MM-dd').format(dia), 'motivo': motivo});
@@ -146,7 +150,7 @@ class Solicitudes {
         cuando: Cloud.horaEvento(e) ?? DateTime.now(),
         motivo: '${d['motivo'] ?? ''}',
         fecha: '${d['fecha'] ?? ''}',
-      );
+      )..montoPedido = double.tryParse('${d['monto_pedido'] ?? ''}');
     }
     // Las que siguen en la cola de este celular.
     final prefs = await SharedPreferences.getInstance();
@@ -170,7 +174,9 @@ class Solicitudes {
           cuando: cuando,
           motivo: '${d['motivo'] ?? ''}',
           fecha: '${d['fecha'] ?? ''}',
-        )..enviado = false);
+        )
+          ..enviado = false
+          ..montoPedido = double.tryParse('${d['monto_pedido'] ?? ''}'));
       } catch (_) {}
     }
     await prefs.setStringList(_pendKey, quedan);
