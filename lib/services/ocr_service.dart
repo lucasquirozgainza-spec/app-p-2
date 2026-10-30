@@ -3,6 +3,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../db/database_helper.dart';
 
 class CarnetData {
   final String? ci;
@@ -52,6 +53,7 @@ class OcrService {
   static Future<String?> leerNumero(String path, {int digitos = 10}) async {
     final rec = TextRecognizer(script: TextRecognitionScript.latin);
     final votos = <String, double>{};
+    final parciales = <String>{}; // números con un dígito de menos (se completan con las tarjetas conocidas)
     try {
       for (final grados in const [0, 90, 270]) {
         final String? rutaRot = grados == 0 ? path : await _rotada(path, grados);
@@ -67,6 +69,9 @@ class OcrService {
           }
           for (final b in r.blocks) {
             for (final l in b.lines) {
+              for (final m in RegExp(r'(?<!\d)\d{' '${digitos - 1}' r'}(?!\d)').allMatches(l.text.replaceAll(RegExp(r'(?<=\d)[ \-.](?=\d)'), ''))) {
+                parciales.add(m.group(0)!);
+              }
               for (final c in candidatosTarjeta(l.text, digitos)) {
                 final peso = (c.exacto ? 2.0 : 1.0) * (0.5 + l.boundingBox.height / alto);
                 votos[c.numero] = (votos[c.numero] ?? 0) + peso;
@@ -85,9 +90,72 @@ class OcrService {
     } finally {
       await rec.close();
     }
-    if (votos.isEmpty) return null;
     final l = votos.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-    return l.first.key;
+    // Las tarjetas de un edificio se repiten: si lo leído se parece mucho a una
+    // tarjeta ya registrada (un solo dígito distinto), se usa esa.
+    try {
+      final db = await DB.instance.database;
+      final rows = await db.rawQuery(
+          'SELECT DISTINCT tarjeta_num AS n FROM visitas WHERE tarjeta_num IS NOT NULL AND length(tarjeta_num) = ? ORDER BY id DESC LIMIT 800',
+          [digitos]);
+      final conocidas = rows.map((r) => '${r['n']}').where((x) => RegExp(r'^\d+$').hasMatch(x)).toList();
+      if (l.isNotEmpty) {
+        final aj = ajustarAConocida(l.first.key, conocidas);
+        if (aj != null) return aj;
+      } else {
+        // solo se leyó parte del número: si una sola tarjeta conocida lo contiene, es esa
+        final opciones = <String>{};
+        for (final p in parciales) {
+          for (final k in conocidas) {
+            if (k.startsWith(p) || k.endsWith(p)) opciones.add(k);
+          }
+        }
+        if (opciones.length == 1) return opciones.first;
+      }
+    } catch (_) {}
+    return l.isEmpty ? null : l.first.key;
+  }
+
+  /// Tarjeta registrada más parecida (1 dígito distinto y sin empate).
+  static String? ajustarAConocida(String n, List<String> conocidas) {
+    if (conocidas.contains(n)) return n;
+    String? mejor;
+    var dMin = 2, empate = false;
+    for (final k in conocidas.toSet()) {
+      if (k.length != n.length) continue;
+      var d = 0;
+      for (var i = 0; i < n.length && d < 2; i++) {
+        if (n[i] != k[i]) d++;
+      }
+      if (d < dMin) {
+        dMin = d;
+        mejor = k;
+        empate = false;
+      } else if (d == dMin) {
+        empate = true;
+      }
+    }
+    return (mejor != null && !empate && dMin <= 1) ? mejor : null;
+  }
+
+  /// Líneas con SERIE / SECCIÓN (carnet nuevo): esos números NO son el CI.
+  static String _sinSerie(String texto) {
+    final ls = texto.split('\n');
+    final out = <String>[];
+    var saltar = 0;
+    for (final l in ls) {
+      final u = l.toUpperCase();
+      if (RegExp(r'SERIE|SECCI').hasMatch(u)) {
+        saltar = RegExp(r'\d{4,}').hasMatch(u) ? 0 : 1; // el número puede venir en la línea de abajo
+        continue;
+      }
+      if (saltar > 0) {
+        saltar--;
+        if (RegExp(r'^[\s\dOIl:.]+$').hasMatch(l)) continue;
+      }
+      out.add(l);
+    }
+    return out.join('\n');
   }
 
   static const _letraDigito = {
@@ -144,7 +212,8 @@ class OcrService {
   static CarnetData parseDosLados(String frente, String reverso) {
     // Número: MRZ (cualquier lado) → etiqueta "N°" del frente → número suelto
     // del frente. Nunca un número suelto del reverso (fechas, series).
-    final ci = _ciMrz(frente) ?? _ciMrz(reverso) ?? _ciEtiqueta(frente) ?? _ciSuelto(frente);
+    final fr = _sinSerie(frente), rv = _sinSerie(reverso);
+    final ci = _ciMrz(frente) ?? _ciMrz(reverso) ?? _ciEtiqueta(fr) ?? _ciEtiqueta(rv) ?? _ciSuelto(fr);
     // Nombre: MRZ (lo más seguro) mejorada con las etiquetas (tildes, Ñ,
     // nombres completos) → "pertenecen a:" (antiguo).
     final mrz = _nombreMrz(frente) ?? _nombreMrz(reverso);
@@ -308,7 +377,7 @@ class OcrService {
   /// solo dentro de ese número y si casi todo ya son dígitos.
   static String? _ciEtiqueta(String texto) {
     final up = texto.toUpperCase();
-    final m = RegExp(r'\bN(?:RO|O|°|º|\.)?\s*[°º\.:]?\s*([0-9OILSB]{5,11})(?![0-9])').firstMatch(up);
+    final m = RegExp(r'(?<![A-ZÁÉÍÓÚÑÜ0-9])N(?:RO|O|°|º|\.)?\s*[°º\.:]?\s*([0-9OILSB]{5,11})(?![0-9])').firstMatch(up);
     if (m == null) return null;
     // Quitar letras finales pegadas (extensión LP, SC, CB, BE...).
     final raw = m.group(1)!.replaceFirst(RegExp(r'[^0-9]+$'), '');
