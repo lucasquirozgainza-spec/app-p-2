@@ -135,15 +135,27 @@ class ImgUtil {
 
   /// Copia para la NUBE (verla desde otros celulares): 1920 px y buena
   /// calidad, para que se lean placas, documentos y detalles. Nativa.
-  static Future<Uint8List?> miniaturaNube(String path) async {
+  /// COPIA PARA LA NUBE según lo que es la foto (la original queda en el celular):
+  /// - 'doc'       carnet anverso/reverso: legible para leer y certificar (WebP ~1600 px, q82)
+  /// - 'tarjeta'   tarjeta de acceso: el número bien legible (WebP ~1200 px, q80)
+  /// - 'evidencia' incidentes, encomiendas, hospedajes: (WebP ~1280 px, q76)
+  /// - 'registro'  selfie de ingreso de turno: (WebP ~720 px, q70)
+  /// WebP pesa ~35 % menos que JPEG con la misma nitidez de texto.
+  static const Map<String, List<int>> calidades = {
+    'doc': [1200, 82],
+    'tarjeta': [900, 80],
+    'evidencia': [960, 76],
+    'registro': [540, 70],
+  };
+  static Future<Uint8List?> miniaturaNube(String path, {String cal = 'evidencia'}) async {
+    final c = calidades[cal] ?? calidades['evidencia']!;
     try {
       final b = await FlutterImageCompress.compressWithFile(
         path,
-        // Copia para la nube: ~1600 x 1200 px y calidad 72 (unos 200 KB).
-        // Antes 1920 por el lado CORTO (2560 px, ~800 KB): llenaba la nube.
-        minWidth: 1200,
-        minHeight: 1200,
-        quality: 72,
+        minWidth: c[0],
+        minHeight: c[0],
+        quality: c[1],
+        format: CompressFormat.webp,
         keepExif: false,
         autoCorrectionAngle: true,
       );

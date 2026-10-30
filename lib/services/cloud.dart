@@ -190,9 +190,17 @@ class Cloud {
   static Future<void> eventoConFotos(String tipo,
       {String? guardia, String? edificio, Map<String, dynamic>? detalle,
       List<String?> fotos = const [], String campo = 'foto_url', String sufijo = '', int max = 6,
-      bool soloSiHayFoto = false}) async {
+      bool soloSiHayFoto = false, List<String>? calidades, List<String>? etiquetas}) async {
     if (AppState.instance.soloLocal) return;
-    final locales = fotos.whereType<String>().where((f) => f.isNotEmpty).take(max).toList();
+    // calidad y etiqueta de cada foto (se descartan las que vienen vacías)
+    final locales = <String>[], cals = <String>[], etis = <String>[];
+    for (int i = 0; i < fotos.length && locales.length < max; i++) {
+      final f = fotos[i];
+      if (f == null || f.isEmpty) continue;
+      locales.add(f);
+      cals.add(calidades != null && i < calidades.length ? calidades[i] : 'evidencia');
+      etis.add(etiquetas != null && i < etiquetas.length ? etiquetas[i] : '');
+    }
     if (soloSiHayFoto && locales.isEmpty) return;
     final ed = edificio ?? AppState.instance.edificioId;
     final ci = AppState.instance.guardCi;
@@ -205,7 +213,7 @@ class Cloud {
         ...(detalle ?? const {}),
         if (AppState.instance.bloque.isNotEmpty) 'bloque': AppState.instance.bloque,
       },
-      if (locales.isNotEmpty) '_fotos': {'rutas': locales, 'campo': campo, 'sufijo': sufijo},
+      if (locales.isNotEmpty) '_fotos': {'rutas': locales, 'campo': campo, 'sufijo': sufijo, 'cals': cals, 'etis': etis},
     });
   }
 
@@ -218,10 +226,13 @@ class Cloud {
     final rutas = List<String>.from((f['rutas'] as List?) ?? const []);
     final campo = (f['campo'] as String?) ?? 'foto_url';
     final sufijo = (f['sufijo'] as String?) ?? '';
-    final urls = <String>[];
+    final cals = List<String>.from((f['cals'] as List?) ?? const []);
+    final etis = List<String>.from((f['etis'] as List?) ?? const []);
+    final urls = <String>[], tipos = <String>[];
     for (int i = 0; i < rutas.length; i++) {
       if (!await File(rutas[i]).exists()) continue; // foto borrada: el evento va igual
-      final u = await subirFoto(rutas[i], sufijo: rutas.length > 1 ? '${sufijo}_$i' : sufijo);
+      final u = await subirFoto(rutas[i], sufijo: rutas.length > 1 ? '${sufijo}_$i' : sufijo,
+          cal: i < cals.length ? cals[i] : 'evidencia');
       if (u == null) {
         // Sin señal: se reintenta luego. Tras muchos intentos, el evento sale
         // igual sin esa foto para no trabar la cola.
@@ -229,8 +240,10 @@ class Cloud {
         continue;
       }
       urls.add(u);
+      tipos.add(i < etis.length ? etis[i] : '');
     }
     final det = Map<String, dynamic>.from((m['detalle'] as Map?) ?? const {});
+    if (tipos.any((t) => t.isNotEmpty)) det['fotos_tipo'] = tipos;
     if (urls.isNotEmpty) {
       if (campo == 'fotos_url') {
         det['fotos_url'] = urls;
@@ -746,7 +759,7 @@ class Cloud {
   }
 
   /// Sube UNA foto comprimida y devuelve su URL pública (o null si falla).
-  static Future<String?> subirFoto(String path, {String sufijo = ''}) async {
+  static Future<String?> subirFoto(String path, {String sufijo = '', String cal = 'evidencia'}) async {
     if (AppState.instance.soloLocal) return null; // edificio sin conexión
     try {
       // Si la foto aún se está enderezando en la cola, esperar (tope corto).
@@ -756,15 +769,16 @@ class Cloud {
       final f = File(path);
       if (!await f.exists()) return null;
       // Miniatura NATIVA (rápida, poca memoria). Respaldo: Dart en isolate.
-      Uint8List? small = await ImgUtil.miniaturaNube(path);
+      Uint8List? small = await ImgUtil.miniaturaNube(path, cal: cal);
+      var webp = small != null;
       if (small == null) {
         final raw = await f.readAsBytes();
         small = await compute(_comprimirFotoBytes, raw) ?? raw;
       }
-      final name = '${_edSafe()}/${DateTime.now().millisecondsSinceEpoch}_$deviceId$sufijo.jpg';
+      final name = '${_edSafe()}/${DateTime.now().millisecondsSinceEpoch}_$deviceId$sufijo.${webp ? 'webp' : 'jpg'}';
       final r = await http
           .post(Uri.parse('$_storage/object/$bucket/$name'),
-              headers: {'apikey': anonKey, 'Content-Type': 'image/jpeg', 'x-upsert': 'true'},
+              headers: {'apikey': anonKey, 'Content-Type': webp ? 'image/webp' : 'image/jpeg', 'x-upsert': 'true'},
               body: small)
           .timeout(const Duration(seconds: 30));
       if (r.statusCode >= 300) {
@@ -793,6 +807,20 @@ class Cloud {
     try {
       final ed = _edSafe();
       final corte = DateTime.now().subtract(Duration(days: dias)).millisecondsSinceEpoch;
+      final corteDuro = DateTime.now().subtract(Duration(days: dias + 30)).millisecondsSinceEpoch;
+      // Meses ya respaldados desde el monitor (Respaldo y espacio): 'yyyy-MM'
+      final respaldados = <String>{};
+      try {
+        final rs = await leer('eventos?select=detalle&tipo=eq.Config&edificio=eq.__monitor__&detalle->>clase=eq.respaldo&limit=500');
+        for (final e in rs) {
+          final d = e['detalle'];
+          if (d is Map && d['mes'] != null) respaldados.add('${d['mes']}');
+        }
+      } catch (_) {}
+      String mesDe(int ms) {
+        final t = DateTime.fromMillisecondsSinceEpoch(ms);
+        return '${t.year}-${t.month.toString().padLeft(2, '0')}';
+      }
       final r = await http
           .post(Uri.parse('$_storage/object/list/$bucket'),
               headers: _hAnon,
@@ -804,7 +832,7 @@ class Cloud {
       for (final it in items) {
         final n = (it is Map ? it['name']?.toString() : null) ?? '';
         final millis = int.tryParse(n.split('_').first) ?? 0;
-        if (millis > 0 && millis < corte) viejos.add('$ed/$n');
+        if (millis > 0 && (millis < corteDuro || (millis < corte && respaldados.contains(mesDe(millis))))) viejos.add('$ed/$n');
       }
       await _borrarObjetos(viejos);
     } catch (e) {

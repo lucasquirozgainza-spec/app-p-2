@@ -45,14 +45,75 @@ class OcrService {
   }
 
   /// Número de la tarjeta de acceso ([digitos] configurable por edificio).
+  /// Se lee varias veces (derecha y girada) y se vota; dentro de un bloque casi
+  /// todo de dígitos se corrigen las letras que se confunden (O→0, I/l→1, S→5,
+  /// B→8, Z→2, G→6). Entre candidatos, gana el impreso más grande (el número
+  /// de la tarjeta suele ser lo más grande; teléfonos y series son chicos).
   static Future<String?> leerNumero(String path, {int digitos = 10}) async {
-    final texto = await leerTexto(path);
-    final limpio = texto.replaceAll(RegExp(r'(?<=\d)[ \-](?=\d)'), '');
-    final exacto = RegExp(r'(?<!\d)(\d{' '$digitos' r'})(?!\d)').firstMatch(limpio);
-    if (exacto != null) return exacto.group(1);
-    final larga = RegExp(r'\d{' '$digitos' r',}').firstMatch(limpio);
-    if (larga != null) return larga.group(0)!.substring(0, digitos);
-    return null;
+    final rec = TextRecognizer(script: TextRecognitionScript.latin);
+    final votos = <String, double>{};
+    try {
+      for (final grados in const [0, 90, 270]) {
+        final String? rutaRot = grados == 0 ? path : await _rotada(path, grados);
+        if (rutaRot == null) continue;
+        final String ruta = rutaRot;
+        try {
+          final r = await rec.processImage(InputImage.fromFilePath(ruta));
+          double alto = 1;
+          for (final b in r.blocks) {
+            for (final l in b.lines) {
+              if (l.boundingBox.height > alto) alto = l.boundingBox.height;
+            }
+          }
+          for (final b in r.blocks) {
+            for (final l in b.lines) {
+              for (final c in candidatosTarjeta(l.text, digitos)) {
+                final peso = (c.exacto ? 2.0 : 1.0) * (0.5 + l.boundingBox.height / alto);
+                votos[c.numero] = (votos[c.numero] ?? 0) + peso;
+              }
+            }
+          }
+        } catch (_) {
+        } finally {
+          if (grados != 0) {
+            try { await File(ruta).delete(); } catch (_) {}
+          }
+        }
+        // con una lectura exacta y clara en la foto derecha, no hace falta girar
+        if (votos.values.any((v) => v >= 2.5)) break;
+      }
+    } finally {
+      await rec.close();
+    }
+    if (votos.isEmpty) return null;
+    final l = votos.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    return l.first.key;
+  }
+
+  static const _letraDigito = {
+    'O': '0', 'o': '0', 'D': '0', 'Q': '0', 'I': '1', 'l': '1', '|': '1', '!': '1', 'i': '1',
+    'S': '5', 's': '5', 'B': '8', 'Z': '2', 'z': '2', 'G': '6', 'b': '6',
+  };
+
+  /// Candidatos de número de tarjeta dentro de un texto (una línea o varias).
+  static List<({String numero, bool exacto})> candidatosTarjeta(String texto, int digitos) {
+    final out = <({String numero, bool exacto})>[];
+    for (final linea in texto.split('\n')) {
+      final l = linea.replaceAllMapped(
+          RegExp(r'([0-9OIlSBZG|])[ \-.](?=[0-9OIlSBZG|])'), (m) => m.group(1)!);
+      for (final bloque in l.split(RegExp(r'[^0-9A-Za-z|!]+'))) {
+        if (bloque.length < digitos) continue;
+        final nd = RegExp(r'\d').allMatches(bloque).length;
+        if (nd < digitos - 2 || nd < bloque.length * 0.7) continue;
+        final fijo = bloque.split('').map((c) => RegExp(r'\d').hasMatch(c) ? c : (_letraDigito[c] ?? '')).join();
+        if (fijo.length == digitos) {
+          out.add((numero: fijo, exacto: nd == digitos && bloque.length == digitos));
+        } else if (fijo.length > digitos && nd == bloque.length) {
+          out.add((numero: fijo.substring(0, digitos), exacto: false));
+        }
+      }
+    }
+    return out;
   }
 
   /// Placa boliviana: 3-4 dígitos + 3 letras (o al revés).
@@ -84,14 +145,40 @@ class OcrService {
     // Número: MRZ (cualquier lado) → etiqueta "N°" del frente → número suelto
     // del frente. Nunca un número suelto del reverso (fechas, series).
     final ci = _ciMrz(frente) ?? _ciMrz(reverso) ?? _ciEtiqueta(frente) ?? _ciSuelto(frente);
-    // Nombre: MRZ → etiquetas (nuevo) → "pertenecen a:" (antiguo).
-    final nombre = _nombreMrz(frente) ??
-        _nombreMrz(reverso) ??
-        _nombreEtiquetas(frente) ??
-        _nombreAntiguo(reverso) ??
-        _nombreAntiguo(frente) ??
-        _nombreEtiquetas(reverso);
+    // Nombre: MRZ (lo más seguro) mejorada con las etiquetas (tildes, Ñ,
+    // nombres completos) → "pertenecen a:" (antiguo).
+    final mrz = _nombreMrz(frente) ?? _nombreMrz(reverso);
+    final et = _nombreEtiquetas(frente) ?? _nombreEtiquetas(reverso);
+    final nombre = mejorNombre(mrz, et) ?? _nombreAntiguo(reverso) ?? _nombreAntiguo(frente);
     return CarnetData(ci, nombre);
+  }
+
+  static String _sinTilde(String x) {
+    const de = 'ÁÉÍÓÚÜÑáéíóúüñ', a = 'AEIOUUNaeiouun';
+    final b = StringBuffer();
+    for (final c in x.split('')) {
+      final i = de.indexOf(c);
+      b.write(i >= 0 ? a[i] : c);
+    }
+    return b.toString().toUpperCase();
+  }
+
+  /// La MRZ no lleva tildes ni Ñ y a veces viene cortada: si las etiquetas
+  /// dicen lo mismo (o lo mismo y más), se usa la versión de las etiquetas.
+  static String? mejorNombre(String? mrz, String? et) {
+    if (mrz == null) return et;
+    if (et == null) return mrz;
+    final a = _sinTilde(mrz).split(' '), b = _sinTilde(et).split(' ');
+    if (a.join(' ') == b.join(' ')) return et;
+    if (a.length < b.length && a.every(b.contains)) return et;
+    if (a.length == b.length) {
+      var ok = true;
+      for (var k = 0; k < a.length; k++) {
+        if (!b[k].startsWith(a[k])) ok = false;
+      }
+      if (ok) return et;
+    }
+    return mrz;
   }
 
   /// Carnet leído desde un texto ya reconocido (uno o ambos lados juntos).
@@ -138,17 +225,83 @@ class OcrService {
 
   /// CI desde la MRZ: "IDBOL1234567<..." / "I<BOL1234567...".
   static String? _ciMrz(String texto) {
+    String? suelto;
     for (final l in texto.split('\n')) {
       final u = _normMrz(l);
+      final v = _ciMrzControl(u);
+      if (v != null) return v;
+      if (suelto != null) continue;
       final m = RegExp(r'BOL<?([0-9O]{5,9})(?![0-9O])').firstMatch(u);
       if (m == null) continue;
       final raw = m.group(1)!;
       final digitos = raw.replaceAll(RegExp(r'[^0-9]'), '').length;
       if (digitos < raw.length - 1) continue; // demasiadas letras: no confiable
       final n = raw.replaceAll('O', '0');
-      if (n.length >= 5) return n;
+      if (n.length >= 5) suelto = n;
     }
-    return null;
+    return suelto;
+  }
+
+  static const _aDigMrz = {'O': '0', 'D': '0', 'Q': '0', 'U': '0', 'I': '1', 'L': '1', 'T': '1', 'S': '5', 'B': '8', 'Z': '2', 'G': '6', 'A': '4'};
+
+  /// Dígito de control ICAO (pesos 7-3-1); -1 si hay un carácter inválido.
+  static int _control(String campo) {
+    var s = 0;
+    const w = [7, 3, 1];
+    for (var i = 0; i < campo.length; i++) {
+      final c = campo.codeUnitAt(i);
+      int v;
+      if (c == 60) {
+        v = 0; // '<'
+      } else if (c >= 48 && c <= 57) {
+        v = c - 48;
+      } else if (c >= 65 && c <= 90) {
+        v = c - 55;
+      } else {
+        return -1;
+      }
+      s += v * w[i % 3];
+    }
+    return s % 10;
+  }
+
+  /// Número de la MRZ confirmado con su dígito de control. Corrige letras
+  /// confundidas y, si sigue sin cuadrar, prueba UN dígito mal leído (6↔8,
+  /// 1↔7...) solo si una única corrección cuadra.
+  static String? _ciMrzControl(String u) {
+    final i = u.indexOf('BOL');
+    if (i < 0 || u.length < i + 13) return null;
+    final campo = u.substring(i + 3, i + 12), cd = u[i + 12];
+    final cdS = RegExp(r'\d').hasMatch(cd) ? cd : _aDigMrz[cd];
+    if (cdS == null) return null;
+    final cdv = int.parse(cdS);
+    final base = campo.replaceFirst(RegExp(r'<+$'), '');
+    if (base.length < 5) return null;
+    var letras = 0;
+    final b = StringBuffer();
+    for (final c in base.split('')) {
+      if (RegExp(r'\d').hasMatch(c)) {
+        b.write(c);
+      } else {
+        final d = _aDigMrz[c];
+        if (d == null) return null;
+        letras++;
+        b.write(d);
+      }
+    }
+    if (letras > 2) return null;
+    final n = b.toString();
+    if (_control(n.padRight(9, '<')) == cdv) return n;
+    const vec = {'0': '86', '1': '7', '3': '8', '5': '6', '6': '58', '7': '1', '8': '063', '9': '4'};
+    final ok = <String>[];
+    for (var k = 0; k < n.length; k++) {
+      for (final r in (vec[n[k]] ?? '').split('')) {
+        if (r.isEmpty) continue;
+        final v = n.substring(0, k) + r + n.substring(k + 1);
+        if (_control(v.padRight(9, '<')) == cdv) ok.add(v);
+      }
+    }
+    return ok.length == 1 ? ok.first : null;
   }
 
   /// CI tras la etiqueta "N°", "No.", "Nro". Corrige O→0, I/l→1, S→5, B→8
