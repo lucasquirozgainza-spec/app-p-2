@@ -50,7 +50,7 @@ Future<TarjetaEntregada?> pedirTarjetaRecurrente(BuildContext context, String no
           content: Row(children: [CircularProgressIndicator(), SizedBox(width: 16), Expanded(child: Text('Leyendo el número…'))])));
   String? leido;
   try {
-    leido = await OcrService.leerNumero(foto, digitos: dig).timeout(const Duration(seconds: 12));
+    leido = await OcrService.leerNumero(foto, digitos: dig).timeout(const Duration(seconds: 20));
   } catch (_) {}
   if (!context.mounted) return null;
   Navigator.pop(context); // cierra "Leyendo…"
