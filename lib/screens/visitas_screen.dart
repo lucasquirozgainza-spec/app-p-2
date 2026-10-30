@@ -442,8 +442,8 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
       if (tarjeta.numero.isNotEmpty) 'tarjeta': tarjeta.numero,
       'ts': DateTime.now().toUtc().toIso8601String(),
     };
-    final fotoTarjeta = tarjeta.foto;
-    await Cloud.eventoConFotos('Visita', detalle: det, fotos: [fotoTarjeta]);
+    // Tarjeta de control de visita recurrente: el número va como texto; la foto queda en el celular.
+    await Cloud.eventoConFotos('Visita', detalle: det);
     if (!mounted) return;
     TopToast.show(context, 'Ingreso de ${r['nombre']}');
     Navigator.pop(context);
@@ -731,7 +731,8 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
     });
     await Audit.log('CREAR', 'visitas', '$id', detalle: _nombre.text);
     // Todo lo lento (GPS, dispositivo, subir foto, evento) en SEGUNDO PLANO.
-    final fotoNube = _carnetAnverso ?? _fotoTarjeta ?? _carnetReverso;
+    // A la nube: carnet anverso y reverso (legibles para certificar) y la tarjeta.
+    final fotosNube = [_carnetAnverso, _carnetReverso, _fotoTarjeta];
     final det = {
       'ref': '${Cloud.deviceId}_v$id', // une este ingreso con SU salida
       'nombre': _nombre.text.trim(),
@@ -751,7 +752,8 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
             where: 'id=?', whereArgs: [id]);
       } catch (_) {}
     }();
-    await Cloud.eventoConFotos('Visita', detalle: det, fotos: [fotoNube]);
+    await Cloud.eventoConFotos('Visita', detalle: det, fotos: fotosNube, campo: 'fotos_url',
+        calidades: const ['doc', 'doc', 'tarjeta'], etiquetas: const ['anverso', 'reverso', 'tarjeta']);
 
     // Visitantes adicionales: cada uno se guarda como su propia visita (con su
     // carnet) para que tenga registro único en el historial.
@@ -773,14 +775,14 @@ class _VisitaFormScreenState extends State<VisitaFormScreen> {
         'edificio': s.edificioId,
         'created_at': DateTime.now().toIso8601String(),
       });
-      final fotoA = a.fotos.isNotEmpty ? a.fotos.first : null;
+      final fotosA = [a.fotos.isNotEmpty ? a.fotos[0] : null, a.fotos.length > 1 ? a.fotos[1] : null];
       final nombreA = a.nombre.text.trim();
       final ciA = a.ci.text.trim();
       final deptoA = _depto.text.trim();
       await Cloud.eventoConFotos('Visita', detalle: {
         'ref': '${Cloud.deviceId}_v$aid',
         'nombre': nombreA, 'ci': ciA, 'depto': deptoA, 'motivo': 'acompañante',
-      }, fotos: [fotoA]);
+      }, fotos: fotosA, campo: 'fotos_url', calidades: const ['doc', 'doc'], etiquetas: const ['anverso', 'reverso']);
       await Audit.log('CREAR', 'visitas', '$aid', detalle: nombreA);
     }
 

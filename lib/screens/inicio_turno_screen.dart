@@ -277,7 +277,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     final refTurno = Turnos.ref(Cloud.deviceId, id);
     await Cloud.eventoConFotos('Foto de turno',
         guardia: nombre, detalle: {'turno_ref': refTurno, 'momento': 'ingreso'},
-        fotos: [fotoTurno], sufijo: '_ingreso', soloSiHayFoto: true);
+        fotos: [fotoTurno], sufijo: '_ingreso', soloSiHayFoto: true, calidades: const ['registro']);
     if (!mounted) return;
     Navigator.pop(context);
   }

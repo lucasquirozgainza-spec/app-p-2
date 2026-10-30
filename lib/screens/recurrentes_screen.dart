@@ -101,8 +101,8 @@ class _RecurrentesScreenState extends State<RecurrentesScreen> {
         if (tarjeta.numero.isNotEmpty) 'tarjeta': tarjeta.numero,
         'ts': DateTime.now().toUtc().toIso8601String(),
       };
-      final fotoTarjeta = tarjeta.foto;
-      await Cloud.eventoConFotos('Visita', detalle: det, fotos: [fotoTarjeta]);
+      // Tarjeta de control de visita recurrente: el número va como texto; la foto queda en el celular.
+      await Cloud.eventoConFotos('Visita', detalle: det);
       if (mounted) {
         TopToast.show(context, 'Ingreso de ${r['nombre']}${deptoOverride != null ? ' a depto $depto' : ''}'
             '${tarjeta.numero.isNotEmpty ? ' · tarjeta ${tarjeta.numero}' : ''}');

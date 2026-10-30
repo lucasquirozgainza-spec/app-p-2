@@ -317,7 +317,7 @@ class _HospedajeFormState extends State<HospedajeForm> {
       'noches': '$_n',
       'huespedes': '${_huespedes.length}',
     };
-    await Cloud.eventoConFotos('Hospedaje', detalle: det, fotos: [fotoNube]);
+    await Cloud.eventoConFotos('Hospedaje', detalle: det, fotos: [fotoNube], calidades: const ['doc'], etiquetas: const ['documento']);
     if (!mounted) return;
     Navigator.pop(context);
   }

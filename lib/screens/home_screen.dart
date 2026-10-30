@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'mis_fotos_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/sync_remoto.dart';
@@ -468,6 +469,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // El menú NO repite lo que ya está en la pantalla principal
           // (turno, visitas, rondas, incidentes, encomiendas...).
           item(Icons.contact_phone, 'Contactos', const ContactosScreen(), color: const Color(0xFF00838F)),
+          item(Icons.photo_library, 'Mis fotos (para WhatsApp)', const MisFotosScreen(), color: const Color(0xFF6A1B9A)),
           item(Icons.picture_as_pdf, 'Normativas', const NormativasScreen(), color: const Color(0xFF37474F), show: s.modulo('normativas')),
           // Administrador: siempre del edificio elegido en Configuración.
           if (s.isAdmin) ...[

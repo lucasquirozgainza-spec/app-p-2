@@ -10,6 +10,7 @@ import '../theme.dart';
 import '../widgets/toast.dart';
 import '../widgets/photo_field.dart';
 import '../widgets/common.dart';
+import '../widgets/firma_pad.dart';
 
 /// Salida de turno: se selecciona el guardia que está saliendo (de los que
 /// tienen turno activo), foto obligatoria y novedades.
@@ -24,6 +25,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
   List<Map<String, dynamic>> _activos = [];
   Map<String, dynamic>? _sel;
   String? _foto;
+  String? _firma; // trazos de la firma del guardia que sale
   bool _saving = false;
 
   @override
@@ -152,7 +154,7 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
   Future<void> _finalizar() async {
     if (_saving) return; // doble toque
     if (_sel == null) return _snack('Selecciona el guardia que sale');
-    if (_foto == null) return _snack('La foto de salida es obligatoria');
+    if (_firma == null) return _snack('Firma en el panel para finalizar tu turno');
     setState(() => _saving = true);
     try {
       await _registrarSalida();
@@ -206,6 +208,8 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
           'turno_ref': Turnos.ref(Cloud.deviceId, sel['id']),
           'ts': ahora.toUtc().toIso8601String(),
           'observaciones': _obs.text,
+          // Firma de cierre de la jornada (sale en el informe mensual con su nombre y hora)
+          if (_firma != null) 'firma': _firma,
         });
     () async {
       try {
@@ -213,14 +217,8 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
         await Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
       } catch (_) {}
     }();
-    // Foto de la salida a la nube (segundo plano), unida al turno.
-    final fotoSalida = _foto;
-    final refSalida = Turnos.ref(Cloud.deviceId, sel['id']);
-    final nombreSalida = sel['guardia_nombre'] as String?;
-    final edSalida = _edificioDe(sel);
-    await Cloud.eventoConFotos('Foto de turno', guardia: nombreSalida, edificio: edSalida,
-        detalle: {'turno_ref': refSalida, 'momento': 'salida'},
-        fotos: [fotoSalida], sufijo: '_salida', soloSiHayFoto: true);
+    // La foto de salida queda solo en el celular: a la nube va la firma (en el evento de salida).
+
 
     // Advertencia: tarjetas de visita que NO fueron devueltas.
     final pend = await db.query('visitas',
@@ -342,7 +340,15 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
           const SizedBox(height: 16),
           const Text('Salida', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
-          PhotoField(label: 'Foto de salida', obligatoria: true, rapida: true, frontal: true, album: 'OSIRIS Turnos', onChanged: (v) => setState(() => _foto = v)),
+          const Text('Firma del guardia', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          const Text('Con tu firma confirmas lo registrado en tu turno. Si sale mal, bórrala y firma de nuevo.',
+              style: TextStyle(fontSize: 12.5, color: Colors.black54)),
+          const SizedBox(height: 8),
+          FirmaPad(onChanged: (v) => setState(() => _firma = v)),
+          const SizedBox(height: 8),
+          // Foto de salida: opcional y solo en el celular (no se sube a la nube).
+          PhotoField(label: 'Foto de salida (opcional, queda en el celular)', obligatoria: false, rapida: true, frontal: true, album: 'OSIRIS Turnos', onChanged: (v) => setState(() => _foto = v)),
           Row(children: [
             Expanded(child: LockedField(label: 'Fecha', value: DateFormat('dd/MM/yyyy').format(_ahora), icon: Icons.calendar_today)),
             const SizedBox(width: 10),
