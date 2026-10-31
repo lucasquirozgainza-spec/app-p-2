@@ -91,10 +91,14 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
                               backgroundColor: const Color(0x1A283593),
                               backgroundImage: tieneFoto ? ResizeImage(FileImage(File(foto)), width: 120) : null,
                               child: tieneFoto ? null : const Icon(Icons.directions_car, color: Color(0xFF283593))),
-                          title: Text(depto.isNotEmpty ? 'Depto $depto' : 'Sin depto',
+                          title: Text(
+                              [
+                                if ((v['nro_parqueo']?.toString() ?? '').isNotEmpty) 'Parqueo ${v['nro_parqueo']}',
+                                depto.isNotEmpty ? 'Depto $depto' : 'Sin depto',
+                              ].join(' · '),
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text([
-                            placa.isNotEmpty ? 'Placa $placa' : null,
+                            placa.isNotEmpty ? 'Placa $placa' : 'Sin vehículo registrado',
                             v['vehiculo'], v['marca'], v['color'], v['propietario'],
                           ].where((e) => e != null && e.toString().trim().isNotEmpty).join(' · ')),
                           onTap: () async {
@@ -129,7 +133,8 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
 
 class VehiculoForm extends StatefulWidget {
   final Map<String, dynamic>? existente;
-  const VehiculoForm({super.key, this.existente});
+  final String? depto, parqueo; // para agregar otro vehículo al depto o al mismo parqueo
+  const VehiculoForm({super.key, this.existente, this.depto, this.parqueo});
   @override
   State<VehiculoForm> createState() => _VehiculoFormState();
 }
@@ -149,6 +154,8 @@ class _VehiculoFormState extends State<VehiculoForm> {
 
   bool get _editando => widget.existente != null;
   String _de = 'propietario'; // de quién es: propietario | inquilino | otro
+  static const _tipos = ['Auto', 'Moto', 'Camioneta', 'Otro'];
+  String _tipo = 'Auto';
 
   /// Completa nombre y celular con el propietario o el inquilino del depto.
   Future<void> _autocompletar() async {
@@ -186,7 +193,16 @@ class _VehiculoFormState extends State<VehiculoForm> {
   void initState() {
     super.initState();
     final e = widget.existente;
+    if (e == null) {
+      _depto.text = widget.depto ?? '';
+      _parqueo.text = widget.parqueo ?? '';
+      if (_depto.text.isNotEmpty) WidgetsBinding.instance.addPostFrameCallback((_) => _autocompletar());
+    }
     if (e != null) {
+      final veh = e['vehiculo']?.toString() ?? '';
+      for (final t in _tipos) {
+        if (veh.startsWith(t)) _tipo = t;
+      }
       _placa.text = e['placa']?.toString() ?? '';
       _marca.text = e['marca']?.toString() ?? '';
       _modelo.text = e['modelo']?.toString() ?? '';
@@ -235,7 +251,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
       'marca': _marca.text,
       'modelo': _modelo.text,
       'color': _color.text,
-      'vehiculo': [_marca.text, _modelo.text].where((e) => e.isNotEmpty).join(' '),
+      'vehiculo': [_tipo, _marca.text, _modelo.text].where((e) => e.isNotEmpty).join(' '),
       'depto': _depto.text,
       'propietario': _prop.text.trim().isEmpty || _de == 'propietario' ? _prop.text.trim() : '${_prop.text.trim()} ($_de)',
       'nro_parqueo': _parqueo.text,
@@ -247,8 +263,21 @@ class _VehiculoFormState extends State<VehiculoForm> {
       await db.update('vehiculos', data, where: 'id=?', whereArgs: [widget.existente!['id']]);
       await Audit.log('EDITAR', 'vehiculos', '${widget.existente!['id']}', detalle: _placa.text);
     } else {
-      final id = await db.insert('vehiculos', data);
-      await Audit.log('CREAR', 'vehiculos', '$id', detalle: _placa.text);
+      // Un parqueo cargado sin vehículo (solo número y depto) se completa;
+      // si el parqueo ya tiene un vehículo, este se agrega aparte (auto y moto
+      // en el mismo parqueo, o varios vehículos del mismo depto).
+      final vacio = _parqueo.text.trim().isEmpty
+          ? <Map<String, dynamic>>[]
+          : await db.query('vehiculos',
+              where: "edificio=? AND depto=? AND nro_parqueo=? AND (placa IS NULL OR placa='')",
+              whereArgs: [AppState.instance.edificioId, _depto.text.trim(), _parqueo.text.trim()], limit: 1);
+      if (vacio.isNotEmpty) {
+        await db.update('vehiculos', data, where: 'id=?', whereArgs: [vacio.first['id']]);
+        await Audit.log('EDITAR', 'vehiculos', '${vacio.first['id']}', detalle: _placa.text);
+      } else {
+        final id = await db.insert('vehiculos', data);
+        await Audit.log('CREAR', 'vehiculos', '$id', detalle: _placa.text);
+      }
     }
     SyncRemoto.publicarDatos('vehiculos');
     if (!mounted) return;
@@ -275,10 +304,11 @@ class _VehiculoFormState extends State<VehiculoForm> {
           ]),
           const SizedBox(height: 12),
           SegmentedButton<String>(
+            showSelectedIcon: false,
             segments: const [
-              ButtonSegment(value: 'propietario', label: Text('Propietario')),
-              ButtonSegment(value: 'inquilino', label: Text('Inquilino')),
-              ButtonSegment(value: 'otro', label: Text('Otro')),
+              ButtonSegment(value: 'propietario', label: FittedBox(fit: BoxFit.scaleDown, child: Text('Propietario', maxLines: 1))),
+              ButtonSegment(value: 'inquilino', label: FittedBox(fit: BoxFit.scaleDown, child: Text('Inquilino', maxLines: 1))),
+              ButtonSegment(value: 'otro', label: FittedBox(fit: BoxFit.scaleDown, child: Text('Otro', maxLines: 1))),
             ],
             selected: {_de},
             onSelectionChanged: (v) {
@@ -291,6 +321,16 @@ class _VehiculoFormState extends State<VehiculoForm> {
             Expanded(child: TextField(controller: _prop, decoration: const InputDecoration(labelText: 'Nombre'))),
             const SizedBox(width: 10),
             Expanded(child: TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Celular'))),
+          ]),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, children: [
+            for (final t in _tipos)
+              ChoiceChip(
+                avatar: Icon(t == 'Moto' ? Icons.two_wheeler : t == 'Camioneta' ? Icons.local_shipping : Icons.directions_car, size: 18),
+                label: Text(t),
+                selected: _tipo == t,
+                onSelected: (_) => setState(() => _tipo = t),
+              ),
           ]),
           const SizedBox(height: 12),
           Row(children: [
@@ -412,6 +452,16 @@ class _VehiculoDetalleState extends State<VehiculoDetalle> {
             _dato('Telefono', v['telefono']),
             _dato('Observaciones', v['observaciones']),
           ])),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Navigator.push(context, MaterialPageRoute(builder: (_) => VehiculoForm(
+                  depto: v['depto']?.toString(), parqueo: v['nro_parqueo']?.toString())));
+              _recargar();
+            },
+            icon: const Icon(Icons.add),
+            label: const FittedBox(fit: BoxFit.scaleDown, child: Text('Otro vehículo en este parqueo', maxLines: 1)),
+          ),
           if (tel.isNotEmpty) ...[
             const SizedBox(height: 12),
             SizedBox(

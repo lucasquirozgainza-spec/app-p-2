@@ -57,7 +57,16 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
   Future<void> _hecho(String msg) async {
     if (!mounted) return;
     TopToast.show(context, msg);
-    await Future.delayed(const Duration(milliseconds: 800));
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.hourglass_top, color: Color(0xFFEF6C00), size: 40),
+        title: const Text('Esperando respuesta'),
+        content: Text('$msg.\n\nTendrás respuesta de supervisión en las próximas 6 horas hábiles. '
+            'Te llegará un aviso y la verás en Mis pedidos.'),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Entendido'))],
+      ),
+    );
     await _cargar();
   }
 
@@ -278,7 +287,9 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
               Expanded(
                 child: SizedBox(
                   height: 56,
-                  child: FilledButton(onPressed: _quien == null ? null : _pedirAdelanto, child: const Text('Pedir adelanto')),
+                  child: FilledButton(
+                      onPressed: _quien == null ? null : _pedirAdelanto,
+                      child: const FittedBox(fit: BoxFit.scaleDown, child: Text('Pedir adelanto', maxLines: 1))),
                 ),
               ),
               const SizedBox(width: 10),
@@ -288,7 +299,7 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
                   child: FilledButton(
                     style: FilledButton.styleFrom(backgroundColor: const Color(0xFF00695C)),
                     onPressed: _quien == null ? null : _pedirLibre,
-                    child: const Text('Pedir día libre'),
+                    child: const FittedBox(fit: BoxFit.scaleDown, child: Text('Pedir día libre', maxLines: 1)),
                   ),
                 ),
               ),

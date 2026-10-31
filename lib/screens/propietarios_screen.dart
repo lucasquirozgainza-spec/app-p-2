@@ -6,6 +6,7 @@ import '../services/audit.dart';
 import '../services/contact_launch.dart';
 import '../services/contactos_repo.dart';
 import '../theme.dart';
+import 'vehiculos_screen.dart';
 import '../widgets/toast.dart';
 
 class PropietariosScreen extends StatefulWidget {
@@ -79,8 +80,11 @@ class _PropietariosScreenState extends State<PropietariosScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         icon: Icon(t == 'residente' ? Icons.family_restroom : Icons.person_add, size: 18),
-                        label: Text(t == 'propietario' ? 'Propietario' : t == 'inquilino' ? 'Inquilino' : 'Residente',
-                            style: const TextStyle(fontSize: 13)),
+                        label: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(t == 'propietario' ? 'Propietario' : t == 'inquilino' ? 'Inquilino' : 'Residente',
+                              maxLines: 1, style: const TextStyle(fontSize: 13)),
+                        ),
                         onPressed: () async {
                           await Navigator.push(context, MaterialPageRoute(builder: (_) => PersonaForm(tipo: t)));
                           _load();
@@ -327,18 +331,41 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
               ],
             ),
           ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(8, 12, 8, 4),
+                child: Text('Vehículos y parqueos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  await Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => VehiculoForm(depto: p['depto']?.toString())));
+                  _loadResidentes();
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Agregar'),
+              ),
+            ],
+          ),
           if (_vehiculos.isNotEmpty || (p['placa']?.toString() ?? '').isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.fromLTRB(8, 12, 8, 4),
-              child: Text('Vehículos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            ),
             Card(
               child: Column(children: [
                 for (final v in _vehiculos)
                   ListTile(
                     dense: true,
-                    leading: const Icon(Icons.directions_car, color: Color(0xFF283593)),
-                    title: Text('${v['placa'] ?? ''}${(v['nro_parqueo']?.toString() ?? '').isNotEmpty ? '  ·  Parqueo ${v['nro_parqueo']}' : ''}'),
+                    onTap: () async {
+                      await Navigator.push(context, MaterialPageRoute(builder: (_) => VehiculoForm(existente: v)));
+                      _loadResidentes();
+                    },
+                    leading: Icon(
+                        (v['vehiculo']?.toString() ?? '').startsWith('Moto') ? Icons.two_wheeler : Icons.directions_car,
+                        color: const Color(0xFF283593)),
+                    title: Text([
+                      if ((v['nro_parqueo']?.toString() ?? '').isNotEmpty) 'Parqueo ${v['nro_parqueo']}',
+                      (v['placa']?.toString() ?? '').isNotEmpty ? v['placa'].toString() : 'sin vehículo',
+                    ].join('  ·  ')),
                     subtitle: Text([v['vehiculo'], v['color'], v['propietario']]
                         .where((e) => e != null && e.toString().trim().isNotEmpty)
                         .join(' · ')),
