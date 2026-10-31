@@ -58,7 +58,9 @@ class Solicitud {
       case 'no_entregado':
         return 'Supervisión no confirmó este adelanto';
       default:
-        return enviado ? 'Esperando respuesta de supervisión' : 'Por enviar (sin señal se envía al volver la conexión)';
+        return enviado
+            ? 'Esperando respuesta: tendrás respuesta en las próximas 6 horas hábiles'
+            : 'Por enviar (sin señal se envía al volver la conexión)';
     }
   }
 }
