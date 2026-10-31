@@ -20,6 +20,8 @@ permisos = """    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
 """
 
@@ -63,6 +65,22 @@ if "ExtCameraActivity" not in txt:
            '            android:configChanges="orientation|screenSize|keyboardHidden"\n'
            '            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>\n')
     txt = txt.replace("</application>", act + "    </application>", 1)
+
+# Notificaciones PROGRAMADAS (recordatorio de ronda, candados y control de
+# presencia): sin estos receptores Android nunca las muestra, y tras reiniciar
+# el celular no se vuelven a programar.
+if "ScheduledNotificationReceiver" not in txt:
+    rec = ('        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"/>\n'
+           '        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"/>\n'
+           '        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">\n'
+           '            <intent-filter>\n'
+           '                <action android:name="android.intent.action.BOOT_COMPLETED"/>\n'
+           '                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>\n'
+           '                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>\n'
+           '                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>\n'
+           '            </intent-filter>\n'
+           '        </receiver>\n')
+    txt = txt.replace("</application>", rec + "    </application>", 1)
 
 manifest.write_text(txt, encoding="utf-8")
 print("Manifest parcheado OK (nombre: OSIRIS)")
