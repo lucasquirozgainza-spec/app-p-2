@@ -10,6 +10,7 @@ import 'services/notifications_service.dart';
 import 'services/camara.dart';
 import 'services/cloud.dart';
 import 'services/config_sync.dart';
+import 'services/presencia_service.dart';
 import 'screens/home_screen.dart';
 
 void main() {
@@ -24,6 +25,7 @@ class CondoControlApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'OSIRIS',
+      navigatorKey: Presencia.nav,
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       builder: (context, child) => _SinBarraSistema(child: child ?? const SizedBox()),
@@ -90,6 +92,15 @@ class _BootState extends State<_Boot> {
     } catch (_) {}
     try {
       await Notificaciones.programarRondas();
+    } catch (_) {}
+    // Control de presencia nocturna: al tocar la alarma (o si la app se abrió
+    // por ella) se abre la verificación; luego se arma el plan de la noche.
+    Notificaciones.alTocar = (p) {
+      if (p != null && p.startsWith('presencia')) Presencia.revisar();
+    };
+    try {
+      await Presencia.revisar();
+      await Presencia.planificar();
     } catch (_) {}
   }
 
