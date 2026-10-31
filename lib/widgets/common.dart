@@ -94,13 +94,20 @@ class ActionButton extends StatelessWidget {
             children: [
               Icon(icon, color: Colors.white, size: 32),
               const SizedBox(height: 6),
+              // Una palabra nunca se parte ("Adelan / to"): si no entra, la
+              // letra se achica hasta que entre.
               Flexible(
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, height: 1.1),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      maxLines: label.contains(' ') ? 2 : 1,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, height: 1.1),
+                    ),
+                  ),
                 ),
               ),
             ],
