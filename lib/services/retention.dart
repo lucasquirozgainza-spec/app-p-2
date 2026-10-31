@@ -57,13 +57,9 @@ class Retention {
     }
     // Borrar TODAS las fotos/grabaciones (sin importar la fecha), menos PDF.
     await _borrarTodosArchivos();
-    // Limpiar los eventos y las fotos de la nube de este edificio.
-    try {
-      await Cloud.borrarEventos(edificio: AppState.instance.edificioId);
-    } catch (_) {}
-    try {
-      await Cloud.borrarStorageEdificio();
-    } catch (_) {}
+    // La nube NO se toca: ahí está el historial que usa el monitor (horas,
+    // informes, adelantos). Su limpieza se hace desde el monitor (Respaldo y
+    // espacio) y con el borrado automático por antigüedad.
     return total;
   }
 
