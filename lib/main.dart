@@ -135,9 +135,12 @@ class _SinBarraSistema extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mq = MediaQuery.of(context);
+    // Con la letra del celular en "muy grande" los botones partían las
+    // palabras: se pone un tope (sigue siendo más grande que la normal).
+    final mq0 = MediaQuery.of(context);
+    final mq = mq0.copyWith(textScaler: mq0.textScaler.clamp(maxScaleFactor: 1.15));
     final b = mq.viewPadding.bottom;
-    if (b <= 0) return child;
+    if (b <= 0) return MediaQuery(data: mq, child: child);
     final vi = mq.viewInsets;
     return ColoredBox(
       color: Colors.black,
