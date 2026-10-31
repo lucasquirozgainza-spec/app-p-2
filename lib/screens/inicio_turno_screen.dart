@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
+import '../services/presencia_service.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
@@ -273,6 +274,12 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
     // Selfie del ingreso a la nube (segundo plano; el ingreso ya quedó
     // registrado con su hora). Se une al turno por turno_ref.
+    // Recordatorio de ronda: se cuenta desde el ingreso; y plan de presencia nocturna.
+    try {
+      await Notificaciones.marcarRonda(ahora);
+      await Notificaciones.programarRecordatorios();
+      Presencia.planificar();
+    } catch (_) {}
     final fotoTurno = _foto;
     final refTurno = Turnos.ref(Cloud.deviceId, id);
     await Cloud.eventoConFotos('Foto de turno',

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
+import '../services/presencia_service.dart';
+import '../services/notifications_service.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
 import '../services/cloud.dart';
@@ -254,6 +256,11 @@ class _SalidaTurnoScreenState extends State<SalidaTurnoScreen> {
 
     // Si el que sale es el operador actual, se limpia.
     if (s.turnoActivoId == sel['id']) s.clearOperador();
+    // Sin turno: se quitan el recordatorio de ronda y la presencia nocturna.
+    try {
+      await Notificaciones.programarRecordatorios();
+      await Presencia.planificar();
+    } catch (_) {}
     if (!mounted) return;
     Navigator.pop(context);
   }

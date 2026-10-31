@@ -2,6 +2,8 @@ import 'dart:async';
 import 'mis_fotos_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/notifications_service.dart';
+import '../services/presencia_service.dart';
 import '../services/sync_remoto.dart';
 import '../services/app_state.dart';
 import '../services/cloud.dart';
@@ -60,7 +62,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// latido y, si Android había dormido la app, solo salía al reiniciarla.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _latido();
+    if (state == AppLifecycleState.resumed) {
+      _latido();
+      Presencia.revisar(); // alarma de presencia sonando: abrir la verificación
+    }
   }
 
   @override
@@ -82,14 +87,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await Cloud.heartbeat(lat: g?['lat'], lng: g?['lng']);
       await Cloud.vaciarCola(); // reenvía lo que quedó sin señal
       // Aplicar config remota si el admin cambió algo (refresca la pantalla).
-      if (await ConfigSync.aplicarRemota() && mounted) setState(() {});
+      if (await ConfigSync.aplicarRemota()) {
+        // supervisión cambió rondas / horario de recordatorio: reprogramar
+        await Notificaciones.programarRecordatorios();
+        if (mounted) setState(() {});
+      }
       await ConfigSync.aplicarAdminPassRemota();
       await ConfigSync.sincronizarGuardias(); // como máximo cada 10 min
       // Ajustes y datos que se manejan desde el monitor web.
       if (await SyncRemoto.latido() && mounted) setState(() {});
       await Solicitudes.revisarRespuestas(); // adelantos y días libres
       // Turno de este celular finalizado desde otro celular del edificio.
-      if (await TurnoRemoto.aplicarSalidasRemotas() && mounted) setState(() {});
+      if (await TurnoRemoto.aplicarSalidasRemotas()) {
+        await Notificaciones.programarRecordatorios();
+        if (mounted) setState(() {});
+      }
+      await Presencia.planificar(); // control de presencia nocturna
+      await Presencia.revisar();
     } catch (_) {
     } finally {
       _latiendo = false;

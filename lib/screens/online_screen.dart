@@ -118,35 +118,6 @@ class _OnlineScreenState extends State<OnlineScreen> {
     }
   }
 
-  Future<void> _eliminarNube() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: const Icon(Icons.delete_forever, color: AppColors.rojo, size: 38),
-        title: const Text('Eliminar actividad de la nube'),
-        content: Text('Se borrará la actividad de ${AppState.instance.edificioNombre} de la nube. '
-            'Los registros de cada celular NO se tocan. Descarga antes el PDF si quieres conservarla.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    final borrado = await Cloud.borrarEventos(edificio: _ed);
-    if (!mounted) return;
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(borrado ? 'Actividad eliminada de la nube.' : 'No se pudo eliminar: ${Cloud.lastError ?? ''}'),
-        backgroundColor: borrado ? AppColors.verde : AppColors.rojo));
-    _cargar();
-  }
-
   Future<void> _abrirMapa(dynamic lat, dynamic lng) async {
     if (lat == null || lng == null) return;
     final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
@@ -169,7 +140,6 @@ class _OnlineScreenState extends State<OnlineScreen> {
           IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Descargar PDF', onPressed: _descargarPdf),
           PopupMenuButton<String>(
             onSelected: (v) async {
-              if (v == 'eliminar') _eliminarNube();
               if (v == 'probar') {
                 final r = await Cloud.probar();
                 if (!mounted) return;
@@ -185,9 +155,6 @@ class _OnlineScreenState extends State<OnlineScreen> {
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'probar', child: ListTile(leading: Icon(Icons.wifi_find), title: Text('Probar conexión'))),
-              if (AppState.instance.isAdmin)
-                const PopupMenuItem(
-                    value: 'eliminar', child: ListTile(leading: Icon(Icons.delete_forever), title: Text('Eliminar de la nube'))),
             ],
           ),
         ],

@@ -148,6 +148,25 @@ class _VehiculoFormState extends State<VehiculoForm> {
   bool _saving = false;
 
   bool get _editando => widget.existente != null;
+  String _de = 'propietario'; // de quién es: propietario | inquilino | otro
+
+  /// Completa nombre y celular con el propietario o el inquilino del depto.
+  Future<void> _autocompletar() async {
+    if (_de == 'otro') return;
+    final depto = _depto.text.trim();
+    if (depto.isEmpty) return;
+    final db = await DB.instance.database;
+    final r = await db.query('propietarios',
+        where: 'edificio=? AND depto=?', whereArgs: [AppState.instance.edificioId, depto], limit: 1);
+    if (r.isEmpty || !mounted) return;
+    final p = r.first;
+    final nom = (_de == 'propietario' ? p['copropietario'] : p['inquilino'])?.toString() ?? '';
+    final tel = (_de == 'propietario' ? p['telefono'] : p['telefono_inq'])?.toString() ?? '';
+    setState(() {
+      if (nom.isNotEmpty) _prop.text = nom;
+      if (tel.isNotEmpty) _tel.text = tel;
+    });
+  }
 
   @override
   void dispose() {
@@ -173,7 +192,15 @@ class _VehiculoFormState extends State<VehiculoForm> {
       _modelo.text = e['modelo']?.toString() ?? '';
       _color.text = e['color']?.toString() ?? '';
       _depto.text = e['depto']?.toString() ?? '';
-      _prop.text = e['propietario']?.toString() ?? '';
+      var prop = e['propietario']?.toString() ?? '';
+      if (prop.endsWith(' (inquilino)')) {
+        _de = 'inquilino';
+        prop = prop.substring(0, prop.length - ' (inquilino)'.length);
+      } else if (prop.endsWith(' (otro)')) {
+        _de = 'otro';
+        prop = prop.substring(0, prop.length - ' (otro)'.length);
+      }
+      _prop.text = prop;
       _parqueo.text = e['nro_parqueo']?.toString() ?? '';
       _tel.text = e['telefono']?.toString() ?? '';
       _obs.text = e['observaciones']?.toString() ?? '';
@@ -210,7 +237,7 @@ class _VehiculoFormState extends State<VehiculoForm> {
       'color': _color.text,
       'vehiculo': [_marca.text, _modelo.text].where((e) => e.isNotEmpty).join(' '),
       'depto': _depto.text,
-      'propietario': _prop.text,
+      'propietario': _prop.text.trim().isEmpty || _de == 'propietario' ? _prop.text.trim() : '${_prop.text.trim()} ($_de)',
       'nro_parqueo': _parqueo.text,
       'telefono': _tel.text,
       'foto': _foto,
@@ -236,6 +263,37 @@ class _VehiculoFormState extends State<VehiculoForm> {
         padding: const EdgeInsets.all(16),
         children: [
           Row(children: [
+            Expanded(child: TextField(controller: _parqueo, decoration: const InputDecoration(labelText: 'Parqueo N°'))),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: _depto,
+                decoration: const InputDecoration(labelText: 'Departamento'),
+                onChanged: (_) => _autocompletar(),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'propietario', label: Text('Propietario')),
+              ButtonSegment(value: 'inquilino', label: Text('Inquilino')),
+              ButtonSegment(value: 'otro', label: Text('Otro')),
+            ],
+            selected: {_de},
+            onSelectionChanged: (v) {
+              setState(() => _de = v.first);
+              _autocompletar();
+            },
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: TextField(controller: _prop, decoration: const InputDecoration(labelText: 'Nombre'))),
+            const SizedBox(width: 10),
+            Expanded(child: TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Celular'))),
+          ]),
+          const SizedBox(height: 12),
+          Row(children: [
             Expanded(
               child: TextField(controller: _placa, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'Placa *')),
             ),
@@ -251,20 +309,8 @@ class _VehiculoFormState extends State<VehiculoForm> {
             Expanded(child: TextField(controller: _marca, decoration: const InputDecoration(labelText: 'Marca'))),
             const SizedBox(width: 10),
             Expanded(child: TextField(controller: _modelo, decoration: const InputDecoration(labelText: 'Modelo'))),
-          ]),
-          const SizedBox(height: 12),
-          Row(children: [
+            const SizedBox(width: 10),
             Expanded(child: TextField(controller: _color, decoration: const InputDecoration(labelText: 'Color'))),
-            const SizedBox(width: 10),
-            Expanded(child: TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento'))),
-          ]),
-          const SizedBox(height: 12),
-          TextField(controller: _prop, decoration: const InputDecoration(labelText: 'Dueño / responsable')),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(child: TextField(controller: _parqueo, decoration: const InputDecoration(labelText: 'Parqueo que ocupa'))),
-            const SizedBox(width: 10),
-            Expanded(child: TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefono'))),
           ]),
           const SizedBox(height: 16),
           PhotoField(label: 'Foto del vehiculo', initialPath: _foto, onChanged: (v) => _foto = v),
@@ -361,7 +407,7 @@ class _VehiculoDetalleState extends State<VehiculoDetalle> {
             _dato('Marca', v['marca']),
             _dato('Modelo', v['modelo']),
             _dato('Color', v['color']),
-            _dato('Dueño / responsable', v['propietario']),
+            _dato('De', v['propietario']),
             _dato('Nro parqueo', v['nro_parqueo']),
             _dato('Telefono', v['telefono']),
             _dato('Observaciones', v['observaciones']),

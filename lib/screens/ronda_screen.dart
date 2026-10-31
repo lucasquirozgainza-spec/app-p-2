@@ -272,6 +272,12 @@ class _RondaScreenState extends State<RondaScreen> {
       'recorrido_m': _metrosRecorridos(),
     });
 
+    // El próximo recordatorio de ronda se cuenta desde AHORA.
+    try {
+      await Notificaciones.marcarRonda();
+      await Notificaciones.programarRecordatorios();
+    } catch (_) {}
+
     // Compartir las fotos por WhatsApp en 1 clic, a la resolución máxima.
     final guardia = s.userNombre ?? 'Guardia';
     final msg = _obs.text.trim().isEmpty

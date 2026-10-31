@@ -116,17 +116,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
       context: context,
       builder: (_) => AlertDialog(
         icon: const Icon(Icons.delete_forever, color: AppColors.rojo, size: 40),
-        title: const Text('¿Eliminar todo ahora?'),
-        content: const Text('Se borrarán TODOS los registros y datos de prueba de la app '
-            '(visitas, rondas, turnos, incidentes, encomiendas, propietarios, residentes, '
-            'contactos, fotos y videos) y se limpiará la nube.\n\n'
-            'NO se borran los guardias ni las cámaras. Esta acción no se puede deshacer.'),
+        title: const Text('¿Borrar los datos de este celular?'),
+        content: const Text('Se borran los registros y fotos guardados en ESTE celular. '
+            'La nube y el monitor no se tocan. Los guardias y las cámaras se mantienen.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.rojo),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sí, eliminar todo'),
+            child: const Text('Borrar'),
           ),
         ],
       ),
@@ -145,48 +143,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
       builder: (_) => AlertDialog(
         icon: const Icon(Icons.check_circle, color: AppColors.verde, size: 38),
         title: const Text('Datos eliminados'),
-        content: Text('Se borraron $total registros y sus fotos/videos. '
-            'Los guardias y las cámaras se mantienen.'),
+        content: Text('Se borraron $total registros de este celular.'),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Listo'))],
       ),
     );
-  }
-
-  /// Vacía TODA la actividad de la nube (todos los edificios).
-  Future<void> _vaciarNube() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        icon: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00), size: 38),
-        title: const Text('¿Vaciar la nube?'),
-        content: Text('Se borrará de la nube la actividad y las fotos SOLO de '
-            '${AppState.instance.edificioNombre} (el edificio activo). Los demás edificios no se tocan, '
-            'ni los registros guardados en cada celular.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF6C00)),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Vaciar'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    if (!mounted) return;
-    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    // Solo el edificio activo (nunca todos a la vez).
-    final okB = await Cloud.borrarEventos(edificio: AppState.instance.edificioId);
-    if (okB) {
-      try {
-        await Cloud.borrarStorageEdificio();
-      } catch (_) {}
-    }
-    if (!mounted) return;
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(okB ? 'Nube vaciada.' : 'No se pudo vaciar: ${Cloud.lastError ?? ''}'),
-        backgroundColor: okB ? AppColors.verde : AppColors.rojo));
   }
 
   Future<void> _activar(String id) async {
@@ -701,11 +661,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
               ),
             ),
           ]),
-          const Padding(
-            padding: EdgeInsets.only(top: 4),
-            child: Text('Excel: Depto, Nombre, Teléfono (opcional Inquilino).',
-                style: TextStyle(fontSize: 11, color: Colors.black54)),
-          ),
           _seccion('Módulos', Icons.widgets, const Color(0xFF1565C0), [
             for (final entry in _modLabels.entries)
               SwitchListTile(
@@ -723,7 +678,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
               onChanged: (v) => _toggle('solo_local', v),
               secondary: const Icon(Icons.wifi_off, color: Color(0xFF546E7A)),
               title: const Text('Trabajar sin conexión'),
-              subtitle: const Text('Edificio de una torre: registros instantáneos, no usa la nube.'),
               activeColor: AppColors.verde,
             ),
           ]),
@@ -734,14 +688,12 @@ class _ConfigScreenState extends State<ConfigScreen> {
               onChanged: (v) => _toggle('un_guardia', v),
               secondary: const Icon(Icons.person_outline, color: Color(0xFF00838F)),
               title: const Text('Un solo guardia (sin relevo)'),
-              subtitle: const Text('Las horas extras se cuentan contra su propio horario.'),
               activeColor: AppColors.verde,
             ),
             ListTile(
               dense: true,
               leading: const Icon(Icons.more_time, color: Color(0xFF00838F)),
               title: const Text('Tolerancia de relevo'),
-              subtitle: const Text('Hasta este margen no cuenta; pasado, se cuentan todos los minutos.'),
               trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
                   icon: const Icon(Icons.remove_circle_outline),
@@ -771,9 +723,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
               },
               secondary: const Icon(Icons.camera, color: Color(0xFF283593)),
               title: const Text('Usar la cámara del celular'),
-              subtitle: const Text('Usa la cámara nativa del teléfono (respeta las proporciones y '
-                  'confirma cada foto). Apagado: cámara de la app (instantánea, sin confirmar). '
-                  'Este ajuste es de ESTE celular.'),
+              subtitle: const Text('Solo este celular'),
               activeColor: AppColors.verde,
             ),
           ]),
@@ -782,7 +732,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
               dense: true,
               leading: const Icon(Icons.domain, color: Color(0xFF00695C)),
               title: Text(_bloquesSel.isEmpty ? 'Edificio solo (sin bloques)' : _bloquesSel.join(' · ')),
-              subtitle: const Text('Bloques del edificio elegido arriba'),
               trailing: const Icon(Icons.edit),
               onTap: _editarBloquesEdificio,
             ),
@@ -794,7 +743,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 title: Text(AppState.instance.bloque.isEmpty
                     ? 'Este celular: sin bloque'
                     : 'Este celular: ${AppState.instance.bloque}'),
-                subtitle: const Text('Solo aparecen los guardias de este bloque (y los franqueros)'),
                 trailing: const Icon(Icons.edit),
                 onTap: _editarBloque,
               ),
@@ -852,7 +800,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 activeColor: AppColors.verde,
                 secondary: const Icon(Icons.directions_walk, color: Color(0xFF6A1B9A)),
                 title: const Text('Recordatorio de ronda'),
-                subtitle: Text('Cada ${AppState.instance.rondaHoras} hora(s)'),
+                subtitle: Text(AppState.instance.modulos['ronda_rec'] == false
+                    ? 'Apagado por supervisión'
+                    : 'Cada ${AppState.instance.rondaCada} h · ${Notificaciones.horarioRonda()}'),
                 onChanged: (v) async {
                   await AppState.instance.setRecordatorios(rondas: v);
                   await Notificaciones.programarRecordatorios();
@@ -921,7 +871,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
               ListTile(
                 leading: const Icon(Icons.photo_camera, color: Color(0xFF6A1B9A)),
                 title: const Text('Fotos obligatorias por ronda'),
-                subtitle: Text('Actualmente: ${AppState.instance.rondaFotos} fotos'),
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline),
@@ -955,7 +904,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 dense: true,
                 leading: const Icon(Icons.qr_code_2, color: Color(0xFF6A1B9A)),
                 title: const Text('Puntos de ronda (QR)'),
-                subtitle: const Text('Opcional'),
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PuntosControlScreen())),
               ),
           ]),
@@ -964,7 +912,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 dense: true,
                 leading: const Icon(Icons.auto_delete, color: AppColors.rojo),
                 title: const Text('Conservar datos por'),
-              subtitle: Text('${(AppState.instance.retencionDias / 30).round()} mes(es)  ·  ${AppState.instance.retencionDias} días'),
               trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
                   icon: const Icon(Icons.remove_circle_outline),
@@ -990,19 +937,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
               ListTile(
                 dense: true,
                 leading: const Icon(Icons.delete_forever, color: AppColors.rojo),
-                title: const Text('Eliminar todo ahora'),
-                subtitle: const Text('Borra registros y datos de prueba (no los guardias).'),
+                title: const Text('Borrar datos de este celular'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _eliminarTodoAhora,
-              ),
-              const Divider(height: 1),
-              ListTile(
-                dense: true,
-                leading: const Icon(Icons.cloud_off, color: Color(0xFFEF6C00)),
-                title: const Text('Vaciar la nube de este edificio'),
-                subtitle: Text('Solo ${AppState.instance.edificioNombre} (se limpia sola cada 3 meses).'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _vaciarNube,
               ),
           ]),
           _seccion('Avisos', Icons.campaign, const Color(0xFFEF6C00), [
@@ -1010,19 +947,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 dense: true,
                 leading: const Icon(Icons.notifications_active, color: Color(0xFFEF6C00)),
                 title: const Text('Aviso de incidentes al admin'),
-                subtitle: const Text('WhatsApp o correo'),
                 onTap: _configAvisos,
               ),
           ]),
           const SizedBox(height: 24),
-          const Card(
-            child: ListTile(
-              dense: true,
-              leading: Icon(Icons.info_outline, color: Colors.blueGrey),
-              title: Text('OSIRIS'),
-              subtitle: Text('Base de datos local'),
-            ),
-          ),
         ],
       ),
     );

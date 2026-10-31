@@ -60,18 +60,36 @@ class _PropietariosScreenState extends State<PropietariosScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.soloVehiculos ? 'Vehiculos' : 'Propietarios')),
-      floatingActionButton: widget.soloVehiculos
+      bottomNavigationBar: widget.soloVehiculos
           ? null
-          : FloatingActionButton.extended(
-              backgroundColor: const Color(0xFF1565C0),
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.add),
-              label: const Text('Registrar'),
-              onPressed: () async {
-                await Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const PropietarioForm()));
-                _load();
-              },
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                child: Row(children: [
+                  for (final t in const ['propietario', 'inquilino', 'residente']) ...[
+                    if (t != 'propietario') const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: t == 'propietario'
+                              ? const Color(0xFF1565C0)
+                              : t == 'inquilino'
+                                  ? const Color(0xFF00897B)
+                                  : const Color(0xFF6D4C41),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: Icon(t == 'residente' ? Icons.family_restroom : Icons.person_add, size: 18),
+                        label: Text(t == 'propietario' ? 'Propietario' : t == 'inquilino' ? 'Inquilino' : 'Residente',
+                            style: const TextStyle(fontSize: 13)),
+                        onPressed: () async {
+                          await Navigator.push(context, MaterialPageRoute(builder: (_) => PersonaForm(tipo: t)));
+                          _load();
+                        },
+                      ),
+                    ),
+                  ],
+                ]),
+              ),
             ),
       body: Column(
         children: [
@@ -113,9 +131,10 @@ class _PropietariosScreenState extends State<PropietariosScreen> {
           child: Text(p['depto']?.toString() ?? '?',
               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.azulMarino)),
         ),
-        title: Text(p['copropietario']?.toString() ?? '—',
+        title: Text((p['copropietario']?.toString() ?? '').isNotEmpty ? p['copropietario'].toString() : 'Sin propietario',
             style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text('Depto ${p['depto']}$torre'),
+        subtitle: Text('Depto ${p['depto']}$torre'
+            '${(p['inquilino']?.toString() ?? '').isNotEmpty ? '  ·  Inquilino: ${p['inquilino']}' : ''}'),
         trailing: const Icon(Icons.chevron_right),
         onTap: () => Navigator.push(context,
             MaterialPageRoute(builder: (_) => PropietarioDetalle(prop: p, onChanged: _load))),
@@ -151,6 +170,7 @@ class PropietarioDetalle extends StatefulWidget {
 class _PropietarioDetalleState extends State<PropietarioDetalle> {
   late Map<String, dynamic> p;
   List<Map<String, dynamic>> _residentes = [];
+  List<Map<String, dynamic>> _vehiculos = [];
 
   @override
   void initState() {
@@ -163,8 +183,13 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
     final db = await DB.instance.database;
     final rows = await db.query('residentes',
         where: 'edificio=? AND depto=?', whereArgs: [p['edificio'], p['depto']]);
+    final veh = await db.query('vehiculos',
+        where: 'edificio=? AND depto=?', whereArgs: [p['edificio'], p['depto']], orderBy: 'nro_parqueo');
     if (!mounted) return;
-    setState(() => _residentes = rows);
+    setState(() {
+      _residentes = rows;
+      _vehiculos = veh;
+    });
   }
 
   Future<void> _agregarResidente() async {
@@ -207,9 +232,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
     'telefono': 'Teléfono propietario',
     'inquilino': 'Inquilino',
     'telefono_inq': 'Teléfono inquilino',
-    'vehiculo': 'Vehículo',
-    'placa': 'Placa',
-    'nro_parqueo': 'N° de parqueo',
+    'mascota': 'Mascota',
     'observaciones': 'Observaciones',
   };
 
@@ -219,9 +242,7 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
       'telefono': TextEditingController(text: p['telefono']?.toString()),
       'inquilino': TextEditingController(text: p['inquilino']?.toString()),
       'telefono_inq': TextEditingController(text: p['telefono_inq']?.toString()),
-      'vehiculo': TextEditingController(text: p['vehiculo']?.toString()),
-      'placa': TextEditingController(text: p['placa']?.toString()),
-      'nro_parqueo': TextEditingController(text: p['nro_parqueo']?.toString()),
+      'mascota': TextEditingController(text: p['mascota']?.toString()),
       'observaciones': TextEditingController(text: p['observaciones']?.toString()),
     };
     final ok = await showDialog<bool>(
@@ -300,15 +321,39 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
                 _row('Copropietario', p['copropietario']?.toString(), tel: p['telefono']?.toString()),
                 _row('Telefono', p['telefono']?.toString()),
                 _row('Inquilino', p['inquilino']?.toString(), tel: p['telefono_inq']?.toString()),
-                _row('Nro Parqueo', p['nro_parqueo']?.toString()),
-                _row('Vehiculo', p['vehiculo']?.toString()),
-                _row('Placa', p['placa']?.toString()),
                 _row('Mascota', p['mascota']?.toString()),
                 _row('Nombre mascota', p['nombre_mascota']?.toString()),
                 _row('Observaciones', p['observaciones']?.toString()),
               ],
             ),
           ),
+          if (_vehiculos.isNotEmpty || (p['placa']?.toString() ?? '').isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.fromLTRB(8, 12, 8, 4),
+              child: Text('Vehículos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ),
+            Card(
+              child: Column(children: [
+                for (final v in _vehiculos)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.directions_car, color: Color(0xFF283593)),
+                    title: Text('${v['placa'] ?? ''}${(v['nro_parqueo']?.toString() ?? '').isNotEmpty ? '  ·  Parqueo ${v['nro_parqueo']}' : ''}'),
+                    subtitle: Text([v['vehiculo'], v['color'], v['propietario']]
+                        .where((e) => e != null && e.toString().trim().isNotEmpty)
+                        .join(' · ')),
+                  ),
+                // registro antiguo (la placa se cargaba en el propietario)
+                if (_vehiculos.isEmpty)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.directions_car, color: Color(0xFF283593)),
+                    title: Text('${p['placa'] ?? ''}${(p['nro_parqueo']?.toString() ?? '').isNotEmpty ? '  ·  Parqueo ${p['nro_parqueo']}' : ''}'),
+                    subtitle: (p['vehiculo']?.toString() ?? '').isNotEmpty ? Text(p['vehiculo'].toString()) : null,
+                  ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -356,103 +401,110 @@ class _PropietarioDetalleState extends State<PropietarioDetalle> {
 
 // ---------------------------------------------------------------------------
 
-class PropietarioForm extends StatefulWidget {
-  const PropietarioForm({super.key});
+/// Registro rápido por departamento: PROPIETARIO, INQUILINO o RESIDENTE.
+/// Los vehículos se registran en "Vehículos" (con su parqueo).
+class PersonaForm extends StatefulWidget {
+  final String tipo; // propietario | inquilino | residente
+  const PersonaForm({super.key, required this.tipo});
   @override
-  State<PropietarioForm> createState() => _PropietarioFormState();
+  State<PersonaForm> createState() => _PersonaFormState();
 }
 
-class _PropietarioFormState extends State<PropietarioForm> {
+class _PersonaFormState extends State<PersonaForm> {
   final _depto = TextEditingController();
-  final _torre = TextEditingController();
-  final _copro = TextEditingController();
+  final _nombre = TextEditingController();
   final _tel = TextEditingController();
-  final _inq = TextEditingController();
-  final _telInq = TextEditingController();
-  final _parqueo = TextEditingController();
-  final _vehiculo = TextEditingController();
-  final _placa = TextEditingController();
-  final _mascota = TextEditingController();
+  final _parentesco = TextEditingController();
   final _obs = TextEditingController();
+  String _torre = '';
   bool _saving = false;
+
+  String get _titulo => widget.tipo == 'propietario'
+      ? 'Registrar propietario'
+      : widget.tipo == 'inquilino'
+          ? 'Registrar inquilino'
+          : 'Registrar residente';
 
   @override
   void dispose() {
-    _depto.dispose();
-    _torre.dispose();
-    _copro.dispose();
-    _tel.dispose();
-    _inq.dispose();
-    _telInq.dispose();
-    _parqueo.dispose();
-    _vehiculo.dispose();
-    _placa.dispose();
-    _mascota.dispose();
-    _obs.dispose();
+    for (final c in [_depto, _nombre, _tel, _parentesco, _obs]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
+  void _aviso(String t) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(t), backgroundColor: AppColors.rojo));
+
   Future<void> _guardar() async {
-    if (_depto.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Ingrese el departamento'), backgroundColor: AppColors.rojo));
+    final depto = _depto.text.trim();
+    final nombre = _nombre.text.trim();
+    if (depto.isEmpty) {
+      _aviso('Escribe el departamento');
+      return;
+    }
+    if (nombre.isEmpty) {
+      _aviso('Escribe el nombre');
       return;
     }
     setState(() => _saving = true);
     final db = await DB.instance.database;
     final ed = AppState.instance.edificioId;
-    final id = '$ed-${_depto.text.trim()}-${DateTime.now().millisecondsSinceEpoch}';
-    await db.insert('propietarios', {
-      'id': id,
-      'edificio': ed,
-      'torre': _torre.text.trim(),
-      'depto': _depto.text.trim(),
-      'copropietario': _copro.text,
-      'telefono': _tel.text,
-      'inquilino': _inq.text,
-      'telefono_inq': _telInq.text,
-      'nro_parqueo': _parqueo.text,
-      'vehiculo': _vehiculo.text,
-      'placa': _placa.text,
-      'mascota': _mascota.text,
-      'observaciones': _obs.text,
-    });
-    await Audit.log('CREAR', 'propietarios', id, detalle: 'depto ${_depto.text}');
-    SyncRemoto.publicarDatos('propietarios');
+    if (widget.tipo == 'residente') {
+      final id = await db.insert('residentes', {
+        'edificio': ed, 'depto': depto, 'nombre': nombre,
+        'parentesco': _parentesco.text.trim(), 'celular': _tel.text.trim(), 'observaciones': _obs.text.trim(),
+      });
+      await Audit.log('CREAR', 'residentes', '$id', detalle: 'depto $depto');
+      SyncRemoto.publicarDatos('residentes');
+    } else {
+      // Un registro por departamento: si ya existe, se completa (propietario o inquilino).
+      final previos = await db.query('propietarios',
+          where: _torre.isEmpty ? 'edificio=? AND depto=?' : 'edificio=? AND depto=? AND torre=?',
+          whereArgs: _torre.isEmpty ? [ed, depto] : [ed, depto, _torre], limit: 1);
+      final datos = widget.tipo == 'propietario'
+          ? {'copropietario': nombre, 'telefono': _tel.text.trim()}
+          : {'inquilino': nombre, 'telefono_inq': _tel.text.trim()};
+      if (_obs.text.trim().isNotEmpty) datos['observaciones'] = _obs.text.trim();
+      if (previos.isNotEmpty) {
+        await db.update('propietarios', datos, where: 'id=?', whereArgs: [previos.first['id']]);
+        await Audit.log('EDITAR', 'propietarios', '${previos.first['id']}', detalle: '${widget.tipo} depto $depto');
+      } else {
+        final id = '$ed-$depto-${DateTime.now().millisecondsSinceEpoch}';
+        await db.insert('propietarios', {'id': id, 'edificio': ed, 'torre': _torre, 'depto': depto, ...datos});
+        await Audit.log('CREAR', 'propietarios', id, detalle: '${widget.tipo} depto $depto');
+      }
+      SyncRemoto.publicarDatos('propietarios');
+    }
     if (!mounted) return;
     Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
+    final torres = AppState.instance.torres;
+    final residente = widget.tipo == 'residente';
     return Scaffold(
-      appBar: AppBar(title: const Text('Registrar Propietario')),
+      appBar: AppBar(title: Text(_titulo)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Row(children: [
-            Expanded(child: TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento *'))),
-            const SizedBox(width: 10),
-            Expanded(child: TextField(controller: _torre, decoration: const InputDecoration(labelText: 'Torre (A/B)'))),
-          ]),
+          TextField(controller: _depto, decoration: const InputDecoration(labelText: 'Departamento *')),
+          if (torres.length > 1) ...[
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, children: [
+              for (final t in torres)
+                ChoiceChip(label: Text(t), selected: _torre == t, onSelected: (v) => setState(() => _torre = v ? t : '')),
+            ]),
+          ],
           const SizedBox(height: 12),
-          TextField(controller: _copro, decoration: const InputDecoration(labelText: 'Copropietario')),
+          TextField(controller: _nombre, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Nombre *')),
           const SizedBox(height: 12),
-          TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefono')),
-          const SizedBox(height: 12),
-          TextField(controller: _inq, decoration: const InputDecoration(labelText: 'Inquilino')),
-          const SizedBox(height: 12),
-          TextField(controller: _telInq, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefono inquilino')),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(child: TextField(controller: _parqueo, decoration: const InputDecoration(labelText: 'Nro parqueo'))),
-            const SizedBox(width: 10),
-            Expanded(child: TextField(controller: _placa, decoration: const InputDecoration(labelText: 'Placa'))),
-          ]),
-          const SizedBox(height: 12),
-          TextField(controller: _vehiculo, decoration: const InputDecoration(labelText: 'Vehiculo')),
-          const SizedBox(height: 12),
-          TextField(controller: _mascota, decoration: const InputDecoration(labelText: 'Mascota')),
+          TextField(controller: _tel, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Celular')),
+          if (residente) ...[
+            const SizedBox(height: 12),
+            TextField(controller: _parentesco, decoration: const InputDecoration(labelText: 'Parentesco (hijo, esposa…)')),
+          ],
           const SizedBox(height: 12),
           TextField(controller: _obs, maxLines: 2, decoration: const InputDecoration(labelText: 'Observaciones')),
           const SizedBox(height: 16),
@@ -461,7 +513,7 @@ class _PropietarioFormState extends State<PropietarioForm> {
             icon: _saving
                 ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
                 : const Icon(Icons.save),
-            label: const Text('Guardar propietario'),
+            label: const Text('Guardar'),
           ),
         ],
       ),
