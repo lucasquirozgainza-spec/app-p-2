@@ -1,7 +1,7 @@
 name: condocontrol
 description: CondoControl Pro - Gestion de condominios (LIMCO II / Millennial)
 publish_to: 'none'
-version: 12.19.0+139
+version: 12.20.0+140
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
