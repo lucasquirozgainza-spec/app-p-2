@@ -44,7 +44,7 @@ class Verificacion {
 /// las próximas verificaciones y para que el aviso por correo de los 8 minutos
 /// funcione aunque el celular quede apagado o sin internet.
 ///
-/// Cuando suena, se abre la pantalla de verificación (firma + foto frontal).
+/// Cuando suena, se abre la pantalla de verificación (selfie con la cámara frontal).
 /// La respuesta se guarda como evento 'Presencia' (por la cola: sin internet
 /// se envía después, sin duplicarse).
 class Presencia {
@@ -58,6 +58,8 @@ class Presencia {
   static String get hasta => _hhmm(_m['presencia_hasta'], '06:00');
   static int get cantidad => _int(_m['presencia_n'], 3, 1, 12);
   static int get separacion => _int(_m['presencia_sep'], 40, 5, 240); // minutos
+  /// Bloques de N horas: una verificación al azar dentro de cada bloque (0 = cantidad fija).
+  static int get bloqueH => _int(_m['presencia_bloque_h'], 2, 0, 6);
   static int get maxMin => _int(_m['presencia_max'], 8, 1, 60); // minutos
 
   static String _hhmm(Object? v, String def) {
@@ -112,6 +114,33 @@ class Presencia {
     // Respaldo: tramos iguales con un desplazamiento aleatorio dentro de cada uno.
     final tramo = largo ~/ caben;
     return List.generate(caben, (i) => ini.add(Duration(seconds: i * tramo + r.nextInt(max(1, tramo - sep ~/ 2)))));
+  }
+
+  /// Una verificación al azar en cada bloque de [horasBloque] horas, contado
+  /// desde el inicio del horario ([ini]). Los bloques que ya pasaron no
+  /// suenan; el que está en curso solo desde [desdeT]. Entre dos seguidas
+  /// queda al menos [sepMin] minutos (si no cabe, se reintenta).
+  static List<DateTime> _porBloques(DateTime ini, DateTime desdeT, DateTime fin, int horasBloque, int sepMin) {
+    final r = Random.secure();
+    final out = <DateTime>[];
+    final paso = Duration(hours: horasBloque);
+    for (var a = ini; a.isBefore(fin); a = a.add(paso)) {
+      var b = a.add(paso);
+      if (b.isAfter(fin)) b = fin;
+      final desde0 = a.isBefore(desdeT) ? desdeT : a;
+      final largo = b.difference(desde0).inSeconds;
+      if (largo < 120) continue;
+      DateTime? elegido;
+      for (int i = 0; i < 200; i++) {
+        final t = desde0.add(Duration(seconds: r.nextInt(largo)));
+        if (out.isEmpty || t.difference(out.last).inMinutes >= sepMin) {
+          elegido = t;
+          break;
+        }
+      }
+      if (elegido != null) out.add(elegido);
+    }
+    return out;
   }
 
   static Future<Map<String, dynamic>?> _leerPlan() async {
@@ -172,7 +201,7 @@ class Presencia {
       final (ini, fin, noche) = _ventana(ahora);
       if (noche.isEmpty) return;
       final ref = Turnos.ref(Cloud.deviceId, s.turnoActivoId);
-      final firma = '$noche|$ref|$desde|$hasta|$cantidad|$separacion';
+      final firma = '$noche|$ref|$desde|$hasta|$cantidad|$separacion|$bloqueH';
       if (plan != null && plan['firma'] == firma) {
         // Ya planificada: solo se asegura que estén programadas y subidas.
         await _programar(_items(plan));
@@ -195,7 +224,11 @@ class Presencia {
       final resto = fin.difference(desdeT).inMinutes;
       var n = cantidad;
       if (resto < total) n = max(1, (cantidad * resto / max(1, total)).round());
-      final horas = resto > 1 ? _sortear(desdeT, fin, n, separacion) : <DateTime>[];
+      final horas = resto <= 1
+          ? <DateTime>[]
+          : bloqueH > 0
+              ? _porBloques(ini, desdeT, fin, bloqueH, separacion)
+              : _sortear(desdeT, fin, n, separacion);
       final r = Random.secure();
       final usados = previas.map((v) => v.nid).toSet();
       int sigNid() {
@@ -375,9 +408,9 @@ class Presencia {
     return (prefs.getStringList('presencia_huellas') ?? const []).contains(huella);
   }
 
-  /// Registra la respuesta: evento con foto + firma, detiene la alarma.
+  /// Registra la respuesta: evento con la selfie, detiene la alarma.
   static Future<String> completar(Verificacion v, {
-    required String firma,
+    String firma = '',
     required String foto,
     required String huella,
     required DateTime abierta,
@@ -402,7 +435,7 @@ class Presencia {
           'demora_s': demora.inSeconds,
           'max_min': maxMin,
           'estado': estado,
-          'firma': firma,
+          if (firma.isNotEmpty) 'firma': firma,
           'foto_sha256': huella,
           'device_id': Cloud.deviceId,
           if (gps != null) 'ubicacion': '${gps['lat']},${gps['lng']}',
