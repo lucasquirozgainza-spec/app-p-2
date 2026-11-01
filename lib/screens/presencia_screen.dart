@@ -8,11 +8,10 @@ import '../services/camara.dart';
 import '../services/device_context.dart';
 import '../services/presencia_service.dart';
 import '../theme.dart';
-import '../widgets/firma_pad.dart';
 
 /// Pantalla de CONTROL DE PRESENCIA NOCTURNA. Se abre sola cuando suena la
 /// alarma. No tiene botón para cerrar, posponer ni silenciar: la alarma sigue
-/// hasta que el guardia firma y se toma una foto con la cámara frontal.
+/// hasta que el guardia se toma una selfie con la cámara frontal.
 class PresenciaScreen extends StatefulWidget {
   final Verificacion v;
   const PresenciaScreen({super.key, required this.v});
@@ -23,13 +22,11 @@ class PresenciaScreen extends StatefulWidget {
 
 class _PresenciaScreenState extends State<PresenciaScreen> {
   final DateTime _abierta = DateTime.now();
-  String? _firma;
   String? _foto;
   String? _huella;
   bool _guardando = false;
   String? _error;
   Timer? _sonido;
-  int _firmaKey = 0;
 
   @override
   void initState() {
@@ -74,13 +71,9 @@ class _PresenciaScreenState extends State<PresenciaScreen> {
   }
 
   Future<void> _confirmar() async {
-    final firma = _firma, foto = _foto, huella = _huella;
-    if (firma == null) {
-      setState(() => _error = 'Falta la firma.');
-      return;
-    }
+    final foto = _foto, huella = _huella;
     if (foto == null || huella == null) {
-      setState(() => _error = 'Falta la foto.');
+      setState(() => _error = 'Falta la selfie.');
       return;
     }
     setState(() {
@@ -98,7 +91,7 @@ class _PresenciaScreenState extends State<PresenciaScreen> {
       }
       final gps = await DeviceContext.gps();
       final estado = await Presencia.completar(widget.v,
-          firma: firma, foto: foto, huella: huella, abierta: _abierta, gps: gps);
+          foto: foto, huella: huella, abierta: _abierta, gps: gps);
       _sonido?.cancel();
       await Presencia.sobreBloqueo(false);
       if (!mounted) return;
@@ -132,14 +125,14 @@ class _PresenciaScreenState extends State<PresenciaScreen> {
   Widget build(BuildContext context) {
     final s = AppState.instance;
     final hora = DateFormat('HH:mm').format(widget.v.t);
-    final listo = _firma != null && _foto != null && !_guardando;
+    final listo = _foto != null && !_guardando;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
           Presencia.intentoSalir(widget.v);
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Completa la firma y la foto para detener la alarma.')));
+              content: Text('Tómate la selfie para detener la alarma.')));
         }
       },
       child: Scaffold(
@@ -173,13 +166,7 @@ class _PresenciaScreenState extends State<PresenciaScreen> {
             ),
             const SizedBox(height: 16),
             _tarjeta(
-              '1. Firma',
-              _firma != null,
-              FirmaPad(key: ValueKey(_firmaKey), onChanged: (v) => setState(() => _firma = v)),
-            ),
-            const SizedBox(height: 12),
-            _tarjeta(
-              '2. Foto con la cámara frontal',
+              'Selfie con la cámara frontal',
               _foto != null,
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 if (_foto != null)
@@ -191,7 +178,7 @@ class _PresenciaScreenState extends State<PresenciaScreen> {
                 OutlinedButton.icon(
                   onPressed: _guardando ? null : _tomarFoto,
                   icon: const Icon(Icons.camera_front),
-                  label: Text(_foto == null ? 'Tomar foto' : 'Repetir foto'),
+                  label: Text(_foto == null ? 'Tomar selfie' : 'Repetir selfie'),
                   style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
                 ),
               ]),
@@ -215,7 +202,7 @@ class _PresenciaScreenState extends State<PresenciaScreen> {
             if (!listo && !_guardando)
               const Padding(
                 padding: EdgeInsets.only(top: 8),
-                child: Text('Se habilita cuando estén la firma y la foto.',
+                child: Text('Se habilita cuando tomes la selfie.',
                     textAlign: TextAlign.center, style: TextStyle(color: Colors.white60)),
               ),
           ]),
