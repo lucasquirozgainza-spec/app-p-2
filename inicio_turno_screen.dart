@@ -1,114 +1,413 @@
-import 'dart:convert';
-import 'dart:io';
-import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
-import 'app_state.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../db/database_helper.dart';
+import '../services/presencia_service.dart';
+import '../services/app_state.dart';
+import '../services/audit.dart';
+import '../services/cloud.dart';
+import '../services/config_sync.dart';
+import '../services/device_context.dart';
+import '../services/uniform_check.dart';
+import '../services/notifications_service.dart';
+import '../services/turnos.dart';
+import '../theme.dart';
+import '../widgets/toast.dart';
+import '../widgets/photo_field.dart';
+import '../widgets/common.dart';
 
-/// Configuracion de un DVR/camara leida de un QR (formato Dahua DMSS/gDMSS).
-class DvrConfig {
-  String nombre;
-  String usuario;
-  String clave;
-  int canales;
-  int puerto;
-  String serial; // serial P2P (no sirve para RTSP directo)
-  DvrConfig({
-    this.nombre = 'DVR',
-    this.usuario = 'admin',
-    this.clave = '',
-    this.canales = 1,
-    this.puerto = 554,
-    this.serial = '',
-  });
+/// Inicio de turno: el guardia SELECCIONA su nombre (sin escribir), toma foto
+/// y agrega novedades. Pueden registrarse varios guardias.
+class InicioTurnoScreen extends StatefulWidget {
+  const InicioTurnoScreen({super.key});
+  @override
+  State<InicioTurnoScreen> createState() => _InicioTurnoScreenState();
 }
 
-class Dvr {
-  /// Lee el QR de una imagen (usa ML Kit, mismo motor del OCR).
-  static Future<String?> leerQr(String path) async {
-    final scanner = BarcodeScanner();
+class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
+  final _obs = TextEditingController();
+  final _franq = TextEditingController(); // nombre real del franquero
+
+  bool get _esFranquero =>
+      _sel != null && ('${_sel!['turno'] ?? ''}' == 'FRANQUERO' || '${_sel!['rol'] ?? ''}' == 'franquero');
+
+  /// "juan  perez de la cruz" -> "Juan Perez de la Cruz". null si no es un
+  /// nombre completo (al menos nombre y apellido, solo letras).
+  static String? nombreCompleto(String t) {
+    final ps = t.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final letras = RegExp(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'\-]+$");
+    if (ps.any((w) => !letras.hasMatch(w))) return null;
+    const part = {'de', 'del', 'la', 'las', 'los', 'y'};
+    final fuertes = ps.where((w) => !part.contains(w.toLowerCase()) && w.length >= 2).length;
+    if (fuertes < 2) return null;
+    return [
+      for (int i = 0; i < ps.length; i++)
+        (i > 0 && part.contains(ps[i].toLowerCase()))
+            ? ps[i].toLowerCase()
+            : ps[i][0].toUpperCase() + ps[i].substring(1).toLowerCase()
+    ].join(' ');
+  }
+  List<Map<String, dynamic>> _guardias = [];
+  Map<String, dynamic>? _sel;
+  String? _foto;
+  bool _saving = false;
+  int _fotoKey = 0;
+  bool _sinUniforme = false; // el guardia declaro que no trajo uniforme
+  bool _revisando = false;
+
+  @override
+  void dispose() {
+    _obs.dispose();
+    super.dispose();
+  }
+  final _ahora = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    await _cargarLocales();
+    // Altas/bajas hechas por el admin en otros celulares: se sincronizan a la
+    // base local y se recarga la lista (sin internet, queda la lista local).
+    await ConfigSync.sincronizarGuardias(forzar: true);
+    await _cargarLocales();
+  }
+
+  Future<void> _cargarLocales() async {
+    final db = await DB.instance.database;
+    final s = AppState.instance;
+    // Guardias registrados con CI en ESTE edificio; si el edificio tiene
+    // bloques, solo los de ESTE bloque (y los franqueros, que cubren a todos).
+    final conCi = await db.query('usuarios',
+        where: "guard_uuid IS NOT NULL AND documento IS NOT NULL AND documento!='' AND activo=1 AND edificio=?",
+        whereArgs: [s.edificioId],
+        orderBy: 'turno, nombre COLLATE NOCASE');
+    final porBloque = s.torres.length > 1 && s.bloque.isNotEmpty;
+    final rows = conCi.isNotEmpty
+        ? conCi
+            .where((g) => !porBloque || g['turno'] == 'FRANQUERO' || '${g['unit_id'] ?? ''}' == s.bloque ||
+                '${g['unit_id'] ?? ''}'.isEmpty)
+            .toList()
+        // Edificio sin guardias con CI todavía: la lista anterior.
+        : await db.query('usuarios',
+            where: "rol IN ('guardia','supervisor','conserje','limpieza','franquero') AND activo=1 "
+                "AND (edificio=? OR edificio IS NULL OR edificio='')",
+            whereArgs: [AppState.instance.edificioId],
+            orderBy: 'nombre COLLATE NOCASE');
+    if (!mounted) return;
+    setState(() {
+      _guardias = [for (final r in rows) Map<String, dynamic>.from(r)];
+      // Mantener la selección si sigue existiendo.
+      final selId = _sel?['id'];
+      final m = _guardias.where((g) => g['id'] == selId).toList();
+      _sel = m.isEmpty ? null : m.first;
+    });
+  }
+
+  void _snack(String m) => TopToast.show(context, m, color: AppColors.rojo, icon: Icons.error_outline);
+
+  /// Al tomar la foto del guardia, revisa si lleva uniforme (camisa roja o
+  /// chaleco negro). Si no lo detecta, avisa y ofrece repetir o continuar.
+  Future<void> _onFoto(String? path) async {
+    setState(() {
+      _foto = path;
+      _sinUniforme = false;
+      _revisando = false;
+    });
+    if (path == null || !AppState.instance.controlUniforme) return;
+    setState(() => _revisando = true);
+    UniformeResultado r;
     try {
-      final res = await scanner.processImage(InputImage.fromFilePath(path));
-      if (res.isEmpty) return null;
-      return res.first.rawValue;
+      r = await UniformeCheck.revisar(path);
     } catch (_) {
-      return null;
+      if (mounted && _foto == path) setState(() => _revisando = false);
+      return; // si la revisión falla no se bloquea el ingreso
+    }
+    // Si mientras se revisaba se tomó OTRA foto, este resultado ya no vale.
+    if (!mounted || _foto != path) return;
+    setState(() => _revisando = false);
+    if (r.ok) return; // uniforme detectado, todo bien
+    await Notificaciones.mostrarAviso('Guardia sin uniforme',
+        'No se detectó la camisa roja ni el chaleco negro en la foto.');
+    if (!mounted) return;
+    final accion = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        icon: const Icon(Icons.report_gmailerrorred, color: AppColors.rojo, size: 40),
+        title: const Text('No se ve el uniforme'),
+        content: const Text('La foto no muestra camisa roja ni chaleco negro. '
+            '¿Quieres repetir la foto con el uniforme puesto, o registrar que no lo trajiste?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'no'),
+            child: const Text('No traje uniforme', style: TextStyle(color: AppColors.rojo)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'repetir'),
+            child: const Text('Repetir foto'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (accion == 'repetir') {
+      // Reinicia el campo de foto para tomarla de nuevo.
+      setState(() {
+        _foto = null;
+        _sinUniforme = false;
+        _fotoKey++;
+      });
+    } else if (accion == 'no') {
+      setState(() => _sinUniforme = true);
+      _snack('Se registrará una advertencia: sin uniforme.');
+    }
+  }
+
+  Future<void> _iniciar() async {
+    if (_saving) return; // doble toque
+    if (_sel == null) return _snack('Selecciona el guardia');
+    if (_esFranquero && nombreCompleto(_franq.text) == null) {
+      return _snack('Franquero: escribe tu nombre completo (nombre y apellido)');
+    }
+    if (_foto == null) return _snack('La foto del guardia es obligatoria');
+    if (_revisando) return _snack('Espera: revisando la foto…');
+    setState(() => _saving = true);
+    try {
+      await _registrarIngreso();
+    } catch (e) {
+      if (mounted) _snack('No se pudo iniciar el turno. Intenta de nuevo.');
     } finally {
-      await scanner.close();
+      if (mounted) setState(() => _saving = false);
     }
   }
 
-  /// Interpreta el contenido del QR de Dahua (gzip+base64 con un JSON).
-  static DvrConfig? parseQr(String raw) {
+  /// CI del guardia elegido (null en guardias del sistema anterior).
+  String? _ci(Map<String, dynamic> g) {
+    final c = '${g['documento'] ?? ''}'.trim();
+    return (g['guard_uuid'] != null && c.isNotEmpty) ? c : null;
+  }
+
+  Future<void> _registrarIngreso() async {
+    final s = AppState.instance;
+    final sel = _sel!;
+    // Hora REAL del ingreso: la del toque (el GPS puede tardar segundos).
+    final ahora = DateTime.now();
+    final db = await DB.instance.database;
+    // Franquero: en todos los registros del turno va su nombre real (la
+    // cuenta "franquero" se mantiene por el CI: no suma ni resta horas extras).
+    final real = _esFranquero ? nombreCompleto(_franq.text) : null;
+    final nombreTurno = real != null ? '$real (franquero)' : '${sel['nombre'] ?? ''}';
+    // Un guardia no puede tener dos turnos abiertos (doble registro o
+    // pantalla abierta dos veces): se retoma el que ya está abierto.
+    final ya = await db.query('ingreso_turno',
+        where: 'guardia_id=? AND activo=1', whereArgs: [sel['id']], orderBy: 'id DESC', limit: 1);
+    if (ya.isNotEmpty) {
+      final nomAbierto = '${ya.first['guardia_nombre'] ?? sel['nombre'] ?? ''}';
+      s.setOperador(
+          id: sel['id'] as int,
+          nombre: nomAbierto,
+          cargo: sel['cargo'] as String?,
+          rol: sel['rol'] as String?,
+          turnoId: ya.first['id'] as int,
+          guard: _ci(sel));
+      if (!mounted) return;
+      TopToast.show(context, '$nomAbierto ya tiene un turno abierto',
+          color: const Color(0xFFEF6C00), icon: Icons.info_outline);
+      Navigator.pop(context);
+      return;
+    }
+    // GPS, batería y modelo EN PARALELO (antes uno tras otro).
+    final ctx = await Future.wait<Object?>(
+        [DeviceContext.gps(), DeviceContext.bateria(), DeviceContext.dispositivo()]);
+    final gps = ctx[0] as Map<String, double>?;
+    final bat = ctx[1] as int?;
+    final disp = ctx[2] as String;
+    final id = await db.insert('ingreso_turno', {
+      'guardia_id': sel['id'],
+      'guardia_nombre': nombreTurno,
+      'cargo': sel['cargo'],
+      'foto': _foto,
+      'gps_lat': gps?['lat'],
+      'gps_lng': gps?['lng'],
+      'bateria': bat,
+      'dispositivo': disp,
+      'observaciones': _obs.text,
+      'edificio': s.edificioId,
+      'activo': 1,
+      'created_at': ahora.toIso8601String(),
+      'guard_uuid': _ci(sel), // CI del guardia (sus horas salen solo de lo suyo)
+    });
+    // El guardia que inicia turno pasa a ser el operador actual del equipo.
+    final guard = _ci(sel);
+    s.setOperador(
+        id: sel['id'] as int,
+        nombre: nombreTurno,
+        cargo: sel['cargo'] as String?,
+        rol: sel['rol'] as String?,
+        turnoId: id,
+        guard: guard);
+    final String? nombre = nombreTurno;
+    // Si el guardia declaro que no trajo uniforme, se guarda una advertencia.
+    if (_sinUniforme) {
+      await db.insert('advertencias', {
+        'guardia_nombre': nombre,
+        'mensaje': 'Inició turno SIN uniforme (sin camisa roja ni chaleco negro).',
+        'tipo': 'uniforme',
+        'foto': _foto,
+        'edificio': s.edificioId,
+        'created_at': ahora.toIso8601String(),
+      });
+      Cloud.evento('Guardia sin uniforme', guardia: nombre); // segundo plano
+    }
+    // Aviso por ENTRAR TARDE respecto al horario de relevo del celular.
+    final tarde = s.minutosTardeIngreso(ahora);
+    // Aviso solo pasada la tolerancia del edificio (la misma de las horas).
+    if (tarde != null && tarde > s.toleranciaMin) {
+      final txt = tarde >= 60
+          ? '${(tarde / 60).floor()} h ${tarde % 60} min tarde'
+          : '$tarde min tarde';
+      await db.insert('advertencias', {
+        'guardia_nombre': nombre,
+        'mensaje': 'Ingresó TARDE al turno ($txt respecto al horario de relevo).',
+        'tipo': 'tarde',
+        'foto': _foto,
+        'edificio': s.edificioId,
+        'created_at': ahora.toIso8601String(),
+      });
+      Cloud.evento('Advertencia', guardia: nombre,
+          detalle: {'tipo': 'tarde', 'motivo': 'Ingresó tarde al turno ($txt)'});
+      try {
+        await Notificaciones.mostrarAviso('⚠️ Estás entrando tarde',
+            'Registraste tu ingreso $txt. Se guardó una advertencia por entrar tarde al turno.');
+      } catch (_) {}
+      if (mounted) _snack('Advertencia: estás entrando tarde al turno ($txt).');
+    }
+    await Audit.log('INICIO_TURNO', 'ingreso_turno', '$id');
+    // La nube pasa por la cola: sin señal se envía después, sin duplicarse.
+    Cloud.evento('Ingreso de turno',
+        guardia: nombre,
+        detalle: {
+          'cargo': sel['cargo'],
+          if (real != null) 'franquero_nombre': real,
+          // Id del turno: une este ingreso con SU salida y sus correcciones.
+          'turno_ref': Turnos.ref(Cloud.deviceId, id),
+          'ts': ahora.toUtc().toIso8601String(),
+          // Horarios de relevo de ESTE celular: las horas se calculan con el
+          // horario del puesto donde marcó (bloques distintos).
+          'relevos': s.horarios.join(','),
+          'observaciones': _obs.text,
+          'ubicacion': gps != null ? '${gps['lat']},${gps['lng']}' : '',
+        });
+    Cloud.heartbeat(lat: gps?['lat'], lng: gps?['lng']);
+    // Selfie del ingreso a la nube (segundo plano; el ingreso ya quedó
+    // registrado con su hora). Se une al turno por turno_ref.
+    // Recordatorio de ronda: se cuenta desde el ingreso; y plan de presencia nocturna.
     try {
-      String texto = raw.trim();
-      // Formato Dahua: base64 de un gzip que contiene un JSON.
-      if (!texto.trimLeft().startsWith('[') && !texto.trimLeft().startsWith('{')) {
-        try {
-          final bytes = base64.decode(texto.replaceAll(RegExp(r'\s'), ''));
-          final unzipped = gzip.decode(bytes);
-          texto = utf8.decode(unzipped);
-        } catch (_) {
-          // No era gzip+base64; se intenta como JSON directo mas abajo.
-        }
-      }
-      // Si NO es JSON (ej. QR de la etiqueta del equipo, que trae solo el
-      // serial o un texto tipo "SN:xxxx"), lo tomamos como serial.
-      if (!texto.trimLeft().startsWith('[') && !texto.trimLeft().startsWith('{')) {
-        final sn = RegExp(r'([A-Z0-9]{10,})').firstMatch(texto.toUpperCase());
-        return DvrConfig(nombre: 'DVR', serial: sn?.group(1) ?? texto.trim());
-      }
-      final data = jsonDecode(texto);
-      final Map<String, dynamic> m = data is List ? Map<String, dynamic>.from(data.first) : Map<String, dynamic>.from(data);
-      return DvrConfig(
-        nombre: (m['deviceName'] ?? 'DVR').toString(),
-        usuario: (m['userName'] ?? 'admin').toString(),
-        clave: (m['passWord'] ?? '').toString(),
-        canales: int.tryParse('${m['channelCount'] ?? 1}') ?? 1,
-        puerto: 554, // RTSP siempre 554 (el 37777 del QR es el puerto SDK)
-        serial: (m['ip'] ?? '').toString(),
-      );
-    } catch (_) {
-      return null;
-    }
+      await Notificaciones.marcarRonda(ahora);
+      await Notificaciones.programarRecordatorios();
+      Presencia.planificar();
+    } catch (_) {}
+    final fotoTurno = _foto;
+    final refTurno = Turnos.ref(Cloud.deviceId, id);
+    await Cloud.eventoConFotos('Foto de turno',
+        guardia: nombre, detalle: {'turno_ref': refTurno, 'momento': 'ingreso'},
+        fotos: [fotoTurno], sufijo: '_ingreso', soloSiHayFoto: true, calidades: const ['registro']);
+    if (!mounted) return;
+    Navigator.pop(context);
   }
 
-  /// Host activo según el modo: datos móviles (DDNS) o WiFi local.
-  static String host(Map<String, dynamic> cam) {
-    final local = (cam['host']?.toString() ?? '').trim();
-    final remoto = (cam['host_remoto']?.toString() ?? '').trim();
-    if (AppState.instance.camaraRemota) return remoto.isNotEmpty ? remoto : local;
-    return local.isNotEmpty ? local : remoto;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Iniciar Turno')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('Selecciona tu nombre',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          if (_guardias.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('No hay guardias registrados para este edificio. '
+                    'Pide al administrador que los registre en el modulo Guardias.'),
+              ),
+            )
+          else
+            DropdownButtonFormField<int>(
+              value: _sel?['id'] as int?,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Guardia',
+                prefixIcon: Icon(Icons.person),
+              ),
+              items: [
+                for (final g in _guardias)
+                  DropdownMenuItem<int>(
+                    value: g['id'] as int,
+                    child: Text(
+                        g['turno'] == null
+                            ? '${g['nombre']}'
+                            : '${g['nombre']} · ${g['turno'] == 'NOCTURNO' ? 'Nocturno' : (g['turno'] == 'FRANQUERO' ? 'Franquero' : 'Diurno')}',
+                        overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (id) => setState(() =>
+                  _sel = _guardias.firstWhere((g) => g['id'] == id)),
+            ),
+          if (_esFranquero) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _franq,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Tu nombre completo (obligatorio)',
+                helperText: 'Nombre y apellido, por ejemplo: Juan Pérez Rojas',
+                prefixIcon: Icon(Icons.badge),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          PhotoField(key: ValueKey(_fotoKey), label: 'Foto del guardia (selfie)', obligatoria: true, frontal: true, rapida: true, album: 'OSIRIS Turnos', onChanged: _onFoto),
+          if (_revisando)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                SizedBox(width: 10),
+                Text('Revisando uniforme...'),
+              ]),
+            ),
+          if (_sinUniforme)
+            const Card(
+              color: Color(0x14C62828),
+              child: ListTile(
+                leading: Icon(Icons.warning_amber, color: AppColors.rojo),
+                title: Text('Se registrará: guardia sin uniforme'),
+              ),
+            ),
+          if (_sel != null) LockedField(label: 'Cargo', value: _sel!['cargo']?.toString() ?? '', icon: Icons.badge_outlined),
+          Row(children: [
+            Expanded(child: LockedField(label: 'Fecha', value: DateFormat('dd/MM/yyyy').format(_ahora), icon: Icons.calendar_today)),
+            const SizedBox(width: 10),
+            Expanded(child: LockedField(label: 'Hora', value: DateFormat('HH:mm').format(_ahora), icon: Icons.access_time)),
+          ]),
+          TextField(controller: _obs, maxLines: 3, decoration: const InputDecoration(labelText: 'Novedades de ingreso', alignLabelWithHint: true)),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.verde),
+            onPressed: _saving ? null : _iniciar,
+            icon: _saving
+                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                : const Icon(Icons.play_arrow),
+            label: const Text('INICIAR TURNO'),
+          ),
+        ],
+      ),
+    );
   }
-
-  /// URL RTSP en vivo (formato Dahua). subtype 0 = principal, 1 = secundaria.
-  static String rtspVivo({
-    required String host,
-    int puerto = 554,
-    required String usuario,
-    required String clave,
-    required int canal,
-    int subtype = 0,
-  }) {
-    final u = Uri.encodeComponent(usuario);
-    final c = Uri.encodeComponent(clave);
-    return 'rtsp://$u:$c@$host:$puerto/cam/realmonitor?channel=$canal&subtype=$subtype';
-  }
-
-  /// URL RTSP de reproduccion de grabaciones (formato Dahua).
-  static String rtspPlayback({
-    required String host,
-    int puerto = 554,
-    required String usuario,
-    required String clave,
-    required int canal,
-    required DateTime desde,
-    required DateTime hasta,
-  }) {
-    String f(DateTime d) =>
-        '${d.year}_${_2(d.month)}_${_2(d.day)}_${_2(d.hour)}_${_2(d.minute)}_${_2(d.second)}';
-    final u = Uri.encodeComponent(usuario);
-    final c = Uri.encodeComponent(clave);
-    return 'rtsp://$u:$c@$host:$puerto/cam/playback?channel=$canal&starttime=${f(desde)}&endtime=${f(hasta)}';
-  }
-
-  static String _2(int n) => n.toString().padLeft(2, '0');
 }
