@@ -25,6 +25,27 @@ class InicioTurnoScreen extends StatefulWidget {
 
 class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
   final _obs = TextEditingController();
+  final _franq = TextEditingController(); // nombre real del franquero
+
+  bool get _esFranquero =>
+      _sel != null && ('${_sel!['turno'] ?? ''}' == 'FRANQUERO' || '${_sel!['rol'] ?? ''}' == 'franquero');
+
+  /// "juan  perez de la cruz" -> "Juan Perez de la Cruz". null si no es un
+  /// nombre completo (al menos nombre y apellido, solo letras).
+  static String? nombreCompleto(String t) {
+    final ps = t.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final letras = RegExp(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'\-]+$");
+    if (ps.any((w) => !letras.hasMatch(w))) return null;
+    const part = {'de', 'del', 'la', 'las', 'los', 'y'};
+    final fuertes = ps.where((w) => !part.contains(w.toLowerCase()) && w.length >= 2).length;
+    if (fuertes < 2) return null;
+    return [
+      for (int i = 0; i < ps.length; i++)
+        (i > 0 && part.contains(ps[i].toLowerCase()))
+            ? ps[i].toLowerCase()
+            : ps[i][0].toUpperCase() + ps[i].substring(1).toLowerCase()
+    ].join(' ');
+  }
   List<Map<String, dynamic>> _guardias = [];
   Map<String, dynamic>? _sel;
   String? _foto;
@@ -148,6 +169,9 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
   Future<void> _iniciar() async {
     if (_saving) return; // doble toque
     if (_sel == null) return _snack('Selecciona el guardia');
+    if (_esFranquero && nombreCompleto(_franq.text) == null) {
+      return _snack('Franquero: escribe tu nombre completo (nombre y apellido)');
+    }
     if (_foto == null) return _snack('La foto del guardia es obligatoria');
     if (_revisando) return _snack('Espera: revisando la foto…');
     setState(() => _saving = true);
@@ -172,20 +196,25 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     // Hora REAL del ingreso: la del toque (el GPS puede tardar segundos).
     final ahora = DateTime.now();
     final db = await DB.instance.database;
+    // Franquero: en todos los registros del turno va su nombre real (la
+    // cuenta "franquero" se mantiene por el CI: no suma ni resta horas extras).
+    final real = _esFranquero ? nombreCompleto(_franq.text) : null;
+    final nombreTurno = real != null ? '$real (franquero)' : '${sel['nombre'] ?? ''}';
     // Un guardia no puede tener dos turnos abiertos (doble registro o
     // pantalla abierta dos veces): se retoma el que ya está abierto.
     final ya = await db.query('ingreso_turno',
         where: 'guardia_id=? AND activo=1', whereArgs: [sel['id']], orderBy: 'id DESC', limit: 1);
     if (ya.isNotEmpty) {
+      final nomAbierto = '${ya.first['guardia_nombre'] ?? sel['nombre'] ?? ''}';
       s.setOperador(
           id: sel['id'] as int,
-          nombre: '${sel['nombre'] ?? ''}',
+          nombre: nomAbierto,
           cargo: sel['cargo'] as String?,
           rol: sel['rol'] as String?,
           turnoId: ya.first['id'] as int,
           guard: _ci(sel));
       if (!mounted) return;
-      TopToast.show(context, '${sel['nombre']} ya tiene un turno abierto',
+      TopToast.show(context, '$nomAbierto ya tiene un turno abierto',
           color: const Color(0xFFEF6C00), icon: Icons.info_outline);
       Navigator.pop(context);
       return;
@@ -198,7 +227,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     final disp = ctx[2] as String;
     final id = await db.insert('ingreso_turno', {
       'guardia_id': sel['id'],
-      'guardia_nombre': sel['nombre'],
+      'guardia_nombre': nombreTurno,
       'cargo': sel['cargo'],
       'foto': _foto,
       'gps_lat': gps?['lat'],
@@ -215,12 +244,12 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
     final guard = _ci(sel);
     s.setOperador(
         id: sel['id'] as int,
-        nombre: '${sel['nombre'] ?? ''}',
+        nombre: nombreTurno,
         cargo: sel['cargo'] as String?,
         rol: sel['rol'] as String?,
         turnoId: id,
         guard: guard);
-    final nombre = sel['nombre'] as String?;
+    final String? nombre = nombreTurno;
     // Si el guardia declaro que no trajo uniforme, se guarda una advertencia.
     if (_sinUniforme) {
       await db.insert('advertencias', {
@@ -262,6 +291,7 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
         guardia: nombre,
         detalle: {
           'cargo': sel['cargo'],
+          if (real != null) 'franquero_nombre': real,
           // Id del turno: une este ingreso con SU salida y sus correcciones.
           'turno_ref': Turnos.ref(Cloud.deviceId, id),
           'ts': ahora.toUtc().toIso8601String(),
@@ -329,6 +359,18 @@ class _InicioTurnoScreenState extends State<InicioTurnoScreen> {
               onChanged: (id) => setState(() =>
                   _sel = _guardias.firstWhere((g) => g['id'] == id)),
             ),
+          if (_esFranquero) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _franq,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Tu nombre completo (obligatorio)',
+                helperText: 'Nombre y apellido, por ejemplo: Juan Pérez Rojas',
+                prefixIcon: Icon(Icons.badge),
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           PhotoField(key: ValueKey(_fotoKey), label: 'Foto del guardia (selfie)', obligatoria: true, frontal: true, rapida: true, album: 'OSIRIS Turnos', onChanged: _onFoto),
           if (_revisando)
