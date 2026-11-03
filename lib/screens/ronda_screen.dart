@@ -6,6 +6,12 @@ import '../services/device_context.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import '../services/img_util.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
@@ -15,6 +21,30 @@ import '../services/notifications_service.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
 import '../services/camara.dart';
+
+/// Arma UNA sola imagen con todas las fotos de la ronda (cuadrícula, cada
+/// foto entera y numerada). Así por WhatsApp llega un solo mensaje: la imagen
+/// con el texto de la ronda, en vez de una foto por mensaje.
+Uint8List _armarCollage(Map<String, dynamic> m) {
+  final fotos = (m['b'] as List).cast<Uint8List>();
+  final int cols = m['cols'], cw = m['cw'], ch = m['ch'];
+  const gap = 12;
+  final rows = (fotos.length / cols).ceil();
+  final lienzo = img.Image(width: cols * cw + (cols + 1) * gap, height: rows * ch + (rows + 1) * gap);
+  img.fill(lienzo, color: img.ColorRgb8(255, 255, 255));
+  for (int i = 0; i < fotos.length; i++) {
+    final f = img.decodeImage(fotos[i]);
+    if (f == null) continue;
+    final k = (cw / f.width) < (ch / f.height) ? cw / f.width : ch / f.height;
+    final r = img.copyResize(f, width: (f.width * k).round(), height: (f.height * k).round(), interpolation: img.Interpolation.average);
+    final x0 = gap + (i % cols) * (cw + gap), y0 = gap + (i ~/ cols) * (ch + gap);
+    img.fillRect(lienzo, x1: x0, y1: y0, x2: x0 + cw - 1, y2: y0 + ch - 1, color: img.ColorRgb8(236, 239, 241));
+    img.compositeImage(lienzo, r, dstX: x0 + (cw - r.width) ~/ 2, dstY: y0 + (ch - r.height) ~/ 2);
+    img.fillRect(lienzo, x1: x0, y1: y0, x2: x0 + 64, y2: y0 + 58, color: img.ColorRgba8(0, 0, 0, 170));
+    img.drawString(lienzo, '${i + 1}', font: img.arial48, x: x0 + (i + 1 < 10 ? 18 : 6), y: y0 + 4, color: img.ColorRgb8(255, 255, 255));
+  }
+  return Uint8List.fromList(img.encodeJpg(lienzo, quality: 84));
+}
 
 class RondaScreen extends StatefulWidget {
   const RondaScreen({super.key});
@@ -283,13 +313,42 @@ class _RondaScreenState extends State<RondaScreen> {
     final msg = _obs.text.trim().isEmpty
         ? 'Ronda sin novedad - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}'
         : 'Ronda: ${_obs.text.trim()} - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}';
+    // UNA sola imagen con todas las fotos + el texto = un solo mensaje en
+    // WhatsApp. Si no se pudo armar, se comparten las fotos sueltas (como antes).
+    final collage = await _collage(List<String>.from(_fotos));
     try {
-      await Share.shareXFiles(_fotos.map((f) => XFile(f)).toList(), text: msg);
+      if (collage != null) {
+        await Share.shareXFiles([XFile(collage, mimeType: 'image/jpeg')], text: msg);
+      } else {
+        await Share.shareXFiles(_fotos.map((f) => XFile(f)).toList(), text: msg);
+      }
     } catch (_) {}
 
     if (!mounted) return;
     TopToast.show(context, 'Ronda guardada');
     Navigator.pop(context);
+  }
+
+  Future<String?> _collage(List<String> fotos) async {
+    if (fotos.length < 2) return null;
+    try {
+      await ImgUtil.esperarPendientes(); // fotos ya enderezadas
+      final cols = fotos.length <= 4 ? 2 : 3;
+      final cw = cols == 2 ? 1000 : 760, ch = cols == 2 ? 1333 : 1013;
+      final bytes = <Uint8List>[];
+      for (final f in fotos) {
+        final b = await FlutterImageCompress.compressWithFile(f, minWidth: cw, minHeight: ch, quality: 88);
+        if (b != null) bytes.add(b);
+      }
+      if (bytes.length < 2) return null;
+      final out = await compute(_armarCollage, {'b': bytes, 'cols': cols, 'cw': cw, 'ch': ch});
+      final dir = await getTemporaryDirectory();
+      final ruta = p.join(dir.path, 'ronda_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await File(ruta).writeAsBytes(out, flush: true);
+      return ruta;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
