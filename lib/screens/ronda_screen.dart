@@ -22,28 +22,48 @@ import '../theme.dart';
 import '../widgets/toast.dart';
 import '../services/camara.dart';
 
-/// Arma UNA sola imagen con todas las fotos de la ronda (cuadrícula, cada
-/// foto entera y numerada). Así por WhatsApp llega un solo mensaje: la imagen
-/// con el texto de la ronda, en vez de una foto por mensaje.
-Uint8List _armarCollage(Map<String, dynamic> m) {
-  final fotos = (m['b'] as List).cast<Uint8List>();
-  final int cols = m['cols'], cw = m['cw'], ch = m['ch'];
-  const gap = 12;
-  final rows = (fotos.length / cols).ceil();
-  final lienzo = img.Image(width: cols * cw + (cols + 1) * gap, height: rows * ch + (rows + 1) * gap);
-  img.fill(lienzo, color: img.ColorRgb8(255, 255, 255));
-  for (int i = 0; i < fotos.length; i++) {
-    final f = img.decodeImage(fotos[i]);
-    if (f == null) continue;
-    final k = (cw / f.width) < (ch / f.height) ? cw / f.width : ch / f.height;
-    final r = img.copyResize(f, width: (f.width * k).round(), height: (f.height * k).round(), interpolation: img.Interpolation.average);
-    final x0 = gap + (i % cols) * (cw + gap), y0 = gap + (i ~/ cols) * (ch + gap);
-    img.fillRect(lienzo, x1: x0, y1: y0, x2: x0 + cw - 1, y2: y0 + ch - 1, color: img.ColorRgb8(236, 239, 241));
-    img.compositeImage(lienzo, r, dstX: x0 + (cw - r.width) ~/ 2, dstY: y0 + (ch - r.height) ~/ 2);
-    img.fillRect(lienzo, x1: x0, y1: y0, x2: x0 + 64, y2: y0 + 58, color: img.ColorRgba8(0, 0, 0, 170));
-    img.drawString(lienzo, '${i + 1}', font: img.arial48, x: x0 + (i + 1 < 10 ? 18 : 6), y: y0 + 4, color: img.ColorRgb8(255, 255, 255));
+/// Copia de una foto de la ronda con una franja abajo: en la primera va el
+/// mensaje de la ronda y en las demás "Foto n/N". Las fotos se mandan JUNTAS y
+/// SIN texto aparte: WhatsApp las agrupa en un solo bloque (un solo aviso).
+/// La fuente de la franja solo tiene letras sin tilde.
+String _sinTildes(String t) {
+  const a = 'áéíóúÁÉÍÓÚñÑüÜ', b = 'aeiouAEIOUnNuU';
+  final sb = StringBuffer();
+  for (final c in t.split('')) {
+    final k = a.indexOf(c);
+    sb.write(k >= 0 ? b[k] : (c.codeUnitAt(0) < 128 ? c : ''));
   }
-  return Uint8List.fromList(img.encodeJpg(lienzo, quality: 84));
+  return sb.toString();
+}
+
+Uint8List _sellarFoto(Map<String, dynamic> m) {
+  final f = img.decodeImage(m['b'] as Uint8List)!;
+  final lineas = (m['lineas'] as List).cast<String>();
+  final font = f.width >= 1000 ? img.arial48 : img.arial24;
+  final lh = font.lineHeight + 8;
+  final alto = lineas.length * lh + 16;
+  final out = img.Image(width: f.width, height: f.height + alto);
+  img.fill(out, color: img.ColorRgb8(18, 24, 28));
+  img.compositeImage(out, f, dstX: 0, dstY: 0);
+  for (int i = 0; i < lineas.length; i++) {
+    img.drawString(out, lineas[i], font: font, x: 16, y: f.height + 8 + i * lh, color: img.ColorRgb8(255, 255, 255));
+  }
+  return Uint8List.fromList(img.encodeJpg(out, quality: 88));
+}
+
+List<String> _cortar(String t, int max) {
+  final out = <String>[];
+  var l = '';
+  for (final w in t.split(' ')) {
+    if (l.isNotEmpty && (l.length + 1 + w.length) > max) {
+      out.add(l);
+      l = w;
+    } else {
+      l = l.isEmpty ? w : '$l $w';
+    }
+  }
+  if (l.isNotEmpty) out.add(l);
+  return out;
 }
 
 class RondaScreen extends StatefulWidget {
@@ -313,15 +333,11 @@ class _RondaScreenState extends State<RondaScreen> {
     final msg = _obs.text.trim().isEmpty
         ? 'Ronda sin novedad - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}'
         : 'Ronda: ${_obs.text.trim()} - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}';
-    // UNA sola imagen con todas las fotos + el texto = un solo mensaje en
-    // WhatsApp. Si no se pudo armar, se comparten las fotos sueltas (como antes).
-    final collage = await _collage(List<String>.from(_fotos));
+    // Las fotos van JUNTAS y SIN texto aparte: WhatsApp las agrupa en un solo
+    // bloque (desde 4 fotos) con un solo aviso. El mensaje de la ronda va escrito en la primera foto.
+    final selladas = await _sellar(List<String>.from(_fotos), msg);
     try {
-      if (collage != null) {
-        await Share.shareXFiles([XFile(collage, mimeType: 'image/jpeg')], text: msg);
-      } else {
-        await Share.shareXFiles(_fotos.map((f) => XFile(f)).toList(), text: msg);
-      }
+      await Share.shareXFiles((selladas ?? _fotos).map((f) => XFile(f, mimeType: 'image/jpeg')).toList());
     } catch (_) {}
 
     if (!mounted) return;
@@ -329,23 +345,26 @@ class _RondaScreenState extends State<RondaScreen> {
     Navigator.pop(context);
   }
 
-  Future<String?> _collage(List<String> fotos) async {
-    if (fotos.length < 2) return null;
+  Future<List<String>?> _sellar(List<String> fotos, String msg) async {
+    if (fotos.isEmpty) return null;
     try {
       await ImgUtil.esperarPendientes(); // fotos ya enderezadas
-      final cols = fotos.length <= 4 ? 2 : 3;
-      final cw = cols == 2 ? 1000 : 760, ch = cols == 2 ? 1333 : 1013;
-      final bytes = <Uint8List>[];
-      for (final f in fotos) {
-        final b = await FlutterImageCompress.compressWithFile(f, minWidth: cw, minHeight: ch, quality: 88);
-        if (b != null) bytes.add(b);
-      }
-      if (bytes.length < 2) return null;
-      final out = await compute(_armarCollage, {'b': bytes, 'cols': cols, 'cw': cw, 'ch': ch});
       final dir = await getTemporaryDirectory();
-      final ruta = p.join(dir.path, 'ronda_${DateTime.now().millisecondsSinceEpoch}.jpg');
-      await File(ruta).writeAsBytes(out, flush: true);
-      return ruta;
+      final ts = DateTime.now().millisecondsSinceEpoch, out = <String>[];
+      for (int i = 0; i < fotos.length; i++) {
+        final b = await FlutterImageCompress.compressWithFile(fotos[i], minWidth: 1600, minHeight: 1600, quality: 90);
+        if (b == null) return null;
+        const ancho = 40;
+        final lineas = i == 0
+            ? _cortar(_sinTildes(msg), ancho).take(4).toList()
+            : ['Foto ${i + 1}/${fotos.length}'];
+        if (i == 0) lineas.add('Foto 1/${fotos.length}');
+        final sellada = await compute(_sellarFoto, {'b': b, 'lineas': lineas});
+        final ruta = p.join(dir.path, 'ronda_${ts}_${i + 1}.jpg');
+        await File(ruta).writeAsBytes(sellada, flush: true);
+        out.add(ruta);
+      }
+      return out;
     } catch (_) {
       return null;
     }
