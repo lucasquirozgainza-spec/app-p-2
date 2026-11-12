@@ -6,6 +6,7 @@ import 'db/database_helper.dart';
 import 'services/sync_remoto.dart';
 import 'services/app_state.dart';
 import 'services/retention.dart';
+import 'services/limpieza.dart';
 import 'services/notifications_service.dart';
 import 'services/camara.dart';
 import 'services/cloud.dart';
@@ -90,6 +91,8 @@ class _BootState extends State<_Boot> {
     try {
       await Retention.purgar();
     } catch (_) {}
+    // Libera espacio: temporales y fotos viejas pesadas (en segundo plano).
+    Limpieza.correr();
     try {
       await Notificaciones.programarRondas();
     } catch (_) {}
