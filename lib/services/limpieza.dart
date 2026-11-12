@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'img_util.dart';
+import 'retention.dart';
 
 /// Libera espacio del celular (la app llegó a ocupar decenas de GB):
 /// 1. Borra temporales viejos (caché de la cámara, fotos selladas para
@@ -46,6 +47,7 @@ class Limpieza {
       final d = Directory(p.join(docs.path, 'fotos'));
       if (!await d.exists()) return;
       final ahora = DateTime.now();
+      final corte = Retention.corteLocal();
       final lista = <File>[];
       await for (final e in d.list(recursive: true, followLinks: false)) {
         if (e is File) lista.add(e);
@@ -64,7 +66,10 @@ class Limpieza {
           final esFoto = nombre.endsWith('.jpg') || nombre.endsWith('.jpeg');
           // Solo fotos pesadas y que no se estén usando ahora mismo.
           if (!esFoto || st.size <= _pesada || edad.inMinutes < 15) continue;
+          if (Retention.fechaArchivo(f).isBefore(corte)) continue; // se borrará
           await ImgUtil.normalizarNativa(f.path);
+          // Conserva la fecha original del archivo (para el borrado por meses).
+          try { await f.setLastModified(st.modified); } catch (_) {}
           if (++n % 20 == 0) {
             await Future.delayed(const Duration(milliseconds: 300));
           }
