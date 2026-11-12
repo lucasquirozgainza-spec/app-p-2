@@ -75,7 +75,8 @@ class Camara {
     try {
       if (!await Permisos.camara(context)) return null;
       if (!context.mounted) return null;
-      if (AppState.instance.camaraNativa) {
+      // Siempre la cámara NORMAL del celular (la que el guardia ya conoce).
+      if (_siempreNativa || AppState.instance.camaraNativa) {
         return _despues(
             await _nativa(context, multi: multi, minFotos: minFotos, frontal: frontal, album: album), documento);
       }
@@ -106,6 +107,7 @@ class Camara {
   }
 
   static bool _abierta = false;
+  static const bool _siempreNativa = true;
   static bool _proFalla = false;
   static const _canal = MethodChannel('osiris/camara_pro');
 

@@ -14,10 +14,11 @@ import 'gallery.dart';
 /// - Las fotos se procesan en una COLA de a una: la cámara queda libre al
 ///   instante y no se juntan varias fotos grandes en memoria a la vez.
 class ImgUtil {
-  /// Lado máximo conservado. 4000 px ≈ 12 MP en 4:3: calidad completa de la
-  /// mayoría de cámaras. Solo se reduce si el sensor entrega algo más grande
-  /// (ej. 50 MP), que haría lento todo sin aportar para identificación.
-  static const int _ladoMax = 4000;
+  /// Tamaño de las fotos guardadas: 1600 px de lado mayor, calidad 80.
+  /// Una foto de la cámara (≈4 MB) queda en ≈300-500 KB: se ve bien, se leen
+  /// placas y carnets, y la memoria del celular no se llena.
+  static const int _ladoMax = 1600;
+  static const int _calidad = 80;
 
   static Future<void> _cola = Future<void>.value();
   static int _pendientes = 0;
@@ -30,10 +31,11 @@ class ImgUtil {
   static Future<void> encolar(String path, {String? album}) {
     _pendientes++;
     final tarea = _cola.then((_) async {
-      // La foto ORIGINAL queda tal cual la entregó la cámara (100 % de la
-      // resolución y la calidad del sensor): ya no se re-comprime ni se achica.
-      // La orientación va en el EXIF, que respetan la galería, WhatsApp, el
-      // OCR y los PDF.
+      // Se ACHICA la foto (1600 px, calidad 80) y se endereza: de ≈4 MB pasa a
+      // ≈400 KB, en la app y en la galería.
+      try {
+        await normalizarNativa(path);
+      } catch (_) {}
       _pendientes--;
       // La galería no hace falta esperarla: va aparte.
       unawaited(Gallery.guardar(path, album: album));
@@ -67,9 +69,9 @@ class ImgUtil {
         // 1) Nativo (rápido y con poca memoria): derecha y tamaño de lectura.
         final base = await FlutterImageCompress.compressAndGetFile(
           path, tmp,
-          minWidth: 2400,
-          minHeight: 2400,
-          quality: 98,
+          minWidth: 1600,
+          minHeight: 1600,
+          quality: 90,
           keepExif: false,
           autoCorrectionAngle: true,
         );
@@ -108,7 +110,7 @@ class ImgUtil {
         // se conserva la resolución completa de la foto.
         minWidth: _ladoMax,
         minHeight: _ladoMax,
-        quality: 92,               // visualmente igual al original, archivo menor
+        quality: _calidad,
         keepExif: false,           // la orientación queda "quemada" en los píxeles
         autoCorrectionAngle: true, // aplica la rotación EXIF
       );
@@ -186,7 +188,7 @@ bool _bakeOrient(String path) {
     // original (única copia de la foto) no queda cortado.
     final tmp = File('${f.path}.tmp');
     try {
-      tmp.writeAsBytesSync(img.encodeJpg(derecha, quality: 92), flush: true);
+      tmp.writeAsBytesSync(img.encodeJpg(derecha, quality: 85), flush: true);
       tmp.renameSync(f.path);
     } catch (_) {
       try { if (tmp.existsSync()) tmp.deleteSync(); } catch (_) {}
