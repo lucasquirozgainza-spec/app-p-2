@@ -330,14 +330,18 @@ class _RondaScreenState extends State<RondaScreen> {
 
     // Compartir las fotos por WhatsApp en 1 clic, a la resolución máxima.
     final guardia = s.userNombre ?? 'Guardia';
-    final msg = _obs.text.trim().isEmpty
-        ? 'Ronda sin novedad - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}'
-        : 'Ronda: ${_obs.text.trim()} - $guardia - ${DateFormat('dd/MM HH:mm').format(DateTime.now())}';
+    final ahora = DateTime.now();
+    final fecha = DateFormat('dd/MM/yyyy').format(ahora);
+    final hora = DateFormat('HH:mm').format(ahora);
+    final novedad = _obs.text.trim().isEmpty ? 'Sin novedad' : _obs.text.trim();
+    final msg = 'Ronda $fecha $hora - $novedad - $guardia';
+    final texto = 'RONDA\nFecha: $fecha\nHora: $hora\nNovedad: $novedad\nGuardia: $guardia';
     // Las fotos van JUNTAS y SIN texto aparte: WhatsApp las agrupa en un solo
     // bloque (desde 4 fotos) con un solo aviso. El mensaje de la ronda va escrito en la primera foto.
     final selladas = await _sellar(List<String>.from(_fotos), msg);
     try {
-      await Share.shareXFiles((selladas ?? _fotos).map((f) => XFile(f, mimeType: 'image/jpeg')).toList());
+      await Share.shareXFiles((selladas ?? _fotos).map((f) => XFile(f, mimeType: 'image/jpeg')).toList(),
+          text: texto);
     } catch (_) {}
 
     if (!mounted) return;
