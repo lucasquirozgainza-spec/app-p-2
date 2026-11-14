@@ -12,6 +12,7 @@ import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../services/img_util.dart';
+import '../services/limpieza.dart';
 import '../db/database_helper.dart';
 import '../services/app_state.dart';
 import '../services/audit.dart';
@@ -76,6 +77,7 @@ class _RondaScreenState extends State<RondaScreen> {
   final List<String> _fotos = [];
   final _obs = TextEditingController();
   bool _saving = false;
+  String _paso = '';
   final _inicio = DateTime.now();
 
   // Puntos de control (opcional). Si el edificio no tiene, la ronda es normal.
@@ -233,7 +235,23 @@ class _RondaScreenState extends State<RondaScreen> {
       );
       if (seguir != true) return;
     }
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _paso = 'Guardando...';
+    });
+    Limpieza.ocupado();
+    try {
+      await _guardarYCompartir();
+    } catch (_) {
+      // Nunca dejar el botón girando para siempre.
+      if (mounted) {
+        setState(() => _saving = false);
+        TopToast.show(context, 'No se pudo terminar. Intenta de nuevo.');
+      }
+    }
+  }
+
+  Future<void> _guardarYCompartir() async {
     final s = AppState.instance;
     final db = await DB.instance.database;
     final escaneadosDetalle = _puntos
@@ -324,8 +342,8 @@ class _RondaScreenState extends State<RondaScreen> {
 
     // El próximo recordatorio de ronda se cuenta desde AHORA.
     try {
-      await Notificaciones.marcarRonda();
-      await Notificaciones.programarRecordatorios();
+      await Notificaciones.marcarRonda().timeout(const Duration(seconds: 5));
+      await Notificaciones.programarRecordatorios().timeout(const Duration(seconds: 5));
     } catch (_) {}
 
     // Compartir las fotos por WhatsApp en 1 clic, a la resolución máxima.
@@ -338,7 +356,10 @@ class _RondaScreenState extends State<RondaScreen> {
     final texto = 'RONDA\nFecha: $fecha\nHora: $hora\nNovedad: $novedad\nGuardia: $guardia';
     // Las fotos van JUNTAS y SIN texto aparte: WhatsApp las agrupa en un solo
     // bloque (desde 4 fotos) con un solo aviso. El mensaje de la ronda va escrito en la primera foto.
-    final selladas = await _sellar(List<String>.from(_fotos), msg);
+    // Con tope de tiempo: si el celular está lento, van las fotos sin franja.
+    final selladas = await _sellar(List<String>.from(_fotos), msg)
+        .timeout(const Duration(seconds: 35), onTimeout: () => null);
+    if (mounted) setState(() => _paso = 'Abriendo WhatsApp...');
     try {
       await Share.shareXFiles((selladas ?? _fotos).map((f) => XFile(f, mimeType: 'image/jpeg')).toList(),
           text: texto);
@@ -352,12 +373,16 @@ class _RondaScreenState extends State<RondaScreen> {
   Future<List<String>?> _sellar(List<String> fotos, String msg) async {
     if (fotos.isEmpty) return null;
     try {
-      await ImgUtil.esperarPendientes(); // fotos ya enderezadas
+      if (mounted) setState(() => _paso = 'Preparando fotos...');
+      await ImgUtil.esperarPendientes(tope: const Duration(seconds: 10)); // fotos ya enderezadas
       final dir = await getTemporaryDirectory();
-      final ts = DateTime.now().millisecondsSinceEpoch, out = <String>[];
-      for (int i = 0; i < fotos.length; i++) {
-        final b = await FlutterImageCompress.compressWithFile(fotos[i], minWidth: 1600, minHeight: 1600, quality: 90);
-        if (b == null) return null;
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final out = List<String?>.filled(fotos.length, null);
+      int hechas = 0;
+      Future<void> una(int i) async {
+        // 1280 px: es lo que WhatsApp manda igual; más rápido de sellar.
+        final b = await FlutterImageCompress.compressWithFile(fotos[i], minWidth: 1280, minHeight: 1280, quality: 85);
+        if (b == null) throw Exception('foto');
         const ancho = 40;
         final lineas = i == 0
             ? _cortar(_sinTildes(msg), ancho).take(4).toList()
@@ -366,9 +391,15 @@ class _RondaScreenState extends State<RondaScreen> {
         final sellada = await compute(_sellarFoto, {'b': b, 'lineas': lineas});
         final ruta = p.join(dir.path, 'ronda_${ts}_${i + 1}.jpg');
         await File(ruta).writeAsBytes(sellada, flush: true);
-        out.add(ruta);
+        out[i] = ruta;
+        hechas++;
+        if (mounted) setState(() => _paso = 'Preparando fotos $hechas/${fotos.length}');
       }
-      return out;
+      // De a 3 a la vez: mucho más rápido que una por una.
+      for (int i = 0; i < fotos.length; i += 3) {
+        await Future.wait([for (int j = i; j < i + 3 && j < fotos.length; j++) una(j)]);
+      }
+      return out.cast<String>();
     } catch (_) {
       return null;
     }
@@ -507,7 +538,7 @@ class _RondaScreenState extends State<RondaScreen> {
             icon: _saving
                 ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
                 : const Icon(Icons.save),
-            label: const Text('GUARDAR RONDA'),
+            label: Text(_saving ? (_paso.isEmpty ? 'GUARDANDO...' : _paso) : 'GUARDAR RONDA'),
           ),
         ),
       ),
