@@ -6,6 +6,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'gallery.dart';
+import 'limpieza.dart';
 
 /// Procesamiento de fotos, todo FUERA del disparo de la cámara:
 /// - Endereza la foto (aplica la rotación EXIF a los píxeles y quita el EXIF)
@@ -30,6 +31,7 @@ class ImgUtil {
   /// No bloquea: devuelve un Future por si alguien quiere esperarla.
   static Future<void> encolar(String path, {String? album}) {
     _pendientes++;
+    Limpieza.ocupado(); // la limpieza de fondo se aparta mientras se usan fotos
     final tarea = _cola.then((_) async {
       // Se ACHICA la foto (1600 px, calidad 80) y se endereza: de ≈4 MB pasa a
       // ≈400 KB, en la app y en la galería.

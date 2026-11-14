@@ -13,12 +13,30 @@ import 'retention.dart';
 /// Corre en segundo plano al abrir la app, poco a poco, sin trabar nada.
 class Limpieza {
   static bool _corriendo = false;
+  static DateTime _ocupadoHasta = DateTime.now();
+  static const int _maxPorVez = 150; // fotos achicadas por apertura de la app
+
+  /// Avisa que el guardia está usando la cámara o guardando: la limpieza se
+  /// detiene unos minutos para no robarle velocidad.
+  static void ocupado([Duration d = const Duration(minutes: 3)]) {
+    final h = DateTime.now().add(d);
+    if (h.isAfter(_ocupadoHasta)) _ocupadoHasta = h;
+  }
+
+  static Future<void> _esperarLibre() async {
+    while (DateTime.now().isBefore(_ocupadoHasta) || ImgUtil.pendientes > 0) {
+      await Future.delayed(const Duration(seconds: 5));
+    }
+  }
   static const int _pesada = 900 * 1024; // más de 900 KB = se achica
 
   static Future<void> correr() async {
     if (_corriendo) return;
     _corriendo = true;
     try {
+      // Arranca 1 minuto después de abrir la app (el arranque va primero).
+      await Future.delayed(const Duration(minutes: 1));
+      await _esperarLibre();
       await _temporales();
       await _achicarFotos();
     } catch (_) {
@@ -67,12 +85,13 @@ class Limpieza {
           // Solo fotos pesadas y que no se estén usando ahora mismo.
           if (!esFoto || st.size <= _pesada || edad.inMinutes < 15) continue;
           if (Retention.fechaArchivo(f).isBefore(corte)) continue; // se borrará
+          if (n >= _maxPorVez) break; // el resto, la próxima vez
+          await _esperarLibre();
           await ImgUtil.normalizarNativa(f.path);
           // Conserva la fecha original del archivo (para el borrado por meses).
           try { await f.setLastModified(st.modified); } catch (_) {}
-          if (++n % 20 == 0) {
-            await Future.delayed(const Duration(milliseconds: 300));
-          }
+          n++;
+          await Future.delayed(const Duration(milliseconds: 400)); // sin acaparar
         } catch (_) {}
       }
     } catch (_) {}
